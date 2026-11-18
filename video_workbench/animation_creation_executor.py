@@ -40,7 +40,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   manim_recipe_agent_token_file=None, manim_resource_image=None,
                   manim_resource_admission_file=None, film_manim_admission_file=None,
                   enable_collaborative_authoring=False, collaboration_agent_token_file=None,
-                  picture_agent_token_file=None):
+                  picture_agent_token_file=None, video_learning_agent_token_file=None):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
@@ -64,7 +64,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
     renderer = DurableAnimationRenderer(Path(root) / 'renders', image=renderer_image,
         assets_dir=assets_dir, enabled=True)
     client = AgentClient(agent_url, agent_token, timeout=30)
-    method_client = collaboration_client = manim_client = picture_client = None
+    method_client = collaboration_client = manim_client = picture_client = video_learning_client = None
     try:
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
@@ -185,12 +185,48 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             # Only an explicit existing WikiSkill publish request invokes this
             # read-only capture. Picture completion never publishes a release.
             methods.wikiskill.capture = capture_library
+        videos = None
+        if video_learning_agent_token_file is not None:
+            if methods is None or method_project_runtime != 'hyperframes-core-bridge':
+                raise ValueError('video_learning_hyperframes_methods_required')
+            from .video_learning_service import VideoLearningService
+            from .video_learning_gateway import VideoLearningAuthorGateway, VideoLearningReviewGateway
+            from .video_learning_renderer import VideoLearningRenderer
+            from .animation_laboratory_library import make_laboratory_library_adapter
+            video_token = read_token(video_learning_agent_token_file)
+            other_tokens = {agent_token, executor_token, method_token, collaboration_token}
+            if picture_agent_token_file is not None:
+                other_tokens.add(read_token(picture_agent_token_file))
+            if manim_recipe_agent_token_file is not None:
+                other_tokens.add(read_token(manim_recipe_agent_token_file))
+            if video_token in other_tokens:
+                raise ValueError('video_learning_distinct_credentials_required')
+            video_learning_client = AgentClient(agent_url, video_token, timeout=30)
+            videos = VideoLearningService(Path(root) / 'video-lab',
+                author_gateway=VideoLearningAuthorGateway(video_learning_client),
+                review_gateway=VideoLearningReviewGateway(video_learning_client),
+                renderer=VideoLearningRenderer(Path(root) / 'video-learning-renders', runtime_renderer=methods.renderer),
+                library_adapter=make_laboratory_library_adapter(Path(root) / 'method-lab',
+                    wikiskill_store=methods.wikiskill.store))
+            capture_previous = methods.wikiskill.capture
+            def capture_video_library(owner):
+                from agent_service.contracts import ServiceError
+                records = videos.capture_wikiskill_records(owner)
+                try:
+                    records += capture_previous(owner)
+                except ServiceError as error:
+                    if error.code != 'animation_wikiskill_library_empty' or not records:
+                        raise
+                return sorted(records, key=lambda row: row['record_id'])
+            methods.wikiskill.capture = capture_video_library
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources,
-            picture_service=pictures,
+            picture_service=pictures, video_learning_service=videos,
             film_review_service=FilmReviewProxy(Path(root) / 'film-reviews', service.review_gateway))
-        server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client, picture_client) if client is not None)
+        server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client, picture_client, video_learning_client) if client is not None)
     except BaseException:
+        if video_learning_client is not None:
+            video_learning_client.close()
         if picture_client is not None:
             picture_client.close()
         if manim_client is not None:
@@ -210,6 +246,8 @@ def main(argv=None):
     parser.add_argument('--agent-url', required=True)
     parser.add_argument('--agent-token-file', type=Path, required=True)
     parser.add_argument('--method-agent-token-file', type=Path)
+    parser.add_argument('--video-learning-agent-token-file', type=Path,
+        help='Distinct admitted reference-video creator/reviewer credential; requires HyperFrames.')
     parser.add_argument('--picture-agent-token-file', type=Path,
         help='Distinct admitted direct-reference picture creator/reviewer credential; requires HyperFrames.')
     parser.add_argument('--enable-collaborative-authoring', action='store_true',

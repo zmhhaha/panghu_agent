@@ -51,6 +51,8 @@ _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
                               '/knowledge.html', '/knowledge.mjs', '/knowledge.css',
                               '/picture-library.html', '/picture-library.css', '/picture-library.mjs',
                               '/picture-model.mjs', '/picture-api.openapi.json',
+                              '/video-library.html', '/video-library.css', '/video-library.mjs',
+                              '/video-model.mjs', '/video-api.openapi.json',
                               '/agent-api.html', '/agent-api.openapi.json', '/agent-api-client.py'})
 
 
@@ -793,7 +795,13 @@ class LabHandler(BaseHTTPRequestHandler):
                 return self._json(dict(status='ok'))
             if getattr(lab, 'methods_only', False):
                 _require(path in _METHOD_UI_PATHS or path == '/api/method-lab'
-                         or path.startswith('/api/method-lab/') or path.startswith('/api/picture-lab/'), 'animation_lab_not_found', 404)
+                         or path.startswith('/api/method-lab/') or path.startswith('/api/picture-lab/') or path.startswith('/api/video-lab/'), 'animation_lab_not_found', 404)
+            if path.startswith('/api/video-lab/'):
+                from .video_learning_http import route_public
+                _require(not urlsplit(self.path).query, 'video_learning_query_invalid')
+                if route_public(self, getattr(lab, 'method_client', None),
+                        self.forwarded_user or 'local-developer', 'GET', path):
+                    return
             if path.startswith('/api/picture-lab/'):
                 from .picture_learning_http import route_public
                 _require(not parsed.query, 'picture_learning_query_invalid')
@@ -1016,7 +1024,8 @@ class LabHandler(BaseHTTPRequestHandler):
             lengths = self.headers.get_all('Content-Length', [])
             request_path = self._path(urlsplit(self.path))
             from .picture_learning_http import MAX_BODY as PICTURE_MAX_BODY
-            body_limit = (PICTURE_MAX_BODY if request_path.startswith('/api/picture-lab/') else
+            from .video_learning_http import MAX_BODY as VIDEO_MAX_BODY
+            body_limit = (VIDEO_MAX_BODY if request_path.startswith('/api/video-lab/') else PICTURE_MAX_BODY if request_path.startswith('/api/picture-lab/') else
                 1024 * 1024 if request_path.startswith('/api/method-lab/') else MAX_BODY)
             _require(len(lengths) == 1 and lengths[0].isdigit()
                      and 0 < int(lengths[0]) <= body_limit, 'animation_lab_body_size', 413)
@@ -1037,7 +1046,13 @@ class LabHandler(BaseHTTPRequestHandler):
             lab = self.server.lab
             if getattr(lab, 'methods_only', False):
                 _require(path == '/api/method-lab' or path.startswith('/api/method-lab/')
-                         or path.startswith('/api/picture-lab/'), 'animation_lab_not_found', 404)
+                         or path.startswith('/api/picture-lab/') or path.startswith('/api/video-lab/'), 'animation_lab_not_found', 404)
+            if path.startswith('/api/video-lab/'):
+                from .video_learning_http import route_public
+                _require(not urlsplit(self.path).query, 'video_learning_query_invalid')
+                if route_public(self, getattr(lab, 'method_client', None),
+                        self.forwarded_user or 'local-developer', 'POST', path, body):
+                    return
             if path.startswith('/api/picture-lab/'):
                 from .picture_learning_http import route_public
                 _require(not urlsplit(self.path).query, 'picture_learning_query_invalid')

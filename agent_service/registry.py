@@ -39,7 +39,8 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-animation-manim-recipe-output.v1',
     'video-joint-plan-output.v1', 'video-resource-plan-output.v1',
     'video-animation-collaboration-output.v1',
-    'video-picture-learning-author-output.v1', 'video-picture-learning-review-output.v1']
+    'video-picture-learning-author-output.v1', 'video-picture-learning-review-output.v1',
+    'video-reference-learning-author-output.v1', 'video-reference-learning-review-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -177,7 +178,14 @@ class ToolEnvironment(_Record):
 
     @model_validator(mode='after')
     def fixed_input_reader(self):
-        if self.name == 'tools-pi-picture-learning':
+        if self.name == 'tools-pi-reference-learning':
+            from .reference_learning_tools import environment_revision
+            if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
+                    or not set(self.capabilities) <= {'video-reference-learning-author-output.v1',
+                                                     'video-reference-learning-review-output.v1'}
+                    or self.revision != environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Reference learning requires its fixed extension identity and exact tool scope')
+        elif self.name == 'tools-pi-picture-learning':
             from .picture_learning_tools import environment_revision
             if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
                     or not set(self.capabilities) <= {'video-picture-learning-author-output.v1',

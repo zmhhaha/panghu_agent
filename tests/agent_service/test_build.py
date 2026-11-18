@@ -45,8 +45,10 @@ def animation_profile_bundles():
         video_animation_film_module as film_module, video_animation_manim_recipe as manim_recipe,
         video_animation_wikiskill as wikiskill, video_animation_wikiskill_v2 as wikiskill_v2,
         video_animation_collaboration as collaboration, video_picture_learning as picture_learning,
+        video_reference_learning as reference_learning,
         video_joint_plan_skills as joint_skills, video_resource_plan as resource_plan)
     return (
+        (reference_learning.BUNDLE_ROOT, reference_learning.BUNDLE_FILES, reference_learning.verified_bundle),
         (picture_learning.BUNDLE_ROOT, picture_learning.BUNDLE_FILES, picture_learning.verified_bundle),
         (collaboration.BUNDLE_ROOT, collaboration.BUNDLE_FILES, collaboration.verified_bundle),
         (wikiskill_v2.BUNDLE_ROOT, wikiskill_v2.BUNDLE_FILES, wikiskill_v2.verified_bundle),
@@ -532,6 +534,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             'agent_service/resources/video-resource-plan-v1/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'resource-plan-procedure/SKILL.md')} | {
             'agent_service/resources/picture-learning-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md')} | {
+            'agent_service/resources/reference-learning-v1/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 

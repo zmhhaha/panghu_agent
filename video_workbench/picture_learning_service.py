@@ -58,9 +58,15 @@ def _image(raw, mime):
 
 
 class PictureLearningService:
+    protocol = protocol
+    prefix = PREFIX
+    store_type = PictureLearningStore
+    start_fields = frozenset({'request_id', 'title', 'goal', 'reference_ids', 'criteria',
+        'width', 'height', 'use_wikiskill', 'max_rounds', 'max_seconds', 'allow_collaboration'})
+
     def __init__(self, root, *, author_gateway, review_gateway, renderer,
                  library_adapter=None, clock=time.time):
-        self.store = PictureLearningStore(root)
+        self.store = self.store_type(root)
         self.root = self.store.root
         self.author, self.reviewer = author_gateway, review_gateway
         self.renderer, self.library_adapter, self.clock = renderer, library_adapter, clock
@@ -74,7 +80,7 @@ class PictureLearningService:
     def _reference_public(self, row):
         return {key: deepcopy(row[key]) for key in
                 ('id', 'file_name', 'mime_type', 'sha256', 'width', 'height', 'created_at')} | {
-                    'url': PREFIX + '/references/' + row['id'] + '/media'}
+                    'url': self.prefix + '/references/' + row['id'] + '/media'}
 
     def upload_reference(self, owner, body):
         owner_id(owner)
@@ -155,8 +161,7 @@ class PictureLearningService:
     def start(self, owner, body):
         owner_id(owner)
         require(type(body) is dict and {'request_id', 'title', 'goal', 'reference_ids'} <= set(body)
-                <= {'request_id', 'title', 'goal', 'reference_ids', 'criteria', 'width', 'height',
-                    'use_wikiskill', 'max_rounds', 'max_seconds', 'allow_collaboration'})
+                <= self.start_fields)
         require(self._enabled(), 'picture_learning_unavailable', 503)
         identifier(body['request_id'])
         existing = self.store.request(owner, 'project', body['request_id'], body)
@@ -189,6 +194,7 @@ class PictureLearningService:
             allow_collaboration=False, input_boundary='frozen_for_entire_experiment',
             runtime_capabilities=deepcopy(self.renderer.capabilities()
                 if hasattr(self.renderer, 'capabilities') else {}))
+        frozen.update(self._extra_frozen(owner, body, references))
         run = self._new_experiment(owner, pid, eid, body['request_id'], 'initial', frozen,
                                    self._budget(body), now)
         with self.store.db() as db:
@@ -199,6 +205,12 @@ class PictureLearningService:
                 self.store.put('experiments', run, db=db, insert=True)
                 self.store.bind_request(owner, 'project', body['request_id'], body, pid, db)
         return self.get(owner, existing or pid)
+
+    def _extra_frozen(self, owner, body, references):
+        return {}
+
+    def _baseline_observation(self, candidate):
+        return dict(sha256=candidate['observed_sha256'], suffix=candidate['observed_suffix'])
 
     @staticmethod
     def _new_experiment(owner, pid, eid, request_id, mode, frozen, budget, now):
@@ -254,8 +266,7 @@ class PictureLearningService:
                 require(candidate is not None, 'picture_learning_baseline_required', 409)
                 require(self._has_picture(candidate), 'picture_learning_baseline_not_rendered', 409)
                 frozen.update(base_candidate_id=chosen, base_source=deepcopy(candidate['source']),
-                    base_observation=dict(sha256=candidate['observed_sha256'],
-                                          suffix=candidate['observed_suffix']),
+                    base_observation=self._baseline_observation(candidate),
                     learned_method=deepcopy(candidate.get('method')))
             budget = self._budget(body, prior['budget'])
         run = self._new_experiment(owner, project_id, eid, body['request_id'], mode, frozen, budget, now)
@@ -368,7 +379,7 @@ class PictureLearningService:
         if capabilities.get('runtime_identity') is not None:
             constraints['runtime_identity'] = capabilities['runtime_identity']
         assets = capabilities.get('assets', {})
-        return dict(schema=protocol.INPUT_SCHEMA, mode=mode, project_id=run['project_id'],
+        return dict(schema=self.protocol.INPUT_SCHEMA, mode=mode, project_id=run['project_id'],
             experiment_id=run['id'], work_kind=run['work_kind'], goal=goal,
             criteria=deepcopy(criteria), constraints=constraints,
             observation=dict(frames=self._frames(run, mode)), base_source=deepcopy(base),
@@ -383,7 +394,7 @@ class PictureLearningService:
             return self.store.read('operations', run['owner'], run['active_operation_id'])
         mode = 'create' if run['stage'] == 'author' else run['stage']
         document = self._document(run, mode if mode != 'render' else 'create')
-        protocol.validate_input(document)
+        self.protocol.validate_input(document)
         identity = run['id'] + '-' + str(len(run['operation_ids']) + 1)
         operation = dict(id=identity, owner=run['owner'], experiment_id=run['id'], stage=run['stage'],
             status='reserved', input=document, input_sha256=digest(document), job_id=None,
@@ -415,7 +426,7 @@ class PictureLearningService:
                 preflight(run['deadline_at'])
             refs = operation.get('input_refs')
             if refs is None:
-                files = {protocol.INPUT_NAME: canonical_bytes(document)}
+                files = {self.protocol.INPUT_NAME: canonical_bytes(document)}
                 files.update({frame['file_name']: self.store.read_blob(frame['sha256'])
                               for frame in document['observation']['frames']})
                 refs = gateway.upload(document, files)
@@ -463,7 +474,7 @@ class PictureLearningService:
             return
         try:
             result = gateway.collect(job['job_id'], operation['input_sha256'], document)
-            protocol.validate_result(result, operation['input_sha256'], document)
+            self.protocol.validate_result(result, operation['input_sha256'], document)
             receipt = gateway.model_frame_receipt(job['job_id'])
             expected = {frame['sha256'] for frame in document['observation']['frames']}
             observed = {row.get('sha256') for row in receipt.get('images', [])
@@ -519,7 +530,7 @@ class PictureLearningService:
 
     def _select_best(self, run):
         candidates = [item for item in run['candidates'] if item['work_kind'] == 'reproduction'
-                      and item.get('review') is not None and item.get('picture_sha256')]
+                      and item.get('review') is not None and self._has_picture(item)]
         if not candidates:
             return
         # Prefer an actual side-by-side judgement when supplied; scores remain
@@ -731,7 +742,7 @@ class PictureLearningService:
         result = {key: deepcopy(value) for key, value in candidate.items()
                   if key not in {'source', 'observed_sha256', 'observed_suffix'}}
         for kind, row in result.get('artifacts', {}).items():
-            url = PREFIX + '/projects/' + project_id + '/artifacts/' + row['id']
+            url = self.prefix + '/projects/' + project_id + '/artifacts/' + row['id']
             row['url'] = url
             result[kind + '_url'] = url
         return result

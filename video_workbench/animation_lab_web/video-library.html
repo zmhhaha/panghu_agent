@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>视频学习库 · Video Service</title>
+  <link rel="stylesheet" href="./method-gallery.css">
+  <link rel="stylesheet" href="./video-library.css">
+  <script type="module" src="./video-library.mjs"></script>
+</head>
+<body>
+  <div id="video-library-app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="动画实验室首页"><span class="brand-icon" aria-hidden="true">◈</span><span><span class="eyebrow">VIDEO SERVICE · 开发者</span><strong>动画实验室</strong></span></a>
+      <nav class="workspace-nav" aria-label="开发者工作台"><a href="./">效果库</a><a href="./picture-library.html">图片学习</a><a href="./video-library.html" aria-current="page">视频学习</a><a href="./knowledge.html">知识库</a></nav>
+    </header>
+    <main class="workspace">
+      <div class="workspace-actionbar">
+        <div class="library-sync" aria-label="视频学习进度"><p id="video-sync" class="small muted" role="status">正在读取视频学习库…</p><button id="video-refresh" class="button secondary" type="button">手动刷新</button></div>
+        <button id="video-new" class="button primary" type="button" disabled>新建视频学习</button>
+      </div>
+      <p id="video-message" class="message" role="status" aria-live="polite" hidden></p>
+      <section id="video-pending" class="panel" hidden aria-labelledby="video-pending-title">
+        <h2 id="video-pending-title">原提交结果待核对</h2><p class="muted">这次请求已保存在本浏览器。刷新只读取状态；重送会使用相同请求编号和内容，不另开一项实验。</p>
+        <button id="video-pending-retry" class="button secondary" type="button">重送原请求</button>
+      </section>
+      <section id="video-home" aria-labelledby="video-title">
+        <div class="page-heading"><div><p class="eyebrow">观察参考 · 真实绘制 · 比较学习</p><h1 id="video-title">视频学习库</h1><p class="muted">从一个明确效果片段中学习画面、运动机制与节奏。保留源码、完整视频和参考对照，再换内容验证方法。</p></div><span id="video-count" class="count"></span></div>
+        <p id="video-availability" class="muted" role="status"></p>
+        <div class="gallery-tools"><label class="search-label" for="video-search">查找学习项目<input id="video-search" type="search" placeholder="名称或学习目标" autocomplete="off"></label></div>
+        <div id="video-cards" class="gallery-grid" aria-live="polite"></div>
+        <details class="technical-details"><summary>参考片段分析与候选</summary><p class="small muted">分析单独计入预算。选择候选只填写创作需求，不会自动开始制作。</p><div id="video-analyses"></div></details>
+        <div id="video-empty" class="empty-state" hidden><span aria-hidden="true">▷</span><h2>从一段想学会的效果开始</h2><p>明确要学习的画面、运动或节奏。先复现参考片段，再在预算允许时换内容验证一次。</p><button id="video-empty-new" class="button primary" type="button">提交参考片段</button></div>
+      </section>
+      <section id="video-detail" hidden aria-label="学习项目详情"></section>
+      <section id="video-form-panel" class="panel experiment-form" hidden aria-labelledby="video-form-title">
+        <div class="panel-heading"><div><p class="eyebrow">一次有边界的视频学习</p><h2 id="video-form-title">新建视频学习</h2></div><button id="video-form-close" class="button secondary" type="button">返回视频学习库</button></div>
+        <form id="video-form">
+          <p id="video-form-note" class="message" hidden></p>
+          <div id="video-new-fields">
+            <input name="reference_id" id="video-reference-id" type="hidden">
+            <input name="analysis_id" id="video-analysis-id" type="hidden"><input name="segment_index" id="video-segment-index" type="hidden">
+            <label for="video-name">学习项目名称<input id="video-name" name="title" maxlength="200" required placeholder="例如：学习山石的皴擦与留白"></label>
+            <label for="video-goal">这次重点学什么<textarea id="video-goal" name="goal" rows="4" maxlength="8000" required placeholder="说明想复现的造型、笔触、材质、光影或构图技法，以及不需要照搬的内容。"></textarea></label>
+            <label for="video-reference">参考视频<input id="video-reference" type="file" accept="video/mp4,video/webm" required><span class="small muted">上传实际 MP4 / WebM，最大 24 MB。请先明确一个 1–60 秒效果片段；网址不能代替实际视频。</span></label>
+            <div id="video-reference-preview" class="upload-preview" hidden></div>
+            <label for="video-saved-reference">或选择已上传的参考<select id="video-saved-reference"><option value="">使用新上传的视频</option></select></label>
+            <div class="video-analysis-actions"><label for="video-analysis-minutes">候选分析预算（分钟）<input id="video-analysis-minutes" type="number" min="1" max="30" value="10"></label><button id="video-analyze" class="button secondary" type="button">分析可学习片段</button><p class="small muted">不确定学习哪一段时，可以先分析。按实际采样范围提出候选；不会自动开始制作。已有明确片段时，直接填写下方范围。</p></div>
+            <div id="video-form-analyses"></div>
+            <div class="form-row"><label for="video-start">片段开始（秒）<input id="video-start" name="start_seconds" type="number" min="0" step="any" value="0" required></label><label for="video-end">片段结束（秒）<input id="video-end" name="end_seconds" type="number" min="1" step="any" value="8" required></label></div>
+            <label class="checkbox-label" for="video-learn-audio"><input id="video-learn-audio" name="learn_audio" type="checkbox" checked><span>按目标学习有表达作用的音效及其时机</span></label>
+            <p class="small muted">保留参考音轨与观察范围；尚未实际听审的声音不标为已验证。不默认复刻旁白或背景音乐。</p>
+            <div class="form-row video-dimensions"><label for="video-width">输出宽度（像素）<input id="video-width" name="width" type="number" min="320" max="1280" step="1" value="1280" required></label><label for="video-height">输出高度（像素）<input id="video-height" name="height" type="number" min="180" max="720" step="1" value="720" required></label></div>
+            <label for="video-criteria">可观察的标准（可选，每行一项）<textarea id="video-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：山体由皴擦形成体积，而不是重复的带状墨块。留空时由 Agent 根据目标拟定。"></textarea></label>
+          </div>
+          <label id="video-feedback-label" for="video-feedback" hidden>用于下一次实验的意见<textarea id="video-feedback" name="feedback" rows="4" maxlength="8000" placeholder="描述当前画面具体哪里不理想，以及本次希望尝试的方向。"></textarea></label>
+          <label class="checkbox-label" for="video-use-wikiskill"><input id="video-use-wikiskill" name="use_wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>
+          <p id="video-skill-help" class="small muted">本次固定所用版本。关闭后仍提供绘制工具与渲染规范，不注入已发布的技法；本次形成的方法可用于换内容验证。</p>
+          <details id="video-budget-fields" class="form-details"><summary>本次预算</summary><div class="form-row"><label for="video-rounds">最多探索轮数<input id="video-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="video-minutes">时间上限（分钟）<input id="video-minutes" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><p class="small muted">预算覆盖创作、渲染、评审和换内容验证。预算不足时优先保存复现进展；之后可继续发起实验。</p></details>
+          <div class="form-footer"><p class="small muted">运行中只能查看或停止。新意见在下一次实验生效；不会自动发布知识。</p><button id="video-submit" class="button primary" type="submit">开始视频学习</button></div>
+        </form>
+      </section>
+    </main>
+    <footer class="page-footer">真实媒体与观察结论分别保存。抽帧不等于连续观看或听审；知识只由你主动发布。<a href="./video-api.openapi.json">结构化 JSON API</a></footer>
+  </div>
+</body>
+</html>

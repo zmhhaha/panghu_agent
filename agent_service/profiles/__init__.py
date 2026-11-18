@@ -3,6 +3,9 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name):
+    if name in {'video.reference-learning-author.v1', 'video.reference-learning-review.v1'}:
+        from .video_reference_learning import VideoReferenceLearningProfile
+        return VideoReferenceLearningProfile(review=name == 'video.reference-learning-review.v1')
     if name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1'}:
         from .video_picture_learning import VideoPictureLearningProfile
         return VideoPictureLearningProfile(review=name == 'video.picture-learning-review.v1')

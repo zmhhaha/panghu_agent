@@ -154,6 +154,7 @@ def profile_model_call_limit(profile, configured):
         return min(configured, 10)
     if profile in {'video.joint-plan.v2',
                    'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
+                   'video.reference-learning-author.v1', 'video.reference-learning-review.v1',
                    'video.animation-method-author.v1', 'video.animation-method-review.v1',
                    'video.animation-method-author.v2', 'video.animation-method-review.v2',
                    'video.animation-production.v1', 'video.animation-production.v2',

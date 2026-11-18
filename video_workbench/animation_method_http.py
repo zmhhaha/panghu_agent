@@ -8,6 +8,7 @@ from urllib.parse import quote, unquote
 
 from .animation_creation_http import CreationAPIClient, CreationTransportError, _require, _json, MAX_ARTIFACT, MAX_JSON
 from .picture_learning_http import PictureLabClient
+from .video_learning_http import VideoLabClient
 
 PREFIX = '/api/method-lab'
 MAX_WIKISKILL_JSON = 18 * 1024 * 1024
@@ -66,7 +67,7 @@ def _wikiskill(service):
     return coordinator
 
 
-class MethodLabClient(PictureLabClient):
+class MethodLabClient(PictureLabClient, VideoLabClient):
     def _prompt_inspection_read(self, owner, path):
         raw, mime = self._request(owner, 'GET', path, artifact=True,
                                   response_limit=MAX_PROMPT_INSPECTION_JSON)

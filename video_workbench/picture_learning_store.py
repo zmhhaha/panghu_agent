@@ -51,26 +51,30 @@ def _plain(path):
 
 
 class PictureLearningStore:
+    table_prefix = 'picture'
+    database_name = 'picture-learning.sqlite3'
+    max_blob_bytes = 32 * 1024 * 1024
+
     def __init__(self, root):
         self.root = _plain(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.blobs = self.root / 'blobs'
         self.blobs.mkdir(exist_ok=True)
         (self.root / 'locks').mkdir(exist_ok=True)
-        self.path = self.root / 'picture-learning.sqlite3'
+        self.path = self.root / self.database_name
         with self.db() as db:
             for table, extra in (('projects', ''), ('references', ''),
                                  ('experiments', ', project_id TEXT NOT NULL'),
                                  ('operations', ', experiment_id TEXT NOT NULL')):
-                db.execute(f'CREATE TABLE IF NOT EXISTS picture_{table} ('
+                db.execute(f'CREATE TABLE IF NOT EXISTS {self.table_prefix}_{table} ('
                            f'owner TEXT NOT NULL,id TEXT NOT NULL,document TEXT NOT NULL{extra},'
                            'PRIMARY KEY(owner,id))')
-            db.execute('CREATE TABLE IF NOT EXISTS picture_requests ('
+            db.execute(f'CREATE TABLE IF NOT EXISTS {self.table_prefix}_requests ('
                        'owner TEXT NOT NULL,kind TEXT NOT NULL,request_id TEXT NOT NULL,'
                        'request_sha256 TEXT NOT NULL,entity_id TEXT NOT NULL,'
                        'PRIMARY KEY(owner,kind,request_id))')
-            db.execute('CREATE INDEX IF NOT EXISTS picture_experiment_project '
-                       'ON picture_experiments(owner,project_id)')
+            db.execute(f'CREATE INDEX IF NOT EXISTS {self.table_prefix}_experiment_project '
+                       f'ON {self.table_prefix}_experiments(owner,project_id)')
 
     @contextmanager
     def db(self):
@@ -98,7 +102,7 @@ class PictureLearningStore:
         if db is None:
             with self.db() as connection:
                 return self.read(table, owner, identity, db=connection)
-        row = db.execute(f'SELECT document FROM picture_{table} WHERE owner=? AND id=?',
+        row = db.execute(f'SELECT document FROM {self.table_prefix}_{table} WHERE owner=? AND id=?',
                          (owner, identity)).fetchone()
         require(row is not None, 'picture_learning_not_found', 404)
         result = self.decode(row)
@@ -123,7 +127,7 @@ class PictureLearningStore:
             elif table == 'operations':
                 keys.append('experiment_id')
                 values.append(value['experiment_id'])
-            db.execute(f'INSERT INTO picture_{table} ({",".join(keys)}) VALUES ('
+            db.execute(f'INSERT INTO {self.table_prefix}_{table} ({",".join(keys)}) VALUES ('
                        + ','.join('?' for _ in keys) + ')', values)
         else:
             prior = self.read(table, value['owner'], value['id'], db=db)
@@ -135,7 +139,7 @@ class PictureLearningStore:
                 value['stop_requested'] = prior['stop_requested'] or value['stop_requested']
                 if value['stop_requested'] and value['state'] not in TERMINAL:
                     value['state'] = 'stopping'
-            db.execute(f'UPDATE picture_{table} SET document=? WHERE owner=? AND id=?',
+            db.execute(f'UPDATE {self.table_prefix}_{table} SET document=? WHERE owner=? AND id=?',
                        (canonical_bytes(value).decode('utf-8'), value['owner'], value['id']))
         return deepcopy(value)
 
@@ -150,7 +154,7 @@ class PictureLearningStore:
             require(table == 'experiments')
             clauses.append('project_id=?')
             args.append(identifier(project_id))
-        query = f'SELECT document FROM picture_{table}'
+        query = f'SELECT document FROM {self.table_prefix}_{table}'
         if clauses:
             query += ' WHERE ' + ' AND '.join(clauses)
         query += ' ORDER BY rowid DESC'
@@ -163,7 +167,7 @@ class PictureLearningStore:
         if db is None:
             with self.db() as connection:
                 return self.request(owner, kind, request_id, body, db=connection)
-        row = db.execute('SELECT * FROM picture_requests WHERE owner=? AND kind=? AND request_id=?',
+        row = db.execute(f'SELECT * FROM {self.table_prefix}_requests WHERE owner=? AND kind=? AND request_id=?',
                          (owner, kind, request_id)).fetchone()
         if row is not None:
             require(row['request_sha256'] == digest(body),
@@ -174,11 +178,11 @@ class PictureLearningStore:
     def bind_request(self, owner, kind, request_id, body, entity_id, db):
         prior = self.request(owner, kind, request_id, body, db=db)
         require(prior is None or prior == entity_id, 'picture_learning_idempotency_conflict', 409)
-        db.execute('INSERT OR IGNORE INTO picture_requests VALUES (?,?,?,?,?)',
+        db.execute(f'INSERT OR IGNORE INTO {self.table_prefix}_requests VALUES (?,?,?,?,?)',
                    (owner, kind, request_id, digest(body), entity_id))
 
     def blob(self, raw):
-        require(type(raw) is bytes and 0 < len(raw) <= 32 * 1024 * 1024,
+        require(type(raw) is bytes and 0 < len(raw) <= self.max_blob_bytes,
                 'picture_learning_artifact_size', 413)
         sha = hashlib.sha256(raw).hexdigest()
         path = _plain(self.blobs / sha)
@@ -194,7 +198,7 @@ class PictureLearningStore:
     def blob_path(self, sha):
         require(type(sha) is str and _SHA.fullmatch(sha), 'picture_learning_artifact_not_found', 404)
         path = _plain(self.blobs / sha)
-        require(path.is_file() and path.stat().st_nlink == 1 and path.stat().st_size <= 32 * 1024 * 1024,
+        require(path.is_file() and path.stat().st_nlink == 1 and path.stat().st_size <= self.max_blob_bytes,
                 'picture_learning_artifact_changed', 409)
         return path
 
