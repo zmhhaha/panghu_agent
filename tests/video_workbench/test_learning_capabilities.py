@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 
+from agent_service.contracts import ServiceError, digest
 from agent_service.profiles import video_picture_learning as picture_protocol
 from agent_service.profiles import video_reference_learning as video_protocol
 from agent_service.profiles.video_animation_create import source_sha256
@@ -134,6 +135,42 @@ def test_still_observation_precedes_resource_then_composition_review_and_new_tra
     count = (recipe.submissions, executor.calls, len(author.submissions), len(renderer.calls))
     service.catalogue('developer'); service.get('developer', project['id'])
     assert count == (recipe.submissions, executor.calls, len(author.submissions), len(renderer.calls))
+
+
+def test_manim_planning_keeps_strict_source_contract_in_frozen_reproduction_and_transfer(picture):
+    """The real profile rejects the null-source proposal seen in live transfer.
+
+    A resource plan remains an addition to a valid author-written carrier. No
+    validator relaxation or host-authored replacement source is involved.
+    """
+    service, author, _, renderer, _, recipe, executor, _ = picture
+    project, _ = start_picture(service, max_rounds=1,
+        capability_selection=dict(creation=['manim'], motion=[]))
+    completed = finish_picture(service, project, limit=100)
+    assert completed['state'] == 'completed'
+    for index, work_kind in ((0, 'reproduction'), (2, 'transfer')):
+        document = author.uploads[index][0]
+        stored = service.store.read('operations', 'developer', author.submissions[index])
+        assert stored['input'] == document and stored['input_sha256'] == digest(document)
+        assert document['work_kind'] == work_kind
+        assert 'generated_resources' not in document['constraints']
+        instructions = document['constraints']['learning_resource_offer']['instructions']
+        assert any('source must still be a non-null valid source object' in row for row in instructions)
+        assert any('method.resource_plan supplements source; it never replaces source' in row
+            for row in instructions)
+        assert any('without claiming that the resource has been generated or consumed' in row
+            for row in instructions)
+        if work_kind == 'transfer':
+            assert document['base_source'] is None and document['observation']['frames'] == []
+        planned = author.collect('offline-validator-only', digest(document), document)
+        assert planned['method']['resource_plan']['kind'] == 'manim'
+        assert planned['source']['files']['scene.js'] == 'window.__animationExperiment={seek(seconds){}};'
+        assert picture_protocol.validate_result(planned, digest(document), document) == planned
+        missing_source = deepcopy(planned)
+        missing_source['source'] = None
+        with pytest.raises(ServiceError, match='picture_learning_protocol_invalid'):
+            picture_protocol.validate_result(missing_source, digest(document), document)
+    assert len(renderer.calls) == recipe.submissions == executor.calls == 2
 
 
 def test_manim_only_cannot_render_a_browser_substitute_without_a_resource_plan(picture):

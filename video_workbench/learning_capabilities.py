@@ -59,6 +59,8 @@ class LearningCapabilitiesMixin:
                 instructions=[
                     'Choose resources after observing the actual reference, not before. Omit resource_plan unless adopting real Manim.',
                     'With Manim as the sole drawing choice, propose a resource plan; HTML/SVG is only its supporting carrier.',
+                    'In mode=create, source must still be a non-null valid source object with an allowed engine, strategy and complete scene files. method.resource_plan supplements source; it never replaces source. This also applies to changed-content transfer with no baseline source.',
+                    'Before resource production, author a valid minimal browser carrier source yourself without claiming that the resource has been generated or consumed. Do not invent a manifest, PNG, resource ID or rendered geometry. The host freezes this draft with your plan and does not render it; after producing the actual resource, it requests the complete composition using the supplied descriptor and editable Python.',
                     'The source-only recipe role receives your frozen goal/guidance, not the reference images. Describe important geometry and visual criteria concretely.',
                     'A proposed resource is not yet available. The host runs the real recipe producer, then supplies its descriptor and editable Python for complete composition.',
                     'A still uses exactly one completed frame at local frame zero. A video resource is at most 60 frames at 24fps and may occupy only part of a longer composition.',
