@@ -198,7 +198,7 @@ export class VideoLibraryController {
       const project = match && projects.find(row => row.id === decodeURIComponent(match[1]));
       if (project && (match[2] === 'stop' && !videoIsActive(project)
         || match[2] === 'adopt' && project.adopted_candidate_id === pending.body.candidate_id)) await this.setPending(null);
-      return;
+      if (match) return;
     }
     if (/^api\/video-lab\/references\/[^/]+\/analyses/.test(pending?.path ?? '')) {
       const found = rows(this.state.catalog?.analyses).find(row => requestId ? row.request_id === requestId

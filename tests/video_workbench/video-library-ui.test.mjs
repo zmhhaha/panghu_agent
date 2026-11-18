@@ -88,6 +88,15 @@ test('an unknown analysis submission reconciles its original key from catalog wi
   assert.ok(reload.requests.every(x=>!x.request.method));
 });
 
+test('a lost analysis stop response is cleared by read-only proof of its terminal state', async () => {
+  const storage=memoryStorage(), h=harness((_p,r)=>{if(r.method)throw Error('lost');return catalog();},storage);
+  await h.controller.refresh(); await h.controller.stopAnalysis({id:'analysis-one',reference_id:'ref'});
+  assert.ok(h.controller.state.pending);
+  const next=harness(()=>({...catalog(),analyses:[{id:'analysis-one',reference_id:'ref',state:'cancelled'}]}),storage);
+  await next.controller.refresh();assert.equal(next.controller.state.pending,null);
+  assert.ok(next.requests.every(x=>!x.request.method));
+});
+
 class Element {
   constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.handlers={};this.attributes={};this.currentTime=0;this.paused=true;this._text='';}
   set textContent(value){this._text=String(value);this.children=[];} get textContent(){return this._text+this.children.map(x=>x.textContent).join('');}

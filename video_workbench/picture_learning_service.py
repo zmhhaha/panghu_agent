@@ -226,6 +226,21 @@ class PictureLearningService:
         return [candidate for run in self.store.list('experiments', owner, project_id=project_id)
                 for candidate in run['candidates']]
 
+    def _context_candidates(self, run):
+        """Read prior works by identity without adding duplicate library works.
+
+        A technical retry keeps the prior experiment's reviewed comparison
+        context. Those works remain owned by their original experiment.
+        """
+        identities = run.get('inherited_candidate_ids', [])
+        if not identities:
+            return run['candidates']
+        available = {candidate['id']: candidate for candidate in
+                     self._all_candidates(run['owner'], run['project_id'])}
+        require(all(identity in available for identity in identities),
+                'picture_learning_retry_context_missing', 409)
+        return [available[identity] for identity in identities] + run['candidates']
+
     def next_experiment(self, owner, project_id, body):
         require(type(body) is dict and {'request_id', 'mode'} <= set(body)
                 <= {'request_id', 'mode', 'feedback', 'use_wikiskill', 'max_rounds', 'max_seconds',
@@ -276,6 +291,24 @@ class PictureLearningService:
                        transfer_status=prior['transfer_status'])
             if 'transfer_method' in prior:
                 run['transfer_method'] = deepcopy(prior['transfer_method'])
+            # Keep the actual comparison lineage without republishing every
+            # old work as a candidate of the retry experiment.
+            run['inherited_candidate_ids'] = list(dict.fromkeys(
+                prior.get('inherited_candidate_ids', []) + [item['id'] for item in prior['candidates']
+                    if (item['id'] != prior['active_candidate_id']
+                        or prior['stage'] not in {'render', 'review', 'transfer_plan'})
+                    and item.get('review') is not None]))
+            run['best_candidate_id'] = prior['best_candidate_id']
+            original_operation = next((self.store.read('operations', owner, identity)
+                for identity in reversed(prior['operation_ids'])
+                if self.store.read('operations', owner, identity)['stage'] == prior['stage']), None)
+            if original_operation is not None:
+                require(digest(original_operation['input']) == original_operation['input_sha256'],
+                        'picture_learning_retry_context_changed', 409)
+                run['technical_retry_context'] = dict(source_experiment_id=prior['id'],
+                    source_operation_id=original_operation['id'], stage=prior['stage'],
+                    input=deepcopy(original_operation['input']),
+                    input_sha256=original_operation['input_sha256'], consumed=False)
             # Restart the failed technical stage with its effective source and
             # frozen evidence. This is not a new artistic direction or a fresh
             # creator call when rendering/reviewing had already been reached.
@@ -289,6 +322,8 @@ class PictureLearningService:
                     artifact['id'] = restored['id'] + '-' + kind
                 run['candidates'].append(restored)
                 run.update(active_candidate_id=restored['id'], stage=prior['stage'])
+                if run['best_candidate_id'] == previous['id']:
+                    run['best_candidate_id'] = restored['id']
         with self.store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             existing = self.store.request(owner, kind, body['request_id'], body, db=db)
@@ -318,6 +353,7 @@ class PictureLearningService:
         return next(item for item in run['candidates'] if item['id'] == run['active_candidate_id'])
 
     def _frames(self, run, mode):
+        context_candidates = self._context_candidates(run)
         frames = []
         if run['work_kind'] == 'reproduction':
             for index, ref in enumerate(run['frozen']['references']):
@@ -329,7 +365,7 @@ class PictureLearningService:
             frames.append(dict(frame_id='output-1', file_name='output-1' + candidate['observed_suffix'],
                 sha256=candidate['observed_sha256'], purpose='output'))
             if run['work_kind'] == 'reproduction':
-                previous = [item for item in run['candidates']
+                previous = [item for item in context_candidates
                             if item['id'] != candidate['id'] and item['work_kind'] == 'reproduction'
                             and item.get('picture_sha256') and item.get('review')]
                 if previous:
@@ -344,10 +380,10 @@ class PictureLearningService:
                                        sha256=baseline['sha256'], purpose='baseline'))
         elif run['work_kind'] == 'reproduction':
             # Creator sees its real previous output, not only reviewer prose.
-            candidate = next((item for item in reversed(run['candidates'])
+            candidate = next((item for item in reversed(context_candidates)
                               if item.get('picture_sha256') and item['work_kind'] == 'reproduction'), None)
             if candidate:
-                best = next((item for item in run['candidates'] if item['id'] == run['best_candidate_id']), None)
+                best = next((item for item in context_candidates if item['id'] == run['best_candidate_id']), None)
                 best = best or candidate
                 frames.append(dict(frame_id='baseline-1', file_name='baseline-1' + best['observed_suffix'],
                     sha256=best['observed_sha256'], purpose='baseline'))
@@ -363,9 +399,10 @@ class PictureLearningService:
     def _document(self, run, mode):
         frozen = run['frozen']
         transfer = run['work_kind'] == 'transfer'
-        candidate = next((item for item in reversed(run['candidates'])
+        context_candidates = self._context_candidates(run)
+        candidate = next((item for item in reversed(context_candidates)
                           if item.get('review') is not None and item['work_kind'] == 'reproduction'), None)
-        best = next((item for item in run['candidates'] if item['id'] == run['best_candidate_id']), None)
+        best = next((item for item in context_candidates if item['id'] == run['best_candidate_id']), None)
         base = None if transfer else (best['source'] if best else candidate['source']
                                      if candidate else frozen['base_source'])
         method = run.get('transfer_method') if transfer else frozen.get('learned_method')
@@ -393,7 +430,14 @@ class PictureLearningService:
         if run['active_operation_id']:
             return self.store.read('operations', run['owner'], run['active_operation_id'])
         mode = 'create' if run['stage'] == 'author' else run['stage']
-        document = self._document(run, mode if mode != 'render' else 'create')
+        retry_context = run.get('technical_retry_context')
+        if retry_context and not retry_context['consumed'] and retry_context['stage'] == run['stage']:
+            require(digest(retry_context['input']) == retry_context['input_sha256'],
+                    'picture_learning_retry_context_changed', 409)
+            document = deepcopy(retry_context['input'])
+            document['experiment_id'] = run['id']
+        else:
+            document = self._document(run, mode if mode != 'render' else 'create')
         self.protocol.validate_input(document)
         identity = run['id'] + '-' + str(len(run['operation_ids']) + 1)
         operation = dict(id=identity, owner=run['owner'], experiment_id=run['id'], stage=run['stage'],
@@ -410,6 +454,9 @@ class PictureLearningService:
     def _finish_operation(self, run, operation):
         self.store.put('operations', operation)
         run['active_operation_id'] = None
+        retry_context = run.get('technical_retry_context')
+        if retry_context and retry_context['stage'] == operation['stage']:
+            retry_context['consumed'] = True
 
     def _finish(self, run, reason, state='completed'):
         run.update(state=state, stop_reason=reason, stop_proven=True, active_operation_id=None)
@@ -510,7 +557,7 @@ class PictureLearningService:
                 return
             self._select_best(run)
             review = result['review']
-            previous = [item['review']['score'] for item in run['candidates'][:-1]
+            previous = [item['review']['score'] for item in self._context_candidates(run)[:-1]
                         if item['work_kind'] == 'reproduction' and item.get('review')]
             no_progress = len(previous) >= 2 and review['score'] <= max(previous[-2:])
             if (run['round'] < run['budget']['max_rounds'] and not review['stop_recommended']
@@ -529,7 +576,7 @@ class PictureLearningService:
             self._begin_transfer(run, result['transfer_task'])
 
     def _select_best(self, run):
-        candidates = [item for item in run['candidates'] if item['work_kind'] == 'reproduction'
+        candidates = [item for item in self._context_candidates(run) if item['work_kind'] == 'reproduction'
                       and item.get('review') is not None and self._has_picture(item)]
         if not candidates:
             return
@@ -566,7 +613,7 @@ class PictureLearningService:
         if task is None:
             run['transfer_status'] = 'no_task'
             return self._finish(run, 'reproduction_complete')
-        best = next((item for item in run['candidates'] if item['id'] == run['best_candidate_id']), None)
+        best = next((item for item in self._context_candidates(run) if item['id'] == run['best_candidate_id']), None)
         run['transfer_task'] = deepcopy(task)
         if run['deadline_at'] - self.clock() < 90 or best is None or best.get('method') is None:
             return self._finish(run, 'budget_exhausted' if run['deadline_at'] - self.clock() < 90
@@ -749,7 +796,8 @@ class PictureLearningService:
 
     def _run_public(self, run):
         result = {key: deepcopy(value) for key, value in run.items()
-                  if key not in {'owner', 'frozen', 'candidates', 'operation_ids', 'transfer_method'}}
+                  if key not in {'owner', 'frozen', 'candidates', 'operation_ids', 'transfer_method',
+                                 'technical_retry_context'}}
         result['frozen'] = {key: deepcopy(value) for key, value in run['frozen'].items()
                             if key not in {'knowledge_snapshot', 'base_source', 'references'}}
         result['candidates'] = [self._candidate_public(run['project_id'], item) for item in run['candidates']]

@@ -239,6 +239,25 @@ def test_analysis_candidates_need_real_in_range_frame_evidence(change):
         protocol.validate_result(out,digest(value),value)
 
 
+@pytest.mark.parametrize('start,end,valid', [(10.1,15.1,True), (10,15+1/24,True),
+    (10.1,15.2,False), (10,15.0001,False)])
+def test_analysis_candidates_can_be_selected_without_changing_their_range(start,end,valid):
+    value=analysis_document();out=analysis_result(value)
+    out['analysis']['candidate_segments'][0].update(start_seconds=start,end_seconds=end)
+    if valid:
+        assert protocol.validate_result(out,digest(value),value)==out
+    else:
+        with pytest.raises(ServiceError,match='analysis_segment_invalid'):
+            protocol.validate_result(out,digest(value),value)
+
+
+def test_create_cannot_propose_a_transfer_before_independent_review():
+    value=document();out=result(value)
+    out['transfer_task']=dict(goal='Changed content',criteria=['Different geometry'])
+    with pytest.raises(ServiceError,match='protocol_invalid'):
+        protocol.validate_result(out,digest(value),value)
+
+
 def test_duplicate_decode_and_fake_motion_or_audio_are_rejected():
     value=document()
     same=deepcopy(value['observation']['frames'][0]);same['file_name']='duplicate.png'

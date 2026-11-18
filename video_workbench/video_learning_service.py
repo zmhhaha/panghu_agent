@@ -146,7 +146,7 @@ class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
         transfer = run['work_kind'] == 'transfer'
         frames = [] if transfer else self._purpose_frames(run['frozen']['reference_observation'], 'reference')
         output = self._candidate(run) if mode != 'create' else None
-        reproductions = [item for item in run['candidates'] if item['work_kind'] == 'reproduction'
+        reproductions = [item for item in self._context_candidates(run) if item['work_kind'] == 'reproduction'
                          and self._has_picture(item) and (output is None or item['id'] != output['id'])]
         baseline = next((item for item in reproductions if item['id'] == run['best_candidate_id']), None)
         if baseline is None and reproductions:

@@ -33,7 +33,7 @@ MAX_FRAMES = 24
 BUNDLE_REVISION = 'reference-learning-v1'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md'})
-BUNDLE_MANIFEST_SHA256 = 'f58350b9ea3dabe31174da21957f111267d7b97bba1ecbaf7cf5058eb32a0eac'
+BUNDLE_MANIFEST_SHA256 = '4bfbd0f9bb20c8a055417287c67e6be14fc05089fba28d8618dad16d40eb119e'
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}\Z')
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _IMAGE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,119}\.(?:png|jpg|jpeg)\Z')
@@ -244,7 +244,9 @@ def validate_analysis(value, context):
         start, end = row['start_seconds'], row['end_seconds']
         require(all(type(v) in (int, float) and math.isfinite(v) for v in (start, end))
             and 0 <= start < end <= context['constraints']['duration_seconds']
-            and 1 <= end-start <= 60, 'reference_learning_analysis_segment_invalid')
+            and 1 <= end-start <= 60
+            and abs(round((end-start) * 24) - (end-start) * 24) < 1e-6,
+            'reference_learning_analysis_segment_invalid')
         for key in ('title', 'learning_goal', 'difficulty'):
             _text(row[key])
         _texts(row['evidence_frame_ids'])

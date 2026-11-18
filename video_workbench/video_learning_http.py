@@ -20,7 +20,11 @@ def identifier(value):
 
 class VideoLabClient(CreationAPIClient):
     def video_catalogue(self, owner):
-        return self._request(owner, 'GET', PREFIX + '/catalog')
+        from .animation_creation_http import _json
+        raw, mime = self._request(owner, 'GET', PREFIX + '/catalog', artifact=True,
+            response_limit=MAX_DETAIL)
+        _require(mime == 'application/json', 'video_learning_catalogue_invalid', 502)
+        return _json(raw)
 
     def video_upload(self, owner, body):
         return self._request(owner, 'POST', PREFIX + '/references', body)

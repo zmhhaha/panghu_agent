@@ -31,6 +31,15 @@ def reference_body(raw):
         content_base64=base64.b64encode(raw).decode())
 
 
+def test_video_catalogue_has_an_explicit_history_response_budget(peers, monkeypatch):
+    service, _, _, _, public = peers
+    padding = 'history-' + 'x' * (2 * 1024 * 1024)
+    monkeypatch.setattr(service, 'catalogue', lambda owner: dict(projects=[], analyses=[],
+        references=[], availability=dict(enabled=True), retained_history=padding))
+    status, catalogue, _ = public_request(public, 'GET', PREFIX + '/catalog')
+    assert status == 200 and catalogue['retained_history'] == padding
+
+
 def test_video_upload_project_media_and_owner_survive_both_hops(peers, real_mp4):
     service, author, reviewer, renderer, public = peers
     body = reference_body(real_mp4)

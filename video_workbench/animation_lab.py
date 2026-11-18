@@ -43,7 +43,7 @@ WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
 _PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url',
-                              'assessment_url', 'source_url', 'picture_url', 'reference_url', 'receipt_url'})
+                              'assessment_url', 'source_url', 'picture_url', 'poster_url', 'reference_url', 'receipt_url'})
 _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
                               '/method-gallery.mjs', '/method-comparison.mjs', '/authoring-tools.mjs',
                               '/prompt-inspection.mjs',
@@ -642,10 +642,16 @@ class LabHandler(BaseHTTPRequestHandler):
         if re.fullmatch(r'[0-9]+', value) is None:
             return
         significant = value.lstrip('0') or '0'
-        if len(significant) > len(str(MAX_BODY)):
+        maximum = MAX_BODY
+        request_path = urlsplit(self.path).path
+        if request_path.endswith('/api/video-lab/references'):
+            from .video_learning_http import MAX_BODY as maximum
+        elif request_path.endswith('/api/picture-lab/references'):
+            from .picture_learning_http import MAX_BODY as maximum
+        if len(significant) > len(str(maximum)):
             return
         length = int(significant)
-        if length > MAX_BODY:
+        if length > maximum:
             return
         remaining = length - self._post_body_consumed
         if remaining <= 0:
