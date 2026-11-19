@@ -1,11 +1,17 @@
-"""Stopped render failures reach the creator once, within the original budget."""
+"""Source faults get one repair; capture limits preserve the original artwork."""
 from copy import deepcopy
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from agent_service.contracts import ServiceError, digest
+from agent_service.contracts import ServiceError, canonical_bytes, digest
+from agent_service.profiles import video_reference_learning as protocol
+from video_workbench import animation_method_renderer as shared
+from video_workbench.video_learning_renderer import VideoLearningRenderer
 from video_workbench.video_learning_service import VideoLearningService
+from test_animation_method_renderer import IMAGE, SOURCE, SyntheticExecution
 from test_video_learning_service import (
     Gateway, Renderer, real_mp4, start, finish,
 )
@@ -18,6 +24,8 @@ class DiagnosedRenderer(Renderer):
         self.diagnose = True
         self.stopped = True
         self.inputs = {}
+        self.failure_code = 'method_scene_prepare_failed'
+        self.failure_category = 'scene_interface_unavailable'
 
     def render(self, identity, source, document, *, deadline_at=None):
         self.fail = self.failures > 0
@@ -28,11 +36,12 @@ class DiagnosedRenderer(Renderer):
             result['stop_proven'] = self.stopped
             if self.diagnose:
                 result.update(evidence_sha256='e' * 64, diagnostic=dict(
-                    schema='video.animation-render-failure.v1', category='frame_capture_timeout',
+                    schema='video.animation-render-failure.v1', code=self.failure_code,
+                    category=self.failure_category,
                     source_repair_recommended=True, receipt_bound=True,
                     operation_id=identity, source_sha256=source['source_sha256'],
                     input_sha256=digest(document), evidence_sha256='e' * 64,
-                    summary='The host reported a frame capture timeout.', guidance=[]))
+                    summary='The host reported a classified failure.', guidance=[]))
         self.results[identity] = result
         return deepcopy(result)
 
@@ -46,6 +55,43 @@ def system(tmp_path, real_mp4):
     return service, author, reviewer, renderer
 
 
+@pytest.fixture
+def timeout_system(tmp_path, monkeypatch):
+    """Exercise the actual adapter and strict host-report parser, without Docker."""
+    runtime = shared.MethodAnimationRenderer(tmp_path / 'runtime', IMAGE,
+        enabled=True, hyperframes=True, legacy_bridge=True)
+    renderer = VideoLearningRenderer(tmp_path / 'renders', runtime_renderer=runtime)
+    execute = SyntheticExecution('known')
+
+    def capture_timeout(directory):
+        outcome = execute(directory)
+        root = Path(directory)
+        binding = json.loads((root / 'binding.json').read_bytes())
+        request = binding['request']
+        outcome['error'] = 'animation_method_render_container_failed'
+        (root / 'render-outcome.json').write_bytes(canonical_bytes(outcome))
+        (root / 'work').mkdir()
+        receipt = dict(schema=request['schema'].replace('-request.', '-receipt.'), status='failed',
+            request_identity=request['identity'], request_sha256=binding['request_sha256'],
+            image_digest=binding['image_digest'], host_sha256=request['host_sha256'],
+            **{key: request[key] for key in ('engine', 'engine_runtime_sha256', 'project_runtime_sha256')
+               if key in request},
+            error='TimeoutError: page.screenshot: Timeout 10000ms exceeded.\n'
+                  'Call log:\n  - taking page screenshot\n')
+        (root / 'work/render-receipt.json').write_bytes(canonical_bytes(receipt))
+        return outcome
+
+    def html_source():
+        return dict(deepcopy(SOURCE), source_sha256=protocol.source_sha256(SOURCE))
+
+    monkeypatch.setattr(shared, 'execute_method_render', capture_timeout)
+    monkeypatch.setattr('test_video_learning_service.source', html_source)
+    author, reviewer = Gateway(), Gateway()
+    service = VideoLearningService(tmp_path / 'videos', author_gateway=author,
+        review_gateway=reviewer, renderer=renderer)
+    return service, author, reviewer, renderer, execute
+
+
 def at_failed_render(system, raw, **options):
     service, author, reviewer, renderer = system
     project, _ = start(service, raw, **options)
@@ -56,8 +102,15 @@ def at_failed_render(system, raw, **options):
     raise AssertionError('render was never reached')
 
 
-def test_render_failure_reaches_creator_with_frozen_goal_reference_and_tool_constraints(system, real_mp4):
+@pytest.mark.parametrize('code,category', [
+    ('method_scene_prepare_failed', 'scene_interface_unavailable'),
+    ('method_absolute_seek_mismatch', 'non_deterministic_seek'),
+    ('method_reverse_seek_mismatch', 'non_deterministic_seek'),
+])
+def test_render_failure_reaches_creator_with_frozen_goal_reference_and_tool_constraints(
+        system, real_mp4, code, category):
     service, author, reviewer, renderer = system
+    renderer.failure_code, renderer.failure_category = code, category
     project, run = at_failed_render(system, real_mp4, max_rounds=2,
         capability_selection=dict(creation=['canvas'], motion=[]))
     assert run['state'] == 'running' and run['stage'] == 'author' and run['round'] == 2
@@ -74,7 +127,8 @@ def test_render_failure_reaches_creator_with_frozen_goal_reference_and_tool_cons
     assert repair['constraints']['allowed_engines'] == ['canvas']
     assert repair['constraints']['capability_selection'] == first['constraints']['capability_selection']
     failure = repair['constraints']['render_repair']
-    assert failure['diagnostic']['category'] == 'frame_capture_timeout'
+    assert failure['diagnostic']['category'] == category
+    assert failure['diagnostic']['code'] == code
     assert failure['failed_source']['source_sha256'] == run['candidates'][0]['source_sha256']
     assert repair['base_source'] == failure['failed_source']
     assert repair['constraints']['execution_guidance']['environment']['browser_renderer']['gpu_acceleration'] is False
@@ -118,7 +172,8 @@ def test_technical_retry_can_reclassify_a_stopped_historical_failure_without_rer
     source, document = renderer.inputs[identity]
     renderer.results[identity].update(evidence_sha256='e' * 64, diagnostic=dict(
         source_repair_recommended=True, receipt_bound=True, operation_id=identity,
-        category='frame_capture_timeout', source_sha256=source['source_sha256'],
+        code='method_scene_prepare_failed', category='scene_interface_unavailable',
+        source_sha256=source['source_sha256'],
         input_sha256=digest(document), evidence_sha256='e' * 64))
     renderer.diagnose = True
     request = dict(request_id=uuid4().hex, mode='retry')
@@ -131,6 +186,68 @@ def test_technical_retry_can_reclassify_a_stopped_historical_failure_without_rer
     assert finish(service, retry)['state'] == 'completed'
     assert len([doc for doc, _ in author.uploads if doc['work_kind'] == 'reproduction']) == 2
     assert len(renderer.calls) == 3  # one original, one repaired, one transfer
+
+
+def test_bound_host_capture_timeout_preserves_source_and_does_not_author_again(timeout_system, real_mp4):
+    service, author, reviewer, renderer, execute = timeout_system
+    project, _ = start(service, real_mp4, max_rounds=3)
+    result = finish(service, project)
+    run = service.store.read('experiments', 'developer', project['latest_experiment_id'])
+    assert result['state'] == 'failed' and run['stop_reason'] == 'render_failed'
+    assert run['round'] == 1 and run['stage'] == 'render' and not run.get('render_repairs')
+    assert len(author.submissions) == execute.calls == 1 and not reviewer.submissions
+    candidate = run['candidates'][0]
+    assert candidate['status'] == 'render_failed'
+    assert candidate['source'] == dict(SOURCE, source_sha256=protocol.source_sha256(SOURCE))
+    diagnostic = candidate['render_failure']
+    assert diagnostic['code'] == 'method_frame_capture_timeout'
+    assert diagnostic['category'] == 'frame_capture_timeout'
+    assert diagnostic['receipt_bound'] is True and diagnostic['source_repair_recommended'] is False
+    assert 'increase finite render resources or time' in ' '.join(diagnostic['guidance'])
+    operation = service.store.read('operations', 'developer', candidate['render_operation_id'])
+    assert operation['input_sha256'] == digest(operation['input']) == diagnostic['input_sha256']
+    original = deepcopy((run, operation))
+    root = renderer._directory(operation['id'])
+    before = {name: (root / name).read_bytes() for name in (
+        'binding.json', 'render-outcome.json', 'work/render-receipt.json', 'input/scene/scene.html')}
+    service.get('developer', project['id'])
+    assert renderer.lookup(operation['id'])['diagnostic'] == diagnostic
+    assert (service.store.read('experiments', 'developer', run['id']),
+        service.store.read('operations', 'developer', operation['id'])) == original
+    assert {name: (root / name).read_bytes() for name in before} == before
+    assert len(author.submissions) == execute.calls == 1
+
+
+def test_historical_timeout_recommendation_cannot_turn_retry_into_author(system, real_mp4):
+    service, author, reviewer, renderer = system
+    renderer.failure_code = 'method_frame_capture_timeout'
+    renderer.failure_category = 'frame_capture_timeout'
+    project, run = at_failed_render(system, real_mp4, max_rounds=3)
+    assert run['state'] == 'failed' and run['round'] == 1
+    candidate = deepcopy(run['candidates'][0])
+    assert candidate['render_failure']['source_repair_recommended'] is True  # historical advice
+    operation = service.store.read('operations', 'developer', candidate['render_operation_id'])
+    prior = deepcopy((run, operation))
+    request = dict(request_id=uuid4().hex, mode='retry')
+    retry = service.next_experiment('developer', project['id'], request)
+    pending = service.store.read('experiments', 'developer', retry['latest_experiment_id'])
+    assert pending['stage'] == 'render' and pending['round'] == 1
+    assert not pending.get('render_repairs') and 'render_repair_pending' not in pending
+    assert pending['technical_retry_context']['consumed'] is False
+    assert pending['candidates'][0]['source'] == candidate['source']
+    assert pending['candidates'][0]['render_failure'] == candidate['render_failure']
+    assert pending['frozen'] == run['frozen'] and pending['budget'] == run['budget']
+    assert len(author.submissions) == len(renderer.calls) == 1 and not reviewer.submissions
+    assert service.next_experiment('developer', project['id'], request)['latest_experiment_id'] == pending['id']
+    service.advance('developer', pending['id'])
+    assert len(author.submissions) == 1 and len(renderer.calls) == 2 and not reviewer.submissions
+    retry_source, retry_document = renderer.inputs[renderer.calls[-1]]
+    assert retry_source == candidate['source']
+    expected = deepcopy(operation['input'])
+    expected['experiment_id'] = pending['id']
+    assert retry_document == expected
+    assert (service.store.read('experiments', 'developer', run['id']),
+        service.store.read('operations', 'developer', operation['id'])) == prior
 
 
 def test_stop_arriving_during_render_prevents_repair_submission(system, real_mp4):

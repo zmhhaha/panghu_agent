@@ -131,8 +131,8 @@ def _failure_diagnostic(root, binding, outcome, operation_id, proof):
     categories = {
         'method_frame_capture_timeout': ('frame_capture_timeout',
             'The render host reported a timeout while capturing a frame.',
-            ['Reduce per-frame work while preserving the visual goal and explicit capability constraints.',
-             'Choose lower-cost admitted drawing or composition methods when they can meet the same visual target.',
+            ['Preserve the original source and failure evidence; this timeout alone does not authorize source repair or visual simplification.',
+             'The developer can increase finite render resources or time and rerun unchanged source. The current retry does not itself increase those limits.',
              'This report does not establish the visual result, exact frame duration or a specific hardware cause.']),
         'method_scene_prepare_failed': ('scene_interface_unavailable',
             'The render host could not complete scene preparation.',
@@ -156,7 +156,8 @@ def _failure_diagnostic(root, binding, outcome, operation_id, proof):
                 and cleanup.get('status') in {'confirmed_absent', 'removed_and_confirmed_absent'}))
     return dict(schema='video.animation-render-failure.v1', category=category, code=code,
         phase=observed['phase'] if observed else 'unknown', summary=summary, guidance=guidance,
-        source_repair_recommended=bool(observed and code in categories and stopped),
+        source_repair_recommended=bool(observed and code in categories
+            and code != 'method_frame_capture_timeout' and stopped),
         operation_id=operation_id, source_sha256=binding['source_sha256'],
         input_sha256=binding['input_sha256'], evidence_sha256=proof,
         receipt_sha256=observed['receipt_sha256'] if observed else None,

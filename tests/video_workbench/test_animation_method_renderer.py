@@ -502,7 +502,8 @@ def test_bound_host_failure_has_safe_actionable_projection_without_mutating_cust
     result = value.render('safe-failure', SOURCE, document())
     diagnostic = result['diagnostic']
     assert result['error'] == code and result['technical_passed'] is False
-    assert diagnostic['category'] == category and diagnostic['source_repair_recommended'] is True
+    assert diagnostic['category'] == category
+    assert diagnostic['source_repair_recommended'] is (code != 'method_frame_capture_timeout')
     assert diagnostic['operation_id'] == 'safe-failure'
     assert diagnostic['source_sha256'] == result['source_sha256']
     assert diagnostic['input_sha256'] == result['input_sha256']
@@ -543,12 +544,17 @@ def test_authored_error_substrings_and_invalid_host_markers_do_not_recommend_sou
     assert 'PRIVATE_LOG_CONTENT' not in json.dumps(result)
 
 
-def test_classified_failure_cannot_recommend_another_source_attempt_without_original_cleanup(adapter, monkeypatch):
+@pytest.mark.parametrize('error,category', [
+    ('TimeoutError: page.screenshot: Timeout 10000ms exceeded.\nCall log:\n  - taking page screenshot\n',
+     'frame_capture_timeout'),
+    ('Error: method_absolute_seek_mismatch', 'non_deterministic_seek'),
+])
+def test_classified_failure_cannot_recommend_another_source_attempt_without_original_cleanup(
+        adapter, monkeypatch, error, category):
     value, _ = install_failed_report(adapter, monkeypatch,
-        'TimeoutError: page.screenshot: Timeout 10000ms exceeded.\nCall log:\n  - taking page screenshot\n',
-        cleanup_mismatch=True)
+        error, cleanup_mismatch=True)
     result = value.render('not-proven-stopped', SOURCE, document())
-    assert result['diagnostic']['category'] == 'frame_capture_timeout'
+    assert result['diagnostic']['category'] == category
     assert result['diagnostic']['source_repair_recommended'] is False
     assert value.stopping_proof('not-proven-stopped')['stop_proven'] is False
 

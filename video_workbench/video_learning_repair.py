@@ -10,13 +10,19 @@ from .learning_execution_guidance import learning_execution_guidance
 from .picture_learning_store import require
 
 
+_SOURCE_REPAIR_FAILURES = {
+    'method_scene_prepare_failed': 'scene_interface_unavailable',
+    'method_absolute_seek_mismatch': 'non_deterministic_seek',
+    'method_reverse_seek_mismatch': 'non_deterministic_seek',
+}
+
+
 class VideoLearningRepairMixin:
     def _schedule_render_repair(self, run, operation, result):
         diagnostic = result.get('diagnostic') or {}
         candidate = self._candidate(run)
         if (result.get('stop_proven') is not True
                 or result.get('status') != 'failed'
-                or diagnostic.get('source_repair_recommended') is not True
                 or diagnostic.get('receipt_bound') is not True):
             return False
         require(diagnostic.get('operation_id') == operation['id']
@@ -28,6 +34,13 @@ class VideoLearningRepairMixin:
             'video_learning_repair_binding_changed', 409)
         candidate.update(status='render_failed', render_operation_id=operation['id'],
             render_failure=deepcopy(diagnostic))
+        # Keep bound failure evidence even when the source must be preserved.
+        # Old receipts may have recommended reauthoring after a capture timeout;
+        # that historical advice cannot turn a technical retry into new artwork.
+        repair_category = _SOURCE_REPAIR_FAILURES.get(diagnostic.get('code'))
+        if (diagnostic.get('source_repair_recommended') is not True
+                or repair_category is None or repair_category != diagnostic.get('category')):
+            return False
         persisted = self.store.read('experiments', run['owner'], operation['experiment_id'])
         repairs = run.setdefault('render_repairs', [])
         if (run['stop_requested'] or persisted['stop_requested'] or len(repairs) >= 1

@@ -54,3 +54,13 @@ def test_guidance_caller_cannot_change_later_operation_environment_or_policy():
         three_webgl_backend='ANGLE/SwiftShader on CPU')
     assert second['capability_boundaries']
     assert second['environment']['evidence_scope'] == 'configured_renderer_policy_not_a_performance_measurement'
+
+
+def test_timeout_recovery_preserves_artwork_and_distinguishes_retry_from_more_resources():
+    guidance = learning_execution_guidance()
+    recovery = ' '.join(guidance['failure_recovery'])
+    assert 'Preserve the original source and failure evidence' in recovery
+    assert 'increase finite render resources or time' in recovery
+    assert 'do not assume the current retry changes those limits' in recovery
+    assert 'A timeout alone must not automatically return the work to the creator' in recovery
+    assert 'comparable observed visual quality' in guidance['objective']

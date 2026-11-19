@@ -67,8 +67,13 @@ def learning_execution_guidance():
             'Do not claim to have benchmarked, rendered, watched, or improved a result from source inspection alone.',
         ],
         failure_recovery=[
-            'A technical rerun of unchanged source is useful for a transient failure. '
-            'A repeated source, initialization or performance failure needs implementation repair, not unlimited reruns.',
+            'Preserve the original source and failure evidence when capture or execution reaches a time or resource limit. '
+            'Such a symptom does not establish invalid source or authorize a cheaper visual substitute. '
+            'Explain the limiting evidence and that the developer can increase finite render resources or time '
+            'and rerun the unchanged source; do not assume the current retry changes those limits.',
+            'Only a classified source, scene-interface or deterministic-seek correctness failure can authorize '
+            'a bounded implementation repair. A timeout alone must not automatically return the work to the creator. '
+            'Unknown execution or unproven stopping requires investigation before another attempt.',
             'For an authorized repair, preserve the frozen goal, criteria, reference observations, '
             'knowledge binding and explicit capability constraints. Revise your own implementation using '
             'the host-classified facts, and change the technique only within those constraints.',
