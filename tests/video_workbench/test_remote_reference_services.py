@@ -336,3 +336,20 @@ def test_pending_observation_reconciles_read_without_another_paid_submission(tmp
     assert len(service.store.read('experiments', OWNER, eid)['remote_observations']) == 1
     service.advance(OWNER, eid)
     assert len(author.submissions) == 2
+
+
+def test_recent_detail_does_not_discard_other_selected_reference_anchors(tmp_path):
+    service, _ = picture_system(tmp_path)
+    refs = [register(service, timestamp_seconds=time)[0] for time in (2, 3, 4)]
+    project = start_picture(service, refs[0]['id'], reference_ids=[ref['id'] for ref in refs])
+    run = service.store.read('experiments', OWNER, project['latest_experiment_id'])
+    ref = run['frozen']['references'][1]
+    observed = service._observe_remote(ref, times=list(range(5, 13)), quality='detail')
+    run['remote_observations'] = [dict(operation_id='read-1',
+        request=dict(reference_id=ref['id'], times=list(range(5, 13)), quality='detail', reason='Inspect detail.'),
+        observation=observed)]
+    document = service._document(run, 'create')
+    assert len(document['observation']['frames']) == service.protocol.MAX_FRAMES
+    assert {frame['reference_id'] for frame in document['observation']['frames']} == {ref['id'] for ref in refs}
+    assert {frame['actual_pts'] for frame in document['observation']['frames']} >= {2, 3, 4, 12}
+    service.protocol.validate_input(document)

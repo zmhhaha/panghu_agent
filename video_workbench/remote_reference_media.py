@@ -36,6 +36,7 @@ MAX_DETAIL_BYTES = 2 * 1024 * 1024
 MAX_OVERVIEW_BYTES = 96 * 1024
 DEFAULT_FETCH_BYTES = 128 * 1024 * 1024
 MAX_REQUESTS = 128
+MAX_OBSERVATION_SAMPLES = 24
 _RANGE = re.compile(r'bytes=(?:\d+-\d*|-\d+)\Z')
 _BILI_PATH = re.compile(r'/video/(?P<identity>BV[A-Za-z0-9]{10}|av[1-9][0-9]{0,15})/?\Z')
 _SAFE_HEADERS = frozenset({'accept', 'accept-language', 'user-agent', 'referer', 'origin', 'range'})
@@ -718,7 +719,10 @@ class RemoteReferenceMedia:
             and source.get('source_type') == 'video-url', 'remote_reference_source_invalid')
         _require(_finite(source.get('duration_seconds')) and 0 < source['duration_seconds'] <= MAX_DURATION,
             'remote_reference_source_invalid')
-        _require(type(times) is list and 1 <= len(times) <= 8 and all(_finite(item)
+        # Host-side whole-source analysis uses up to 24 overview frames. The
+        # Agent supplemental-observation protocol keeps its separate 8-frame
+        # request limit; it is not the capacity of this shared host reader.
+        _require(type(times) is list and 1 <= len(times) <= MAX_OBSERVATION_SAMPLES and all(_finite(item)
             and 0 <= item < source.get('duration_seconds', 0) for item in times),
             'remote_reference_times_invalid')
         _require(quality in {'overview', 'detail'}, 'remote_reference_quality_invalid')

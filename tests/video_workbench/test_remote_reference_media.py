@@ -234,6 +234,34 @@ def test_crop_uses_native_pixels_before_detail_resize(tmp_path, video):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_real_whole_source_overview_accepts_24_frames_with_verified_pts(tmp_path, video):
+    adapter = RemoteReferenceMedia(tmp_path, transport=Transport(video))
+    source = adapter.describe('https://media.example/video.mp4')
+    times = [index / 12 for index in range(24)]
+    result = adapter.observe(source, times=times, quality='overview', deadline_at=time.time() + 60)
+    assert len(result['frames']) == result['coverage']['requested_samples'] == 24
+    assert result['coverage']['unique_presentation_frames'] == 24
+    assert result['coverage']['aliased_samples'] == 0
+    for requested, frame in zip(times, result['frames']):
+        assert requested <= frame['actual_pts'] < requested + 1/24 + 1e-6
+        assert frame['actual_pts'] == frame['pts_ticks'] * frame['time_base'][0] / frame['time_base'][1]
+        assert frame['width'] <= 640 and frame['height'] <= 480
+        assert len(frame['content']) <= 96 * 1024
+    assert result['coverage']['continuous_motion_verified'] is False
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_25_observation_frames_are_rejected_before_network_or_decoding(tmp_path, video):
+    transport = Transport(video)
+    adapter = RemoteReferenceMedia(tmp_path, transport=transport)
+    source = adapter.describe('https://media.example/video.mp4')
+    prior_calls = len(transport.calls)
+    with pytest.raises(ServiceError, match='remote_reference_times_invalid'):
+        adapter.observe(source, times=[index / 24 for index in range(25)])
+    assert len(transport.calls) == prior_calls
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_detected_quality_change_fails_without_decoding_or_saving_media(tmp_path, video):
     transport = Transport(video)
     adapter = RemoteReferenceMedia(tmp_path, transport=transport)
