@@ -19,6 +19,7 @@ from .video_animation_review import _image_header, MAX_IMAGE_BYTES
 from ..animation_knowledge_contract import validate_snapshot
 from ..contracts import InlineFile, ServiceError, canonical_bytes, digest
 from ..engines import StopEvidence
+from .. import reference_observation_contract as remote_observation
 
 
 AUTHOR_PROFILE = 'video.picture-learning-author.v1'
@@ -71,7 +72,8 @@ def validate_input(document):
         'constraints', 'observation', 'base_source', 'feedback', 'knowledge_snapshot',
         'prior_review', 'learned_method'}
     require(type(document) is dict and required <= set(document)
-        and set(document) <= required | {'knowledge_binding', 'assets', 'frozen_at', 'selection'})
+        and set(document) <= required | {'knowledge_binding', 'assets', 'frozen_at', 'selection'}
+            | remote_observation.INPUT_FIELDS)
     require(document['schema'] == INPUT_SCHEMA and type(document['mode']) is str
         and document['mode'] in {'create', 'review', 'transfer_plan'}
         and type(document['work_kind']) is str and document['work_kind'] in {'reproduction', 'transfer'})
@@ -90,6 +92,7 @@ def validate_input(document):
             and all(type(row) is str and row in {'html-svg', 'canvas', 'three'} for row in engines)
             and len(set(engines)) == len(engines))
     observation = document['observation']
+    reference_sources = remote_observation.validate_input(document)
     require(type(observation) is dict and {'frames'} <= set(observation)
         and type(observation['frames']) is list and len(observation['frames']) <= MAX_FRAMES)
     seen = set()
@@ -102,6 +105,7 @@ def validate_input(document):
             and frame['purpose'] in {'reference', 'output', 'baseline'})
         if 'frame_id' in frame:
             require(type(frame['frame_id']) is str and _ID.fullmatch(frame['frame_id']))
+        remote_observation.validate_remote_frame(frame, reference_sources)
         seen.add(frame['file_name'])
         purposes.add(frame['purpose'])
     if document['work_kind'] == 'reproduction':
@@ -132,7 +136,7 @@ def validate_result(document, input_sha256, input_document=None):
     context = validate_input(input_document)
     required = {'schema', 'input_sha256', 'mode', 'source', 'review', 'transfer_task', 'method'}
     require(type(document) is dict and required <= set(document)
-        and set(document) <= required | {'limitations', 'evidence_scope'}
+        and set(document) <= required | {'limitations', 'evidence_scope', 'observation_request'}
         and document['schema'] == RESULT_SCHEMA
         and document['input_sha256'] == input_sha256 == digest(context)
         and document['mode'] == context['mode'], 'picture_learning_result_binding_mismatch')
@@ -140,6 +144,9 @@ def validate_result(document, input_sha256, input_document=None):
         _texts(document['limitations'])
     if 'evidence_scope' in document:
         require(document['evidence_scope'] == 'static_only')
+    if remote_observation.validate_result(document, context):
+        require(len(canonical_bytes(document)) <= OUTPUT_MAX_BYTES, 'picture_learning_output_too_large', 413)
+        return deepcopy(document)
     if context['mode'] == 'create':
         validate_source(document['source'], constraints=context['constraints'])
         require(document['review'] is None and document['transfer_task'] is None
@@ -254,7 +261,8 @@ class VideoPictureLearningProfile:
             'Never execute source, browse, render, fetch, call another model, approve or publish. '
             'Write one JSON object to output.json. The host renders after your stopped handoff. '
             'Only static pixels are evidence; motion, audio, transfer and user approval stay unverified '
-            'unless explicitly supported by the separate actual experiment records.')
+            'unless explicitly supported by the separate actual experiment records.'
+            + remote_observation.PROMPT)
 
     def collect_output(self, workspace, envelope, proof):
         require(type(proof) is StopEvidence and proof.execution_id == envelope.attempt_id

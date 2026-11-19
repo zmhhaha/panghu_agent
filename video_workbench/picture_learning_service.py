@@ -20,6 +20,7 @@ from .animation_creation_service import _run_lock
 from .learning_capabilities import LearningCapabilitiesMixin
 from .learning_strategy_service import LearningStrategyMixin
 from .learning_execution_guidance import learning_execution_guidance
+from .remote_reference_service import RemoteReferenceServiceMixin, remote_reference, MAX_SOURCE_SECONDS
 from .picture_learning_store import (
     PictureLearningStore, TERMINAL, identifier, new_id, owner_id, require,
 )
@@ -60,7 +61,7 @@ def _image(raw, mime):
     return width, height
 
 
-class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
+class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMixin, LearningStrategyMixin):
     protocol = protocol
     prefix = PREFIX
     store_type = PictureLearningStore
@@ -69,12 +70,16 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
         'allow_probes', 'capability_selection'})
 
     def __init__(self, root, *, author_gateway, review_gateway, renderer,
-                 library_adapter=None, resource_stage=None, clock=time.time):
+                 library_adapter=None, resource_stage=None, remote_media_adapter=None, clock=time.time):
         self.store = self.store_type(root)
         self.root = self.store.root
         self.author, self.reviewer = author_gateway, review_gateway
         self.renderer, self.library_adapter, self.clock = renderer, library_adapter, clock
         self.resource_stage = resource_stage
+        if remote_media_adapter is None:
+            from .remote_reference_media import RemoteReferenceMedia
+            remote_media_adapter = RemoteReferenceMedia(self.root / 'remote-preparation')
+        self.remote_media = remote_media_adapter
 
     def _enabled(self):
         return self.author is not None and self.reviewer is not None and self.renderer is not None
@@ -88,11 +93,15 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
         return self.store.read('references', owner, identity)
 
     def _reference_public(self, row):
+        if remote_reference(row):
+            return self._remote_reference_public(row)
         return {key: deepcopy(row[key]) for key in
                 ('id', 'file_name', 'mime_type', 'sha256', 'width', 'height', 'created_at')} | {
                     'url': self.prefix + '/references/' + row['id'] + '/media'}
 
     def upload_reference(self, owner, body):
+        if type(body) is dict and body.get('source_type') == 'video-url':
+            return self._register_remote_reference(owner, body, picture=True)
         owner_id(owner)
         require(type(body) is dict and set(body) == {
             'request_id', 'file_name', 'mime_type', 'content_base64'})
@@ -131,6 +140,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
 
     def reference_artifact(self, owner, reference_id):
         row = self._reference(owner, reference_id)
+        require(not remote_reference(row), 'remote_reference_not_stored_as_media', 409)
         self.store.read_blob(row['sha256'])
         return self.store.blob_path(row['sha256']), row['mime_type']
 
@@ -188,6 +198,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                 and 180 <= height <= 1080, 'picture_learning_dimensions_invalid')
         enabled = body.get('use_wikiskill', True)
         require(type(enabled) is bool)
+        budget = self._budget(body)
         now, pid, eid = self.clock(), new_id(), new_id()
         binding, snapshot = self._freeze_knowledge(owner, eid, enabled)
         project = dict(id=pid, owner=owner, request_id=body['request_id'], title=body['title'],
@@ -200,9 +211,10 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
             input_boundary='frozen_for_entire_experiment',
             runtime_capabilities=self._runtime_capabilities())
         self._freeze_learning_options(body, frozen)
-        frozen.update(self._extra_frozen(owner, body, references))
+        frozen.update(self._extra_frozen(owner, body, references,
+            deadline_at=now + budget['max_seconds']))
         run = self._new_experiment(owner, pid, eid, body['request_id'], 'initial', frozen,
-                                   self._budget(body), now)
+                                   budget, now)
         with self.store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             existing = self.store.request(owner, 'project', body['request_id'], body, db=db)
@@ -212,8 +224,9 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                 self.store.bind_request(owner, 'project', body['request_id'], body, pid, db)
         return self.get(owner, existing or pid)
 
-    def _extra_frozen(self, owner, body, references):
-        return {}
+    def _extra_frozen(self, owner, body, references, *, deadline_at=None):
+        return self._remote_picture_frozen(references,
+            deadline_at=deadline_at)
 
     def _baseline_observation(self, candidate):
         return dict(sha256=candidate['observed_sha256'], suffix=candidate['observed_suffix'])
@@ -288,6 +301,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                     base_observation=self._baseline_observation(candidate),
                     learned_method=deepcopy(candidate.get('method')))
             budget = self._budget(body, prior['budget'])
+            self._refresh_remote_frozen(frozen, deadline_at=now + budget['max_seconds'])
         run = self._new_experiment(owner, project_id, eid, body['request_id'], mode, frozen, budget, now)
         if mode == 'continue' and candidate.get('resource_descriptor'):
             run['resource_baseline_descriptor'] = deepcopy(candidate['resource_descriptor'])
@@ -333,6 +347,12 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                 if run['best_candidate_id'] == previous['id']:
                     run['best_candidate_id'] = restored['id']
             self._learning_restore_retry(prior, run)
+            if prior.get('remote_observations'):
+                run['remote_observations'] = deepcopy(prior['remote_observations'])
+            if prior.get('remote_observation_pending'):
+                run['remote_observation_pending'] = deepcopy(prior['remote_observation_pending'])
+                run['remote_observation_pending']['operation_id'] = run['id'] + '-reference-' + str(
+                    len(run.get('remote_observations', [])) + 1)
             self._restore_learning_resources(prior, run)
             if prior.get('learning_strategy') or prior.get('resource_plan'):
                 run['stage'] = prior['stage']
@@ -375,6 +395,10 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
         frames = []
         if run['work_kind'] == 'reproduction':
             for index, ref in enumerate(run['frozen']['references']):
+                if remote_reference(ref):
+                    observed = run['frozen']['remote_reference_observations'][ref['id']]
+                    frames += self._named_remote_frames(observed, prefix=f'reference-source-{index + 1}')
+                    continue
                 suffix = '.png' if ref['observed_mime_type'] == 'image/png' else '.jpg'
                 frames.append(dict(frame_id=f'reference-{index + 1}', file_name=f'reference-{index + 1}{suffix}',
                     sha256=ref['observed_sha256'], purpose='reference'))
@@ -412,7 +436,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                 baseline = run['frozen']['base_observation']
                 frames.append(dict(frame_id='baseline-1', file_name='baseline-1' + baseline['suffix'],
                                    sha256=baseline['sha256'], purpose='baseline'))
-        return frames
+        return self._with_remote_supplemental_frames(run, frames)
 
     def _document(self, run, mode):
         frozen = run['frozen']
@@ -445,7 +469,8 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
             knowledge_binding=deepcopy(frozen['library_binding']), assets=assets, frozen_at=run['created_at'],
             selection=dict(base_candidate_id=best['id'] if best else frozen.get('base_candidate_id'),
                            previous_review_candidate_id=candidate['id'] if candidate else None))
-        return self._learning_document(run, self._resource_document(run, document))
+        return self._remote_document(run,
+            self._learning_document(run, self._resource_document(run, document)))
 
     def _operation(self, run):
         if run['active_operation_id']:
@@ -558,6 +583,8 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
             return
         operation.update(status='completed', result=result, observation_receipt=receipt)
         self._finish_operation(run, operation)
+        if self._queue_remote_observation(run, operation, result):
+            return
         resource_proposed = (self._adopt_resource_proposal(run, operation, result)
             if operation['stage'] == 'author' else False)
         if operation['stage'] == 'author':
@@ -714,6 +741,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
         run['stage'] = 'review'
 
     def _stop_or_expire(self, run):
+        self._cancel_remote_observation(run)
         if run['stage'] == 'learning_resources':
             if not self._advance_learning_resources(run, cancelled=True):
                 return self._save(run)
@@ -760,6 +788,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                 else:
                     operation.update(status='cancelled', job_id=job['job_id'])
                     self._finish_operation(run, operation)
+        self._cancel_remote_observation(run)
         return self._finish(run, 'developer_stopped' if run['stop_requested'] else 'budget_exhausted',
                             'cancelled' if run['stop_requested'] else 'completed')
 
@@ -785,7 +814,9 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                         self.resource_stage.restore_retry(owner, run, run['resource_plan'],
                             previous, previous['resource_plan'])
                         run.pop('resource_retry_pending', None)
-                    if run['stage'] == 'learning_resources':
+                    if self._resume_remote_observation(run):
+                        pass
+                    elif run['stage'] == 'learning_resources':
                         self._advance_learning_resources(run)
                     elif self._learning_resume_completed_author(run):
                         pass
@@ -890,7 +921,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
         bridge = getattr(self, 'animation_bridge', None)
         if bridge is not None:
             result['animation_links'] = bridge.links(owner, project_id)
-        return result
+        return self._project_remote_references(result, latest)
 
     def catalogue(self, owner):
         owner_id(owner)
@@ -904,8 +935,10 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
             if preview is None and candidates:
                 preview = candidates[0]
             row = {key: deepcopy(value) for key, value in project.items() if key != 'owner'}
+            reference = self._reference(owner, project['reference_ids'][0])
             row.update(state=latest['state'], experiments_count=len(runs),
                 latest_experiment_request_id=latest['request_id'], reference_url=
+                    None if remote_reference(reference) else
                     PREFIX + '/references/' + project['reference_ids'][0] + '/media',
                 preview_url=(PREFIX + '/projects/' + project['id'] + '/artifacts/'
                     + preview['artifacts']['picture']['id']) if preview else None)
@@ -914,8 +947,12 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
             owner_key=hashlib.sha256(owner.encode('utf-8')).hexdigest(),
             availability=dict(enabled=self._enabled(), reason=None if self._enabled() else '图片创作执行器尚未配置'),
             projects=projects, limits=dict(reference_bytes=MAX_UPLOAD, reference_count=4,
-                max_rounds=8, max_seconds=3600, max_width=1920, max_height=1080),
-            runtime_capabilities=self._runtime_capabilities(), capabilities=self._capabilities_public(),
+                max_rounds=8, max_seconds=3600, max_width=1920, max_height=1080,
+                remote_reference_duration_seconds=MAX_SOURCE_SECONDS,
+                supplemental_observation_requests=4, supplemental_observation_frames=32),
+            references=[self._reference_public(value) for value in self.store.list('references', owner)],
+            runtime_capabilities=self._runtime_capabilities(), capabilities=dict(self._capabilities_public(),
+                remote_video_reference=True, on_demand_reference_observation=True),
             verification_scope='static_only')
 
     catalog = catalogue
@@ -923,6 +960,9 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
     def artifact(self, owner, project_id, artifact_id):
         self.store.read('projects', owner, project_id)
         identifier(artifact_id)
+        evidence = self._reference_evidence_artifact(owner, project_id, artifact_id)
+        if evidence is not None:
+            return evidence
         all_works = self._all_candidates(owner, project_id) + [item
             for run in self.store.list('experiments', owner, project_id=project_id)
             for item in run.get('internal_attempts', [])]

@@ -26,7 +26,7 @@
         <button id="picture-pending-retry" class="button secondary" type="button">重送原请求</button>
       </section>
       <section id="picture-home" aria-labelledby="picture-title">
-        <div class="page-heading"><div><p class="eyebrow">观察参考 · 真实绘制 · 比较学习</p><h1 id="picture-title">图片学习库</h1><p class="muted">先把一帧做好。上传参考图，学习造型、笔触、材质或光影；保留可继续开发的绘制源码和实际渲染结果。</p></div><span id="picture-count" class="count"></span></div>
+        <div class="page-heading"><div><p class="eyebrow">观察参考 · 真实绘制 · 比较学习</p><h1 id="picture-title">图片学习库</h1><p class="muted">先把一帧做好。从视频链接按需取帧，或上传参考图，学习造型、笔触、材质或光影；保留绘制源码和实际渲染结果。</p></div><span id="picture-count" class="count"></span></div>
         <p id="picture-availability" class="muted" role="status"></p>
         <div class="gallery-tools"><label class="search-label" for="picture-search">查找学习项目<input id="picture-search" type="search" placeholder="名称或学习目标" autocomplete="off"></label></div>
         <div id="picture-cards" class="gallery-grid" aria-live="polite"></div>
@@ -50,7 +50,15 @@
           <div id="picture-new-fields">
             <label for="picture-name">学习项目名称<input id="picture-name" name="title" maxlength="200" required placeholder="例如：学习山石的皴擦与留白"></label>
             <label for="picture-goal">这次重点学什么<textarea id="picture-goal" name="goal" rows="4" maxlength="8000" required placeholder="说明想复现的造型、笔触、材质、光影或构图技法，以及不需要照搬的内容。"></textarea></label>
-            <label for="picture-reference">参考图片<input id="picture-reference" type="file" accept="image/png,image/jpeg" required><span class="small muted">上传实际 PNG / JPEG 图片，最大 8 MB。参考比例与输出画幅可以不同。</span></label>
+            <label for="picture-reference-source">参考来源<select id="picture-reference-source" name="reference_source"><option value="video-url">从视频链接取帧</option><option value="upload">上传参考图片</option><option value="saved">选择已保存参考</option></select></label>
+            <div id="picture-url-fields">
+              <label for="picture-source-url">源视频链接<input id="picture-source-url" name="source_url" type="url" maxlength="2000" placeholder="https://www.bilibili.com/video/…" required></label>
+              <label for="picture-timestamp">截图时间（秒）<input id="picture-timestamp" name="timestamp_seconds" type="number" min="0" step="any" value="0" required></label>
+              <p class="small muted">开始实验后按需从源站读取这一帧，不长期保存整条参考视频。填写链接本身不代表已观察，实际取到的画质会记录在项目中。</p>
+              <details class="form-details"><summary>只学习画面中的局部（可选）</summary><p class="small muted">使用 0–1 的画面比例。全部留空表示完整画面；填写时需要完整指定四项。</p><div class="form-row"><label for="picture-crop-x">左侧位置<input id="picture-crop-x" name="crop_x" type="number" min="0" max="1" step="any" placeholder="0"></label><label for="picture-crop-y">顶部位置<input id="picture-crop-y" name="crop_y" type="number" min="0" max="1" step="any" placeholder="0"></label><label for="picture-crop-width">宽度<input id="picture-crop-width" name="crop_width" type="number" min="0" max="1" step="any" placeholder="1"></label><label for="picture-crop-height">高度<input id="picture-crop-height" name="crop_height" type="number" min="0" max="1" step="any" placeholder="1"></label></div></details>
+            </div>
+            <div id="picture-upload-fields" hidden><label for="picture-reference">参考图片<input id="picture-reference" type="file" accept="image/png,image/jpeg"><span class="small muted">上传实际 PNG / JPEG 图片，最大 8 MB。参考比例与输出画幅可以不同。</span></label></div>
+            <div id="picture-saved-fields" hidden><label for="picture-saved-reference">已保存参考<select id="picture-saved-reference" name="reference_id"><option value="">请选择参考</option></select></label></div>
             <div id="picture-reference-preview" class="upload-preview" hidden></div>
             <div class="form-row picture-dimensions"><label for="picture-width">输出宽度（像素）<input id="picture-width" name="width" type="number" min="320" max="1920" step="1" value="1280" required></label><label for="picture-height">输出高度（像素）<input id="picture-height" name="height" type="number" min="180" max="1080" step="1" value="720" required></label></div>
             <label for="picture-criteria">可观察的标准（可选，每行一项）<textarea id="picture-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：山体由皴擦形成体积，而不是重复的带状墨块。留空时由 Agent 根据目标拟定。"></textarea></label>

@@ -40,7 +40,8 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   manim_recipe_agent_token_file=None, manim_resource_image=None,
                   manim_resource_admission_file=None, film_manim_admission_file=None,
                   enable_collaborative_authoring=False, collaboration_agent_token_file=None,
-                  picture_agent_token_file=None, video_learning_agent_token_file=None):
+                  picture_agent_token_file=None, video_learning_agent_token_file=None,
+                  remote_reference_cookie_file=None, remote_reference_dns='system'):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
@@ -65,6 +66,15 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
         assets_dir=assets_dir, enabled=True)
     client = AgentClient(agent_url, agent_token, timeout=30)
     method_client = collaboration_client = manim_client = picture_client = video_learning_client = None
+    remote_references = None
+    if picture_agent_token_file is not None or video_learning_agent_token_file is not None:
+        from .remote_reference_media import RemoteReferenceMedia, PublicHTTPS, PublicDNSResolver
+        if remote_reference_dns not in {'system', 'alidns', 'cloudflare', 'google'}:
+            raise ValueError('remote_reference_dns_invalid')
+        transport = None if remote_reference_dns == 'system' else PublicHTTPS(
+            resolver=PublicDNSResolver(remote_reference_dns))
+        remote_references = RemoteReferenceMedia(Path(root) / 'remote-reference-preparation',
+            cookie_file=remote_reference_cookie_file, transport=transport)
     try:
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
@@ -167,6 +177,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 raise ValueError('picture_learning_distinct_credentials_required')
             picture_client = AgentClient(agent_url, picture_token, timeout=30)
             pictures = PictureLearningService(Path(root) / 'picture-lab',
+                remote_media_adapter=remote_references,
                 author_gateway=PictureAuthorGateway(picture_client),
                 review_gateway=PictureReviewGateway(picture_client),
                 renderer=PictureLearningRenderer(Path(root) / 'picture-renders', runtime_renderer=methods.renderer),
@@ -208,6 +219,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 raise ValueError('video_learning_distinct_credentials_required')
             video_learning_client = AgentClient(agent_url, video_token, timeout=30)
             videos = VideoLearningService(Path(root) / 'video-lab',
+                remote_media_adapter=remote_references,
                 author_gateway=VideoLearningAuthorGateway(video_learning_client),
                 review_gateway=VideoLearningReviewGateway(video_learning_client),
                 renderer=VideoLearningRenderer(Path(root) / 'video-learning-renders', runtime_renderer=methods.renderer),
@@ -258,6 +270,10 @@ def main(argv=None):
         help='Distinct admitted reference-video creator/reviewer credential; requires HyperFrames.')
     parser.add_argument('--picture-agent-token-file', type=Path,
         help='Distinct admitted direct-reference picture creator/reviewer credential; requires HyperFrames.')
+    parser.add_argument('--remote-reference-cookie-file', type=Path,
+        help='Optional host-only source-site cookie file. Never copied into reference records or Agent inputs.')
+    parser.add_argument('--remote-reference-dns', choices=('system', 'alidns', 'cloudflare', 'google'),
+        default='system', help='Public resolver for remote references; Fake-IP host DNS needs an explicit public resolver.')
     parser.add_argument('--enable-collaborative-authoring', action='store_true',
         help='Explicitly enable the separately admitted collaborative author; no task starts at boot.')
     parser.add_argument('--collaboration-agent-token-file', type=Path,

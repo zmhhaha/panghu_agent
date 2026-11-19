@@ -19,6 +19,7 @@ from .video_animation_review import _image_header, MAX_IMAGE_BYTES
 from ..animation_knowledge_contract import validate_snapshot
 from ..contracts import InlineFile, ServiceError, canonical_bytes, digest
 from ..engines import StopEvidence
+from .. import reference_observation_contract as remote_observation
 
 
 AUTHOR_PROFILE = 'video.reference-learning-author.v1'
@@ -71,7 +72,8 @@ def validate_input(document):
         'constraints', 'observation', 'base_source', 'feedback', 'knowledge_snapshot',
         'prior_review', 'learned_method'}
     require(type(document) is dict and required <= set(document)
-        and set(document) <= required | {'knowledge_binding', 'assets', 'frozen_at', 'selection', 'sound_events'})
+        and set(document) <= required | {'knowledge_binding', 'assets', 'frozen_at', 'selection', 'sound_events'}
+            | remote_observation.INPUT_FIELDS)
     require(document['schema'] == INPUT_SCHEMA and type(document['mode']) is str
         and document['mode'] in {'create', 'review', 'transfer_plan', 'analyze'}
         and type(document['work_kind']) is str and document['work_kind'] in {'reproduction', 'transfer'})
@@ -87,7 +89,7 @@ def validate_input(document):
         and type(constraints.get('fps')) is int and constraints['fps'] == 24)
     seconds = constraints.get('duration_seconds')
     require(type(seconds) in (int, float) and math.isfinite(seconds) and 1 <= seconds
-        <= (600 if document['mode'] == 'analyze' else 60)
+        <= (21600 if document['mode'] == 'analyze' else 60)
         and (document['mode'] == 'analyze' or seconds * 24 == int(seconds * 24)),
         'reference_learning_duration_invalid')
     if 'total_frames' in constraints:
@@ -98,6 +100,7 @@ def validate_input(document):
             and all(type(row) is str and row in {'html-svg', 'canvas', 'three'} for row in engines)
             and len(set(engines)) == len(engines))
     observation = document['observation']
+    reference_sources = remote_observation.validate_input(document)
     require(type(observation) is dict and {'frames'} <= set(observation)
         and type(observation['frames']) is list and len(observation['frames']) <= MAX_FRAMES)
     seen = set()
@@ -111,7 +114,10 @@ def validate_input(document):
             and frame['file_name'] not in seen and type(frame['sha256']) is str
             and _SHA.fullmatch(frame['sha256']) and type(frame['purpose']) is str
             and frame['purpose'] in {'reference', 'output', 'baseline'})
-        require(type(frame.get('media_sha256')) is str and _SHA.fullmatch(frame['media_sha256']))
+        if 'source_snapshot_sha256' in frame:
+            remote_observation.validate_remote_frame(frame, reference_sources)
+        else:
+            require(type(frame.get('media_sha256')) is str and _SHA.fullmatch(frame['media_sha256']))
         for key in ('requested_time', 'actual_pts', 'clip_time'):
             require(type(frame.get(key)) in (int, float) and math.isfinite(frame[key]) and frame[key] >= 0,
                 'reference_learning_frame_time_invalid')
@@ -120,10 +126,13 @@ def validate_input(document):
             require(type(frame['frame_id']) is str and _ID.fullmatch(frame['frame_id']))
             require(frame['frame_id'] not in frame_ids, 'reference_learning_duplicate_frame_id')
             frame_ids.add(frame['frame_id'])
-        identity = (frame['purpose'], frame['media_sha256'], frame['actual_pts'])
+        source_identity = frame.get('media_sha256', frame.get('source_snapshot_sha256'))
+        crop_identity = tuple(sorted((frame.get('crop') or {}).items()))
+        identity = (frame['purpose'], source_identity, frame['actual_pts'], crop_identity,
+            frame.get('quality') if 'source_snapshot_sha256' in frame else None)
         require(identity not in decoded, 'reference_learning_duplicate_decoded_frame')
         decoded.add(identity)
-        group = (frame['purpose'], frame['media_sha256'])
+        group = (frame['purpose'], source_identity)
         require(frame['clip_time'] >= ordered.get(group, -1), 'reference_learning_frame_order_invalid')
         ordered[group] = frame['clip_time']
         seen.add(frame['file_name'])
@@ -162,7 +171,7 @@ def validate_result(document, input_sha256, input_document=None):
     context = validate_input(input_document)
     required = {'schema', 'input_sha256', 'mode', 'source', 'review', 'transfer_task', 'method'}
     require(type(document) is dict and required <= set(document)
-        and set(document) <= required | {'limitations', 'evidence_scope', 'sound_events', 'analysis'}
+        and set(document) <= required | {'limitations', 'evidence_scope', 'sound_events', 'analysis', 'observation_request'}
         and document['schema'] == RESULT_SCHEMA
         and document['input_sha256'] == input_sha256 == digest(context)
         and document['mode'] == context['mode'], 'reference_learning_result_binding_mismatch')
@@ -172,6 +181,9 @@ def validate_result(document, input_sha256, input_document=None):
     events = document.get('sound_events', [])
     validate_sound_events(events, context['constraints']['duration_seconds'])
     require(context['mode'] == 'create' or events == [], 'reference_learning_review_sound_forbidden')
+    if remote_observation.validate_result(document, context):
+        require(len(canonical_bytes(document)) <= OUTPUT_MAX_BYTES, 'reference_learning_output_too_large', 413)
+        return deepcopy(document)
     if context['mode'] == 'analyze':
         require(document['source'] is document['review'] is document['transfer_task']
             is document['method'] is None, 'reference_learning_analysis_output_invalid')
@@ -346,7 +358,8 @@ class VideoReferenceLearningProfile:
             'Never execute source, browse, render, fetch, call another model, approve or publish. '
             'Write one JSON object to output.json. The host renders a complete HyperFrames MP4 after your stopped handoff. '
             'Only sampled pixels are evidence; continuous motion, audio, transfer and user approval stay unverified '
-            'unless explicitly supported by the separate actual experiment records.')
+            'unless explicitly supported by the separate actual experiment records.'
+            + remote_observation.PROMPT)
 
     def collect_output(self, workspace, envelope, proof):
         require(type(proof) is StopEvidence and proof.execution_id == envelope.attempt_id

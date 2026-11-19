@@ -1,5 +1,7 @@
 # 需求创作、图片学习与视频学习：三库目标设计
 
+2026-11-19 补充：[按需远程参考设计](remote-reference-learning.md)明确图片可从原站视频定点取帧，视频可按链接、片段与高清局部读取；不要求先上传或长期保存参考整片。现有文件上传仍保留，旧说明中的来源网址备注仅适用于上传来源；显式链接来源使用新的按需读取合同。是否上线及实际可用画质由独立验收记录说明。
+
 2026-11-18，依据讨论确认，随后已转入实施并优先完成图片学习首版；视频已激活采样帧角色、运行 r5 executor／r6 lab，一个内部 6 秒参考已实际完成两轮复现与换内容作品，浏览器输入查看、刷新展开与播放等技术验收通过，见[精简证据](evidence/video-learning-20261118.json)。本文件保留完整目标与设计基线；实时实施边界见[当前架构](current-architecture.md)，图片使用见[网页与 API](picture-learning-library.md)，视频合同见[视频学习库](video-learning-library.md)，实际验证按独立回执判断。设计本身不代表所有能力已经上线或获得艺术认可，知识仍须开发者手动发版。
 
 本文补充[统一设计](agent-creation-effect-library-plan.md)，沿用[从零重做与知识加载](fresh-rebuild-and-skill-loading-design.md)中已确认的归属、继承、技术重试和确切版本规则。有效规格与任务由根仓库 `.openspec-project.json` 指向的 OpenSpec 项目 `ec663f5a-53d3-4a0e-9037-933eb788d183` 管理，主要变更为 `evolve-video-agent-creation-and-effect-library`。文档中的工作包是依赖与验收说明，不另外维护一份实时完成计数。

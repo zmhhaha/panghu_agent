@@ -44,14 +44,16 @@
             <input name="analysis_id" id="video-analysis-id" type="hidden"><input name="segment_index" id="video-segment-index" type="hidden">
             <label for="video-name">学习项目名称<input id="video-name" name="title" maxlength="200" required placeholder="例如：冲击波触发群体依次响应"></label>
             <label for="video-goal">这次重点学什么<textarea id="video-goal" name="goal" rows="4" maxlength="8000" required placeholder="说明想复现的运动、节奏、形变、转场或画面技法，以及不需要照搬的内容。"></textarea></label>
-            <label for="video-reference">参考视频<input id="video-reference" type="file" accept="video/mp4,video/webm" required><span class="small muted">上传实际 MP4 / WebM，最大 24 MB。请先明确一个 1–60 秒效果片段；网址不能代替实际视频。</span></label>
+            <label for="video-reference-source">参考来源<select id="video-reference-source" name="reference_source"><option value="video-url">读取视频链接</option><option value="upload">上传参考视频</option><option value="saved">选择已保存参考</option></select></label>
+            <div id="video-url-fields"><label for="video-source-url">源视频链接<input id="video-source-url" name="source_url" type="url" maxlength="2000" placeholder="https://www.bilibili.com/video/…" required></label><p class="small muted">需要观察时从源站读取所选片段或帧，不长期保存整条参考视频。实际画质和观察范围会记录在项目中；填写链接不代表已观看。</p></div>
+            <div id="video-upload-fields" hidden><label for="video-reference">参考视频<input id="video-reference" type="file" accept="video/mp4,video/webm"><span class="small muted">上传实际 MP4 / WebM，最大 24 MB。请明确一个 1–60 秒效果片段，也可先分析候选。</span></label></div>
             <div id="video-reference-preview" class="upload-preview" hidden></div>
-            <label for="video-saved-reference">或选择已上传的参考<select id="video-saved-reference"><option value="">使用新上传的视频</option></select></label>
+            <div id="video-saved-fields" hidden><label for="video-saved-reference">已保存参考<select id="video-saved-reference"><option value="">请选择参考</option></select></label></div>
             <div class="video-analysis-actions"><label for="video-analysis-minutes">候选分析预算（分钟）<input id="video-analysis-minutes" type="number" min="1" max="30" value="10"></label><button id="video-analyze" class="button secondary" type="button">分析可学习片段</button><p class="small muted">不确定学习哪一段时，可以先分析。按实际采样范围提出候选；不会自动开始制作。已有明确片段时，直接填写下方范围。</p></div>
             <section id="video-form-analyses-section" class="video-form-analyses" hidden aria-labelledby="video-form-analyses-title"><h3 id="video-form-analyses-title">已有参考分析</h3><p class="small muted">打开卡片查看候选。选择片段会填写本次需求，开始制作前仍可调整。</p><div id="video-form-analyses" class="gallery-grid"></div></section>
             <div class="form-row"><label for="video-start">片段开始（秒）<input id="video-start" name="start_seconds" type="number" min="0" step="any" value="0" required></label><label for="video-end">片段结束（秒）<input id="video-end" name="end_seconds" type="number" min="1" step="any" value="8" required></label></div>
             <label class="checkbox-label" for="video-learn-audio"><input id="video-learn-audio" name="learn_audio" type="checkbox" checked><span>按目标学习有表达作用的音效及其时机</span></label>
-            <p class="small muted">此项记录音效学习目标。当前 Agent 通过采样帧观察画面，尚不能实际听审音轨或验证音画同步；参考音轨仍会保留供播放。不默认复刻旁白或背景音乐。</p>
+            <p class="small muted">此项记录音效学习目标。当前 Agent 通过采样帧观察画面，尚不能实际听审音轨或验证音画同步；链接来源的音轨不会因此自动保存。不默认复刻旁白或背景音乐。</p>
             <div class="form-row video-dimensions"><label for="video-width">输出宽度（像素）<input id="video-width" name="width" type="number" min="320" max="1280" step="1" value="1280" required></label><label for="video-height">输出高度（像素）<input id="video-height" name="height" type="number" min="180" max="720" step="1" value="720" required></label></div>
             <label for="video-criteria">可观察的标准（可选，每行一项）<textarea id="video-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：波前到达后对象才响应，按距离错峰，并在结尾自然收束。留空时由 Agent 根据目标拟定。"></textarea></label>
           </div>

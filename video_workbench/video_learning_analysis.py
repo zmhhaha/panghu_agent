@@ -6,6 +6,7 @@ from .animation_creation_service import _run_lock
 from .picture_learning_store import TERMINAL, identifier, new_id, owner_id, require
 from .picture_learning_service import _text, REMOTE_ACTIVE
 from .video_learning_media import LIMITATIONS
+from .remote_reference_service import remote_reference, MAX_OBSERVATION_REQUESTS, MAX_SUPPLEMENTAL_FRAMES, normalized_crop
 
 
 class VideoLearningAnalysis:
@@ -52,7 +53,29 @@ class VideoLearningAnalysis:
             verification_scope='sampled_frames_only', continuous_motion_verified=False,
             audio_verified=False, creation_started=False)
         result['candidates'] = deepcopy(result['candidate_segments'])
+        result['observation_request_history'] = deepcopy(value.get('remote_observations', []))
+        result['role_operations'] = [{key: item.get(key) for key in
+            ('operation_id', 'job_id', 'input_sha256', 'status')} for item in value.get('role_operations', [])]
+        reference = value['frozen']['reference']
+        if remote_reference(reference) and (value.get('observation') or {}).get('frames'):
+            frame = value['observation']['frames'][0]
+            result['reference_observation'] = self._remote_reference_public(reference) | dict(
+                frame_url=self.prefix + '/references/' + reference['id'] + '/analyses/' + value['id']
+                    + '/frames/' + frame['sha256'], actual_pts=frame['actual_pts'],
+                observed_width=frame['width'], observed_height=frame['height'],
+                observed_sha256=frame['sha256'], observation_status='sampled_frames_only')
         return result
+
+    def analysis_reference_artifact(self, owner, reference_id, analysis_id, frame_sha256):
+        self._reference(owner, reference_id)
+        value = self.store.analysis(owner, analysis_id)
+        require(value['reference_id'] == reference_id, 'video_learning_analysis_not_found', 404)
+        observations = ([value['observation']] if value.get('observation') else []) + [
+            item['observation'] for item in value.get('remote_observations', [])]
+        require(any(frame['sha256'] == frame_sha256 for observed in observations
+            for frame in observed['frames']), 'remote_reference_evidence_not_found', 404)
+        self.store.read_blob(frame_sha256)
+        return self.store.blob_path(frame_sha256), 'image/jpeg'
 
     def get_analysis(self, owner, reference_id, analysis_id):
         self._reference(owner, reference_id)
@@ -84,23 +107,73 @@ class VideoLearningAnalysis:
 
     def _analysis_document(self, value):
         reference = value['frozen']['reference']
-        observed = self.media.sample(self.store.blob_path(reference['sha256']),
-            media_sha256=reference['sha256'], start_seconds=0,
-            end_seconds=reference['duration_seconds'], store=self.store,
-            sample_count=value['frozen']['sample_count'], deadline_at=value['deadline_at'])
+        observed = value.get('observation')
+        if observed is None:
+            if remote_reference(reference):
+                observed = self._remote_sample_reference(reference, 0, reference['duration_seconds'],
+                    count=value['frozen']['sample_count'], deadline_at=value['deadline_at'])
+            else:
+                observed = self.media.sample(self.store.blob_path(reference['sha256']),
+                    media_sha256=reference['sha256'], start_seconds=0,
+                    end_seconds=reference['duration_seconds'], store=self.store,
+                    sample_count=value['frozen']['sample_count'], deadline_at=value['deadline_at'])
         value['observation'] = observed
         duration = reference['duration_seconds']
-        return dict(schema=self.protocol.INPUT_SCHEMA, mode='analyze',
+        frames = self._purpose_frames(observed, 'reference')
+        sources = [self._remote_source_input(reference, 0, duration)] if remote_reference(reference) else []
+        view = dict(work_kind='reproduction', frozen=dict(reference_sources=sources),
+            remote_observations=value.get('remote_observations', []))
+        document = dict(schema=self.protocol.INPUT_SCHEMA, mode='analyze',
             project_id='reference-' + reference['id'], experiment_id=value['id'],
             work_kind='reproduction', goal=value['frozen']['goal'], criteria=[],
             constraints=dict(width=1280, height=720, fps=24, duration_seconds=duration,
                 allowed_engines=['html-svg', 'canvas', 'three']),
-            observation=dict(frames=self._purpose_frames(observed, 'reference'),
+            observation=dict(frames=self._with_remote_supplemental_frames(view, frames),
                 coverage=deepcopy(observed['coverage']),
                 audio=dict(status='unverified', has_audio=reference['has_audio'], learning_requested=False)),
             base_source=None, feedback='', knowledge_snapshot=None, prior_review=None,
             learned_method=None, knowledge_binding=dict(use_wikiskill=False), assets={},
             frozen_at=value['created_at'])
+        return self._remote_document(view, document)
+
+    def _analysis_observation_handoff(self, value, result, receipt):
+        request = result.get('observation_request')
+        if request is None:
+            return False
+        history = value.get('remote_observations', [])
+        require(len(history) < MAX_OBSERVATION_REQUESTS
+            and sum(len(item['request']['times']) for item in history) + len(request['times'])
+                <= MAX_SUPPLEMENTAL_FRAMES, 'remote_reference_observation_budget_exhausted', 409)
+        value.setdefault('role_operations', []).append(dict(
+            operation_id=value.get('active_operation_id', value['id']), job_id=value['job_id'],
+            input=deepcopy(value['input']), input_sha256=value['input_sha256'],
+            result=deepcopy(result), observation_receipt=deepcopy(receipt), status='completed', stop_proven=True))
+        value.update(remote_observation_pending=deepcopy(request), state='observing_reference',
+            observation_receipt=deepcopy(receipt), operation_status='observing')
+        self._save_analysis(value)
+        return True
+
+    def _consume_analysis_observation(self, value):
+        request = value.get('remote_observation_pending')
+        if request is None:
+            return False
+        reference = value['frozen']['reference']
+        require(remote_reference(reference) and request['reference_id'] == reference['id'],
+            'remote_reference_unknown_source', 404)
+        require(all(0 <= time < reference['duration_seconds'] for time in request['times']),
+            'remote_reference_observation_outside_scope')
+        observed = self._observe_remote(reference, times=request['times'],
+            crop=normalized_crop(request.get('crop')), quality=request['quality'],
+            deadline_at=value['deadline_at'])
+        history = value.setdefault('remote_observations', [])
+        history.append(dict(operation_id=value['id'] + '-reference-' + str(len(history) + 1),
+            request=deepcopy(request), observation=observed))
+        value.pop('remote_observation_pending')
+        value.update(active_operation_id=value['id'] + '-role-' + str(len(history) + 1),
+            input=None, input_sha256=None, input_refs=None, job_id=None,
+            operation_status='reserved', state='queued')
+        self._save_analysis(value)
+        return True
 
     def _save_analysis(self, value):
         value['updated_at'] = self.clock()
@@ -110,7 +183,7 @@ class VideoLearningAnalysis:
         if value.get('job_id'):
             return self.reviewer.poll(value['job_id'])
         try:
-            job = self.reviewer.lookup(value['id'])
+            job = self.reviewer.lookup(value.get('active_operation_id', value['id']))
         except ServiceError as error:
             if error.status == 404:
                 return None
@@ -130,11 +203,14 @@ class VideoLearningAnalysis:
             value = self.store.analysis(owner, identity)
             try:
                 stopping = value['stop_requested'] or self.clock() >= value['deadline_at']
-                if stopping and value['operation_status'] == 'reserved':
+                if stopping and value['operation_status'] in {'reserved', 'observing'}:
                     value.update(state='cancelled' if value['stop_requested'] else 'completed',
                         operation_status='cancelled', stop_proven=True,
                         stop_reason='developer_stopped' if value['stop_requested'] else 'budget_exhausted')
                     return self._analysis_public(self._save_analysis(value))
+                if value.get('remote_observation_pending'):
+                    self._consume_analysis_observation(value)
+                    return self._analysis_public(value)
                 if value['input'] is None:
                     value['input'] = self._analysis_document(value)
                     self.protocol.validate_input(value['input'])
@@ -150,7 +226,7 @@ class VideoLearningAnalysis:
                             for frame in value['input']['observation']['frames']})
                         value['input_refs'] = self.reviewer.upload(value['input'], files)
                         self._save_analysis(value)
-                    submit = self.reviewer.prepare_submission(value['id'], value['input'],
+                    submit = self.reviewer.prepare_submission(value.get('active_operation_id', value['id']), value['input'],
                         value['deadline_at'], value['input_refs'])
                     if not self.store.claim_analysis(owner, identity, self.clock()):
                         return self._analysis_public(self.store.analysis(owner, identity))
@@ -185,6 +261,13 @@ class VideoLearningAnalysis:
                     received = {frame.get('sha256') for frame in receipt.get('images', [])
                         if frame.get('model_request_completed') is True}
                     require(expected <= received, 'video_learning_analysis_frame_transport_incomplete', 409)
+                    if self._analysis_observation_handoff(value, result, receipt):
+                        if stopping:
+                            value.update(state='cancelled' if value['stop_requested'] else 'completed',
+                                operation_status='cancelled', stop_proven=True,
+                                stop_reason='developer_stopped' if value['stop_requested'] else 'budget_exhausted')
+                            self._save_analysis(value)
+                        return self._analysis_public(value)
                     actual_duration = value['frozen']['reference']['duration_seconds']
                     require(all(segment['end_seconds'] <= actual_duration for segment
                         in result['analysis']['candidate_segments']), 'video_learning_analysis_segment_outside_media', 409)
@@ -193,7 +276,12 @@ class VideoLearningAnalysis:
                 self._save_analysis(value)
             except ServiceError as error:
                 value['error'] = dict(code=error.code)
-                if value['operation_status'] == 'reserved' and error.status < 500:
+                if value.get('remote_observation_pending'):
+                    value.update(state='observing_reference' if error.status >= 500 else 'failed',
+                        operation_status='observing' if error.status >= 500 else 'failed',
+                        stop_proven=error.status < 500,
+                        stop_reason=None if error.status >= 500 else 'reference_observation_failed')
+                elif value['operation_status'] == 'reserved' and error.status < 500:
                     value.update(state='failed', operation_status='failed', stop_proven=True,
                         stop_reason='invalid_input_or_result')
                 elif value.get('job_id') and 'job' in locals() and job and job.get('stop_proven') is True:

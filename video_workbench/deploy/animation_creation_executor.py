@@ -36,6 +36,18 @@ VIDEO_LEARNING_TOKEN = '/run/secrets/video-learning-agent/token'
 SELECTOR = {'app.kubernetes.io/name': NAME}
 
 
+def reference_https_egress():
+    """Public HTTPS only for the trusted source reader, never scene workers."""
+    return {'to': [
+        {'ipBlock': {'cidr': '0.0.0.0/0', 'except': [
+            '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
+            '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24',
+            '192.168.0.0/16', '198.18.0.0/15', '198.51.100.0/24',
+            '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4']}},
+        {'ipBlock': {'cidr': '2000::/3', 'except': ['2001:db8::/32']}},
+    ], 'ports': [{'protocol': 'TCP', 'port': 443}]}
+
+
 @dataclass(frozen=True)
 class Settings:
     image: str
@@ -66,6 +78,7 @@ class Settings:
     video_learning_agent_token_secret: str | None = None
     video_learning_agent_token_key: str = 'token'
     method_project_runtime: str = 'native-seek'
+    remote_reference_dns: str | None = None
 
 
 def render(settings: Settings):
@@ -119,6 +132,11 @@ def render(settings: Settings):
             raise ValueError('Distinct video learning Agent caller Secret required')
         if method_secret is None or settings.method_project_runtime != 'hyperframes-core-bridge':
             raise ValueError('Video learning requires HyperFrames and method execution')
+    if settings.remote_reference_dns is not None:
+        if settings.remote_reference_dns not in {'system', 'alidns', 'cloudflare', 'google'}:
+            raise ValueError('Invalid remote reference DNS')
+        if not (picture_secret or video_learning_secret):
+            raise ValueError('Remote references require a learning library')
     for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key,
                 settings.collaboration_agent_token_key, settings.picture_agent_token_key,
                 settings.video_learning_agent_token_key):
@@ -154,6 +172,8 @@ def render(settings: Settings):
         args += ['--picture-agent-token-file', PICTURE_TOKEN]
     if video_learning_secret:
         args += ['--video-learning-agent-token-file', VIDEO_LEARNING_TOKEN]
+    if settings.remote_reference_dns is not None:
+        args += ['--remote-reference-dns', settings.remote_reference_dns]
     if settings.enable_collaborative_authoring:
         args += ['--enable-collaborative-authoring', '--collaboration-agent-token-file', COLLABORATION_TOKEN]
     health = {'httpGet': {'path': '/healthz', 'port': 'http'}, 'periodSeconds': 10,
@@ -254,6 +274,8 @@ def render(settings: Settings):
             {'to': [peer(agent_namespace, agent_labels)], 'ports': [{'protocol': 'TCP', 'port': settings.agent_port}]},
         ],
     })
+    if settings.remote_reference_dns is not None:
+        policy['spec']['egress'].append(reference_https_egress())
     return dict(apiVersion='v1', kind='List', items=[deployment, service, policy])
 
 
@@ -282,6 +304,7 @@ def main(argv=None):
     parser.add_argument('--video-learning-agent-token-secret')
     parser.add_argument('--video-learning-agent-token-key', default='token')
     parser.add_argument('--method-project-runtime', choices=('native-seek', 'hyperframes-core-bridge'), default='native-seek')
+    parser.add_argument('--remote-reference-dns', choices=('system', 'alidns', 'cloudflare', 'google'))
     parser.add_argument('--output', type=Path)
     args = vars(parser.parse_args(argv))
     output = args.pop('output')

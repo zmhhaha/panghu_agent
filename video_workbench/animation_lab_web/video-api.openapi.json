@@ -4,7 +4,7 @@
   "info": {
     "title": "Video reference learning API",
     "version": "1.0.0",
-    "description": "独立的视频学习项目：上传实际参考视频，异步创作、真实渲染、独立比较和换内容验证。与网页共用合同。GET 为只读；不会自动发布 WikiSkill。沿用 OAuth 登录 Cookie 和开发者权限，未提供 Bearer 或长期机器令牌。外部调用方使用用户安全提供的 Cookie 文件，不读取浏览器凭据。POST 必须提供同源 Origin、catalog.csrf_token 对应的 X-Animation-Lab-Token 和 application/json。 创建与继续/从零实验支持 capability_selection、allow_collaboration、allow_probes；以 catalog 当前准入为准，内部小样与分工共用预算并按依赖顺序执行。技术重试不允许改变这些冻结字段。"
+    "description": "独立的视频学习项目：上传实际参考视频或登记源站链接并按需读取，异步创作、真实渲染、独立比较和换内容验证。与网页共用合同。GET 为只读；不会自动发布 WikiSkill。沿用 OAuth 登录 Cookie 和开发者权限，未提供 Bearer 或长期机器令牌。外部调用方使用用户安全提供的 Cookie 文件，不读取浏览器凭据。POST 必须提供同源 Origin、catalog.csrf_token 对应的 X-Animation-Lab-Token 和 application/json。 创建与继续/从零实验支持 capability_selection、allow_collaboration、allow_probes；以 catalog 当前准入为准，内部小样与分工共用预算并按依赖顺序执行。技术重试不允许改变这些冻结字段。"
   },
   "servers": [
     {
@@ -172,7 +172,7 @@
     "/references": {
       "post": {
         "operationId": "uploadVideoReference",
-        "summary": "保存实际参考图及其内容身份",
+        "summary": "上传实际参考，或登记按需读取的视频链接",
         "parameters": [
           {
             "$ref": "#/components/parameters/Origin"
@@ -186,7 +186,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReferenceUpload"
+                "$ref": "#/components/schemas/ReferenceInput"
               }
             }
           }
@@ -203,7 +203,7 @@
             }
           },
           "201": {
-            "description": "参考已保存",
+            "description": "参考已上传，或链接来源元数据已登记；远程来源尚未因此获得实际画面观察",
             "content": {
               "application/json": {
                 "schema": {
@@ -259,7 +259,8 @@
           "404": {
             "description": "参考不存在或不属于当前身份"
           }
-        }
+        },
+        "description": "只返回已经保存的上传参考。远程视频来源不通过本接口触发读取；实际帧在项目证据 artifact 中读取。"
       }
     },
     "/projects": {
@@ -689,6 +690,56 @@
           }
         }
       }
+    },
+    "/references/{reference_id}/analyses/{analysis_id}/frames/{sha256}": {
+      "get": {
+        "operationId": "getVideoAnalysisObservedFrame",
+        "summary": "读取本次分析实际使用并冻结的参考帧，不访问源站",
+        "parameters": [
+          {
+            "name": "reference_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Identifier"
+            }
+          },
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Identifier"
+            }
+          },
+          {
+            "name": "sha256",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前身份所属分析已经保存的实际帧证据",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "image/jpeg",
+                  "contentEncoding": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未知参考、分析或不属于本次实际观察的帧"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -788,49 +839,14 @@
         }
       },
       "Reference": {
-        "type": "object",
-        "required": [
-          "id",
-          "sha256",
-          "width",
-          "height",
-          "duration_seconds",
-          "has_audio"
-        ],
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Identifier"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UploadedReference"
           },
-          "file_name": {
-            "type": "string"
-          },
-          "mime_type": {
-            "enum": [
-              "video/mp4",
-              "video/webm"
-            ]
-          },
-          "sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "width": {
-            "type": "integer"
-          },
-          "height": {
-            "type": "integer"
-          },
-          "url": {
-            "type": "string"
-          },
-          "duration_seconds": {
-            "type": "number",
-            "maximum": 600
-          },
-          "has_audio": {
-            "type": "boolean"
+          {
+            "$ref": "#/components/schemas/RemoteVideoReferenceRecord"
           }
-        }
+        ]
       },
       "ProjectStart": {
         "type": "object",
@@ -1330,6 +1346,9 @@
           },
           "audio_verified": {
             "const": false
+          },
+          "reference_observation": {
+            "$ref": "#/components/schemas/RemoteVideoReferenceRecord"
           }
         }
       },
@@ -1473,6 +1492,189 @@
             "type": "string"
           }
         }
+      },
+      "NormalizedCrop": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "description": "归一化画面范围；x+width 与 y+height 均不得超过 1。",
+        "properties": {
+          "x": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "width": {
+            "type": "number",
+            "maximum": 1,
+            "exclusiveMinimum": 0
+          },
+          "height": {
+            "type": "number",
+            "maximum": 1,
+            "exclusiveMinimum": 0
+          }
+        }
+      },
+      "RemoteVideoReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "source_type",
+          "source_url"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_type": {
+            "const": "video-url"
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "maxLength": 2000,
+            "description": "源网页或支持的公开 HTTPS 视频链接。宿主按需访问，不长期保存整条参考视频；填写链接不代表实际观察。"
+          }
+        }
+      },
+      "ReferenceInput": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReferenceUpload"
+          },
+          {
+            "$ref": "#/components/schemas/RemoteVideoReference"
+          }
+        ]
+      },
+      "UploadedReference": {
+        "type": "object",
+        "required": [
+          "id",
+          "sha256",
+          "width",
+          "height",
+          "duration_seconds",
+          "has_audio"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "mime_type": {
+            "enum": [
+              "video/mp4",
+              "video/webm"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "maximum": 600
+          },
+          "has_audio": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RemoteVideoReferenceRecord": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_type",
+          "source_url",
+          "source_snapshot_sha256",
+          "source_identity_scope",
+          "observation_status"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "source_type": {
+            "const": "video-url"
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "source_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_identity_scope": {
+            "const": "provider_metadata"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "duration_seconds": {
+            "type": "number"
+          },
+          "has_audio": {
+            "type": "boolean"
+          },
+          "quality": {},
+          "observation_status": {
+            "type": "string",
+            "description": "registered_not_observed 表示只登记来源；sampled_frames_only 表示已读取实际帧，不能据此签署连续运动或声音验收。"
+          },
+          "url": {
+            "type": "null"
+          },
+          "media_url": {
+            "type": "null"
+          },
+          "frame_url": {
+            "type": "string",
+            "description": "本项目实际取得并冻结的参考帧，读取此 URL 只返回已有证据，不访问源站。"
+          },
+          "actual_pts": {
+            "type": "number"
+          },
+          "observed_width": {
+            "type": "integer"
+          },
+          "observed_height": {
+            "type": "integer"
+          }
+        },
+        "description": "远程来源没有完整媒体 SHA-256；source_snapshot_sha256 仅标识源站元数据。实际抽帧证据独立记录摘要、PTS 和画质。"
       }
     }
   }

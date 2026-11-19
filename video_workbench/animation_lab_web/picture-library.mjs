@@ -3,6 +3,8 @@ import {PICTURE_API, MAX_REFERENCE_BYTES, buildPictureProject, buildPictureExper
   pictureIsActive, pictureDefaultCandidate, pictureCandidateRole, pictureProjectMatches,
   pictureStopReason, pictureRequestPath, pictureArtifactPath, pictureId, rows, text} from './picture-model.mjs';
 import {readLearningControls, restoreLearningControls, updateLearningControls, renderLearningProgress, renderInternalAttempts} from './learning-controls.mjs';
+import {REMOTE_VIDEO_SOURCE, remoteReferenceBody, validRemoteReferenceBody, isRemoteReference,
+  renderRemoteReference, remoteReferenceErrorMessage} from './remote-reference.mjs';
 
 const PENDING_KEY = 'video.picture-learning.pending.v1';
 const ownerKey = value => typeof value === 'string' && value.length > 0 && value.length <= 300;
@@ -65,7 +67,7 @@ const ERROR_MESSAGES = {
 };
 const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验'};
 function errorMessage(error) {
-  return ERROR_MESSAGES[error?.code] ?? (error?.status === 403 ? '登录或页面授权已失效，请重新登录后刷新。'
+  return remoteReferenceErrorMessage(error) ?? ERROR_MESSAGES[error?.code] ?? (error?.status === 403 ? '登录或页面授权已失效，请重新登录后刷新。'
     : error?.status === 413 ? '提交内容过大，请缩小参考图片后重试。' : text(error?.message) || '请求未完成，请刷新核对。');
 }
 function pendingOperation(value) {
@@ -76,7 +78,8 @@ function pendingOperation(value) {
   if (!valid) return null;
   if (value.path === PICTURE_API + 'references') {
     if (value.continuation?.path !== PICTURE_API + 'projects' || !value.continuation?.body?.request_id
-      || typeof value.body.content_base64 !== 'string' || value.body.content_base64.length > Math.ceil(MAX_REFERENCE_BYTES / 3) * 4) return null;
+      || !(value.body.source_type === REMOTE_VIDEO_SOURCE ? validRemoteReferenceBody(value.body, {picture: true})
+        : typeof value.body.content_base64 === 'string' && value.body.content_base64.length <= Math.ceil(MAX_REFERENCE_BYTES / 3) * 4)) return null;
   } else if (value.continuation !== undefined) return null;
   return value;
 }
@@ -283,6 +286,15 @@ export class PictureLibraryController {
     if (!this.enabled() || this.locked()) return false;
     // Validate the inexpensive form before uploading any pixels.
     const project = buildPictureProject(fields, ['reference-validation'], this.uuid());
+    if (fields.reference_id) {
+      project.reference_ids = [pictureId(fields.reference_id)];
+      return this.send(PICTURE_API + 'projects', project);
+    }
+    if ((fields.reference_source ?? fields.source_type) === REMOTE_VIDEO_SOURCE || !fields.reference_source && fields.source_url) {
+      const body = remoteReferenceBody(fields, this.uuid(), {picture: true});
+      project.reference_ids = [];
+      return this.send(PICTURE_API + 'references', body, {path: PICTURE_API + 'projects', body: project});
+    }
     const owner = this.state.owner_key, epoch = this.ownerEpoch;
     this.state.busy = true; this.state.message = '正在保存参考图片…'; this.changed();
     let body;
@@ -354,6 +366,7 @@ export function pictureImageUrl(candidate, project, root) {
     ?? candidate?.media_url, root);
 }
 function referenceUrl(reference, root) {
+  if (isRemoteReference(reference)) return pictureAssetUrl(reference.frame_url, root);
   return pictureAssetUrl(reference?.media_url ?? reference?.image_url ?? reference?.url
     ?? (reference?.id ? PICTURE_API + 'references/' + encodeURIComponent(pictureId(reference.id)) + '/media' : null), root);
 }
@@ -431,7 +444,9 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
   if (candidates.length) fragment.append(versions);
   const references = rows(project.references), reference = references[0] ?? (rows(project.reference_ids)[0] ? {id: project.reference_ids[0]} : null);
   const work = el(doc, 'div', 'picture-workspace');
-  work.append(pictureFigure(doc, '参考图片', referenceUrl(reference, root), reference?.file_name ?? '', root));
+  work.append(isRemoteReference(reference) ? renderRemoteReference(doc, reference,
+    {frameUrl: referenceUrl(reference, root), title: '从源视频读取的参考帧'})
+    : pictureFigure(doc, '参考图片', referenceUrl(reference, root), reference?.file_name ?? '', root));
   const pictureUrl = selectedPictureUrl;
   work.append(pictureFigure(doc, candidate ? pictureCandidateRole(candidate) : '实际绘制结果', pictureUrl,
     pictureUrl ? candidate?.picture_sha256 || candidate?.sha256 ? '图片 SHA-256：' + (candidate.picture_sha256 ?? candidate.sha256) : '由源码真实渲染；不使用参考截图充当成品。'
@@ -509,7 +524,7 @@ function IDENTIFIER_FOR_LINK(value) { return typeof value === 'string' && /^[A-Z
 export function mountPictureLibrary(doc, {root = new URL('./', globalThis.location?.href), fetcher = globalThis.fetch,
   storage = browserStorage(), uuid, schedule, unschedule, URLObject = globalThis.URL} = {}) {
   const $ = id => doc.getElementById(id), app = $('picture-library-app'); if (!app) return null;
-  let formMode = null, shown = 'home', selectedId = null, animationCandidateId = null, previewUrl = null, detailSignature = '', controller;
+  let formMode = null, shown = 'home', selectedId = null, animationCandidateId = null, previewUrl = null, detailSignature = '', referencesSignature = '', controller;
   const request = async (path, options = {}) => {
     const headers = {Accept: 'application/json'};
     if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
@@ -522,6 +537,21 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     return response.json();
   };
   const clearPreview = () => { if (previewUrl) URLObject.revokeObjectURL(previewUrl); previewUrl = null; };
+  const syncReferenceSource = () => {
+    const source = $('picture-reference-source').value;
+    const locked = Boolean(formMode) || controller?.locked();
+    $('picture-url-fields').hidden = source !== REMOTE_VIDEO_SOURCE;
+    $('picture-upload-fields').hidden = source !== 'upload';
+    $('picture-saved-fields').hidden = source !== 'saved';
+    $('picture-reference').required = !formMode && source === 'upload';
+    $('picture-source-url').required = !formMode && source === REMOTE_VIDEO_SOURCE;
+    $('picture-timestamp').required = !formMode && source === REMOTE_VIDEO_SOURCE;
+    $('picture-saved-reference').required = !formMode && source === 'saved';
+    for (const id of ['picture-source-url', 'picture-timestamp', 'picture-crop-x', 'picture-crop-y', 'picture-crop-width', 'picture-crop-height']) $(id).disabled = locked || source !== REMOTE_VIDEO_SOURCE;
+    $('picture-reference').disabled = locked || source !== 'upload';
+    $('picture-saved-reference').disabled = locked || source !== 'saved';
+    $('picture-reference-source').disabled = locked;
+  };
   const show = mode => { shown = mode; $('picture-home').hidden = mode !== 'home'; $('picture-detail').hidden = mode !== 'detail'; $('picture-form-panel').hidden = mode !== 'form'; if ($('picture-animation-panel')) $('picture-animation-panel').hidden = mode !== 'animation'; };
   const renderCards = () => {
     const projects = rows(controller.state.catalog?.projects), query = $('picture-search').value;
@@ -544,6 +574,20 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
       || formMode === 'retry' && element.id !== 'picture-submit';
     $('picture-submit').disabled = !controller.enabled() || controller.locked();
     updateLearningControls(doc, 'picture', state.catalog, {locked: state.busy || Boolean(state.pending), retry: formMode === 'retry'});
+    const references = state.catalog?.owner_key === state.owner_key ? rows(state.catalog?.references) : [];
+    const referenceSignature = JSON.stringify([state.owner_key, references.map(row => [row.id, row.file_name, row.source_url])]);
+    if (referenceSignature !== referencesSignature) {
+      referencesSignature = referenceSignature;
+      const select = $('picture-saved-reference'), previous = select.value, blank = el(doc, 'option', '', '请选择参考'); blank.value = '';
+      select.replaceChildren(blank);
+      for (const reference of references) {
+        const option = el(doc, 'option', '', (reference.file_name || reference.source_url || reference.id)
+          + (isRemoteReference(reference) ? ' · 视频链接' : ' · 上传图片'));
+        option.value = reference.id; select.append(option);
+      }
+      select.value = references.some(row => row.id === previous) ? previous : '';
+    }
+    syncReferenceSource();
     renderCards();
     if (state.detail && shown === 'detail') {
       const signature = JSON.stringify({detail: state.detail, locked: controller.locked(), selectedId});
@@ -560,6 +604,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
   const openForm = (mode = null) => {
     if (controller.locked()) return;
     formMode = mode; clearPreview(); $('picture-form').reset(); $('picture-reference-preview').replaceChildren(); $('picture-reference-preview').hidden = true;
+    $('picture-saved-reference').value = '';
     $('picture-new-fields').hidden = Boolean(mode); $('picture-feedback-label').hidden = !mode || mode === 'retry';
     $('picture-budget-fields').hidden = mode === 'retry';
     $('picture-form-title').textContent = mode ? MODE_NAMES[mode] : '新建图片学习';
@@ -568,7 +613,8 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     $('picture-form-note').textContent = mode === 'fresh' ? '保留同一参考和学习目标，从零创作。旧源码、布局和专用方法不会作为起点；可在下方填写精简的问题。'
       : mode === 'retry' ? '保留原来的目标、参考、标准、预算和确切知识版本，重试失败环节。需要改变要求或预算时，请发起继续优化或从零重做。'
         : '保留同一参考和学习目标，在已有作品上继续改善。下方意见会冻结进下一次实验，不修改历史需求。';
-    for (const id of ['picture-name', 'picture-goal', 'picture-reference', 'picture-width', 'picture-height']) $(id).required = !mode;
+    for (const id of ['picture-name', 'picture-goal', 'picture-width', 'picture-height']) $(id).required = !mode;
+    syncReferenceSource();
     $('picture-feedback').required = mode === 'continue';
     $('picture-use-wikiskill').checked = mode === 'retry' ? latestPictureExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
     restoreLearningControls(doc, 'picture', mode ? latestPictureExperiment(controller.state.detail)?.frozen : {});
@@ -584,6 +630,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
   $('picture-learning-options')?.addEventListener('change', () => updateLearningControls(doc, 'picture', controller.state.catalog,
     {locked: controller.state.busy || Boolean(controller.state.pending), retry: formMode === 'retry'}));
   $('picture-reference').addEventListener('change', () => {
+    $('picture-reference-source').value = 'upload'; $('picture-saved-reference').value = ''; syncReferenceSource();
     clearPreview(); const host = $('picture-reference-preview'); host.replaceChildren(); host.hidden = true;
     const file = $('picture-reference').files?.[0]; if (!file) return;
     try {
@@ -591,6 +638,13 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
       const image = el(doc, 'img'); image.src = previewUrl; image.alt = '待上传的参考图片';
       host.append(image, el(doc, 'p', 'small muted', file.name)); host.hidden = false; controller.setMessage('');
     } catch (error) { $('picture-reference').value = ''; controller.setMessage(errorMessage(error)); }
+  });
+  $('picture-reference-source').addEventListener('change', () => {
+    $('picture-saved-reference').value = ''; $('picture-reference').value = ''; clearPreview();
+    $('picture-reference-preview').replaceChildren(); $('picture-reference-preview').hidden = true; syncReferenceSource();
+  });
+  $('picture-saved-reference').addEventListener('change', () => {
+    $('picture-reference-source').value = 'saved'; syncReferenceSource();
   });
   $('picture-form').addEventListener('submit', async event => {
     event.preventDefault(); if (controller.locked()) return;

@@ -3,6 +3,8 @@ import {VIDEO_API, MAX_REFERENCE_BYTES, buildVideoProject, buildVideoExperiment,
   videoIsActive, videoDefaultCandidate, videoCandidateRole, videoProjectMatches,
   videoStopReason, videoRequestPath, videoArtifactPath, videoId, rows, text} from './video-model.mjs';
 import {readLearningControls, restoreLearningControls, updateLearningControls, renderLearningProgress, renderInternalAttempts} from './learning-controls.mjs';
+import {REMOTE_VIDEO_SOURCE, remoteReferenceBody, validRemoteReferenceBody, isRemoteReference,
+  renderRemoteReference, remoteReferenceErrorMessage} from './remote-reference.mjs';
 
 const PENDING_KEY = 'video.video-learning.pending.v1';
 const ownerKey = value => typeof value === 'string' && value.length > 0 && value.length <= 300;
@@ -65,7 +67,7 @@ const ERROR_MESSAGES = {
 };
 const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验'};
 function errorMessage(error) {
-  return ERROR_MESSAGES[error?.code] ?? (error?.status === 403 ? '登录或页面授权已失效，请重新登录后刷新。'
+  return remoteReferenceErrorMessage(error) ?? ERROR_MESSAGES[error?.code] ?? (error?.status === 403 ? '登录或页面授权已失效，请重新登录后刷新。'
     : error?.status === 413 ? '提交内容过大，请缩小参考视频后重试。' : text(error?.message) || '请求未完成，请刷新核对。');
 }
 function pendingOperation(value) {
@@ -76,7 +78,8 @@ function pendingOperation(value) {
   if (!valid) return null;
   if (value.path === VIDEO_API + 'references') {
     if (![VIDEO_API + 'projects', VIDEO_API + 'references/pending/analyses'].includes(value.continuation?.path) || !value.continuation?.body?.request_id
-      || typeof value.body.content_base64 !== 'string' || value.body.content_base64.length > Math.ceil(MAX_REFERENCE_BYTES / 3) * 4) return null;
+      || !(value.body.source_type === REMOTE_VIDEO_SOURCE ? validRemoteReferenceBody(value.body)
+        : typeof value.body.content_base64 === 'string' && value.body.content_base64.length <= Math.ceil(MAX_REFERENCE_BYTES / 3) * 4)) return null;
   } else if (value.continuation !== undefined) return null;
   return value;
 }
@@ -292,6 +295,11 @@ export class VideoLibraryController {
       project.reference_ids = [videoId(fields.reference_id)];
       return this.send(VIDEO_API + 'projects', project);
     }
+    if ((fields.reference_source ?? fields.source_type) === REMOTE_VIDEO_SOURCE || !fields.reference_source && fields.source_url) {
+      const body = remoteReferenceBody(fields, this.uuid());
+      project.reference_ids = [];
+      return this.send(VIDEO_API + 'references', body, {path: VIDEO_API + 'projects', body: project});
+    }
     const owner = this.state.owner_key, epoch = this.ownerEpoch;
     this.state.busy = true; this.state.message = '正在保存参考视频…'; this.changed();
     let body;
@@ -310,6 +318,10 @@ export class VideoLibraryController {
     if (goal.length > 8000 || !Number.isInteger(minutes) || minutes < 1 || minutes > 30) throw Error('分析预算应为 1–30 分钟，目标不超过 8000 字');
     const body = {request_id: this.uuid(), goal, max_seconds: minutes * 60};
     if (fields.reference_id) return this.send(VIDEO_API + 'references/' + encodeURIComponent(videoId(fields.reference_id)) + '/analyses', body);
+    if ((fields.reference_source ?? fields.source_type) === REMOTE_VIDEO_SOURCE || !fields.reference_source && fields.source_url) {
+      return this.send(VIDEO_API + 'references', remoteReferenceBody(fields, this.uuid()),
+        {path: VIDEO_API + 'references/pending/analyses', body});
+    }
     const owner = this.state.owner_key, epoch = this.ownerEpoch;
     this.state.busy = true; this.changed();
     let upload;
@@ -377,6 +389,7 @@ export function videoMediaUrl(candidate, project, root) {
     ?? candidate?.media_url, root);
 }
 function referenceUrl(reference, root) {
+  if (isRemoteReference(reference)) return null;
   return videoAssetUrl(reference?.media_url ?? reference?.image_url ?? reference?.url
     ?? (reference?.id ? VIDEO_API + 'references/' + encodeURIComponent(videoId(reference.id)) + '/media' : null), root);
 }
@@ -473,6 +486,7 @@ export function renderVideoAnalysisCard(doc, analysis, {reference = null, onOpen
 }
 export function renderVideoAnalysisDetail(doc, analysis, {root, reference = null, locked = false,
   onBack = () => {}, onStop = () => {}, onChoose = () => {}, backLabel = '返回视频学习库'} = {}) {
+  reference = analysis.reference_observation ?? reference;
   const fragment = doc.createDocumentFragment(), header = el(doc, 'div', 'detail-heading'), intro = el(doc, 'div');
   intro.append(el(doc, 'p', 'eyebrow', '参考视频分析'), el(doc, 'h1', '', reference?.file_name || '参考视频分析'),
     el(doc, 'p', 'muted', analysis.goal)); header.append(intro);
@@ -483,9 +497,11 @@ export function renderVideoAnalysisDetail(doc, analysis, {root, reference = null
     {disabled: locked || analysis.state === 'stopping'}));
   if (analysis.error) status.append(el(doc, 'p', 'small muted', '分析执行信息：' + (analysis.error.code ?? analysis.error)));
   fragment.append(status);
-  if (reference) fragment.append(videoFigure(doc, '完整参考视频', referenceUrl(reference, root),
-    reference.file_name + ' · ' + Number(reference.duration_seconds).toFixed(1) + ' 秒', root, null,
-    viewKey('analysis', analysis.id, reference.id, 'reference')));
+  if (reference) fragment.append(isRemoteReference(reference)
+    ? renderRemoteReference(doc, reference, {frameUrl: videoAssetUrl(reference.frame_url, root)})
+    : videoFigure(doc, '完整参考视频', referenceUrl(reference, root),
+      reference.file_name + ' · ' + Number(reference.duration_seconds).toFixed(1) + ' 秒', root, null,
+      viewKey('analysis', analysis.id, reference.id, 'reference')));
   const candidates = analysisCandidates(analysis), section = el(doc, 'section', 'video-analysis-candidates');
   section.append(el(doc, 'h2', '', '候选学习片段' + (candidates.length ? '（' + candidates.length + '）' : '')),
     el(doc, 'p', 'small muted', '范围来自采样画面分析，开始制作前请核对片段边界与学习目标。'));
@@ -545,9 +561,11 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
   const candidateKey = candidate?.id ?? null, referenceMediaUrl = referenceUrl(reference, root);
   const sectionKey = name => viewKey(project.id, candidateKey, name);
   const playbackKey = role => viewKey(project.id, candidateKey, referenceMediaUrl, selectedMediaUrl, segment.start, segment.end, role);
-  const referenceFigure = videoFigure(doc, '参考片段', referenceMediaUrl,
-    (reference?.file_name ?? '') + ' · ' + segment.start + '–' + segment.end + ' 秒', root, segment,
-    playbackKey('reference'));
+  const referenceFigure = isRemoteReference(reference)
+    ? renderRemoteReference(doc, reference, {frameUrl: videoAssetUrl(reference.frame_url, root), title: '源视频参考 · ' + segment.start + '–' + segment.end + ' 秒'})
+    : videoFigure(doc, '参考片段', referenceMediaUrl,
+      (reference?.file_name ?? '') + ' · ' + segment.start + '–' + segment.end + ' 秒', root, segment,
+      playbackKey('reference'));
   const videoUrl = selectedMediaUrl;
   const outputFigure = videoFigure(doc, candidate ? videoCandidateRole(candidate) : '实际动画结果', videoUrl,
     videoUrl ? '由 Agent 源码经 HyperFrames 渲染的完整片段。' : '源码与视频分别保存；尚未渲染的源码不能作为画面验收结果。', root,
@@ -689,6 +707,20 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     return response.json();
   };
   const clearPreview = () => { if (previewUrl) URLObject.revokeObjectURL(previewUrl); previewUrl = null; };
+  const syncReferenceSource = () => {
+    const source = $('video-reference-source').value;
+    const locked = Boolean(formMode) || controller?.locked();
+    $('video-url-fields').hidden = source !== REMOTE_VIDEO_SOURCE;
+    $('video-upload-fields').hidden = source !== 'upload';
+    $('video-saved-fields').hidden = source !== 'saved';
+    $('video-reference').required = !formMode && source === 'upload' && !$('video-reference-id').value;
+    $('video-source-url').required = !formMode && source === REMOTE_VIDEO_SOURCE && !$('video-reference-id').value;
+    $('video-saved-reference').required = !formMode && source === 'saved' && !$('video-reference-id').value;
+    $('video-source-url').disabled = locked || source !== REMOTE_VIDEO_SOURCE;
+    $('video-reference').disabled = locked || source !== 'upload';
+    $('video-saved-reference').disabled = locked || source !== 'saved';
+    $('video-reference-source').disabled = locked;
+  };
   const show = mode => {
     shown = mode; $('video-home').hidden = mode !== 'home'; $('video-detail').hidden = mode !== 'detail';
     $('video-analysis-detail').hidden = mode !== 'analysis'; $('video-form-panel').hidden = mode !== 'form';
@@ -737,12 +769,13 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
       || formMode === 'retry' && element.id !== 'video-submit';
     $('video-submit').disabled = !controller.enabled() || controller.locked();
     updateLearningControls(doc, 'video', state.catalog, {locked: state.busy || Boolean(state.pending), retry: formMode === 'retry'});
+    syncReferenceSource();
     renderCards();
     const catalog = currentCatalog(state), refs = rows(catalog?.references), analyses = rows(catalog?.analyses), refSignature = JSON.stringify(refs.map(row => [row.id, row.file_name]));
     if (referencesSignature !== refSignature) {
-      referencesSignature = refSignature; const select = $('video-saved-reference'), previous = select.value;
-      const blank = el(doc, 'option', '', '使用新上传的视频'); blank.value = ''; select.replaceChildren(blank);
-      for (const ref of refs) { const option = el(doc, 'option', '', ref.file_name + ' · ' + Number(ref.duration_seconds).toFixed(1) + ' 秒'); option.value = ref.id; select.append(option); }
+      referencesSignature = refSignature; const select = $('video-saved-reference'), previous = select.value || $('video-reference-id').value;
+      const blank = el(doc, 'option', '', '请选择参考'); blank.value = ''; select.replaceChildren(blank);
+      for (const ref of refs) { const option = el(doc, 'option', '', (ref.file_name || ref.source_url || ref.id) + ' · ' + Number(ref.duration_seconds).toFixed(1) + ' 秒' + (isRemoteReference(ref) ? ' · 视频链接' : '')); option.value = ref.id; select.append(option); }
       if (refs.some(ref => ref.id === previous)) select.value = previous;
     }
     const selectedReference = $('video-reference-id').value;
@@ -762,6 +795,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
           const candidate = analysisCandidates(current)[index]; if (!current || !candidate || controller.locked()) return;
           if (analysisReturnTo !== 'form' || formMode) openForm(); else show('form');
           controller.clearAnalysis(); $('video-reference-id').value = current.reference_id; $('video-saved-reference').value = current.reference_id;
+          $('video-reference-source').value = 'saved'; syncReferenceSource();
           $('video-reference').value = ''; $('video-reference').required = false; clearPreview();
           $('video-reference-preview').replaceChildren(); $('video-reference-preview').hidden = true;
           $('video-name').value = candidate.title; $('video-goal').value = candidate.learning_goal;
@@ -791,7 +825,8 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     $('video-form-note').textContent = mode === 'fresh' ? '保留同一参考和学习目标，从零创作。旧源码、布局和专用方法不会作为起点；可在下方填写精简的问题。'
       : mode === 'retry' ? '保留原来的目标、参考、标准、预算和确切知识版本，重试失败环节。需要改变要求或预算时，请发起继续优化或从零重做。'
         : '保留同一参考和学习目标，在已有作品上继续改善。下方意见会冻结进下一次实验，不修改历史需求。';
-    for (const id of ['video-name', 'video-goal', 'video-reference', 'video-width', 'video-height', 'video-start', 'video-end']) $(id).required = !mode;
+    for (const id of ['video-name', 'video-goal', 'video-width', 'video-height', 'video-start', 'video-end']) $(id).required = !mode;
+    syncReferenceSource();
     $('video-feedback').required = mode === 'continue';
     $('video-use-wikiskill').checked = mode === 'retry' ? latestVideoExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
     restoreLearningControls(doc, 'video', mode ? latestVideoExperiment(controller.state.detail)?.frozen : {});
@@ -808,7 +843,8 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     {locked: controller.state.busy || Boolean(controller.state.pending), retry: formMode === 'retry'}));
   $('video-reference').addEventListener('change', () => {
     controller.clearAnalysis();
-    $('video-reference-id').value = ''; $('video-saved-reference').value = ''; $('video-reference').required = true;
+    $('video-reference-source').value = 'upload';
+    $('video-reference-id').value = ''; $('video-saved-reference').value = ''; syncReferenceSource();
     clearPreview(); const host = $('video-reference-preview'); host.replaceChildren(); host.hidden = true;
     const file = $('video-reference').files?.[0]; if (!file) return;
     try {
@@ -821,18 +857,28 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     controller.clearAnalysis();
     $('video-analysis-id').value = ''; $('video-segment-index').value = '';
     const referenceId = $('video-saved-reference').value; $('video-reference-id').value = referenceId;
-    $('video-reference').required = !referenceId;
+    $('video-reference-source').value = 'saved'; syncReferenceSource();
     if (referenceId) { $('video-reference').value = ''; clearPreview(); $('video-reference-preview').hidden = true; }
     render(controller.state);
   });
+  const changeRemoteSource = () => {
+    controller.clearAnalysis(); $('video-reference-id').value = ''; $('video-saved-reference').value = '';
+    $('video-analysis-id').value = ''; $('video-segment-index').value = '';
+    clearPreview(); $('video-reference-preview').replaceChildren(); $('video-reference-preview').hidden = true;
+    syncReferenceSource();
+  };
+  $('video-reference-source').addEventListener('change', () => { $('video-reference').value = ''; changeRemoteSource(); });
+  $('video-source-url').addEventListener('input', changeRemoteSource);
   for (const id of ['video-start', 'video-end', 'video-reference']) $(id).addEventListener('input', () => {
     $('video-analysis-id').value = ''; $('video-segment-index').value = '';
   });
   $('video-analyze').addEventListener('click', async () => {
     try {
       await analyzeVideoSelection(controller, {reference_id: $('video-reference-id').value, goal: $('video-goal').value,
+        reference_source: $('video-reference-source').value, source_url: $('video-source-url').value,
         analysis_minutes: $('video-analysis-minutes').value}, $('video-reference').files?.[0], referenceId => {
-          $('video-reference-id').value = referenceId; $('video-reference').required = false;
+          $('video-reference-id').value = referenceId; $('video-saved-reference').value = referenceId;
+          $('video-reference-source').value = 'saved'; syncReferenceSource();
         });
     } catch (error) {controller.setMessage(errorMessage(error));}
   });

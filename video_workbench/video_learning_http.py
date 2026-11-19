@@ -66,6 +66,10 @@ class VideoLabClient(CreationAPIClient):
         return self._request(owner, 'POST', PREFIX + '/references/' + identifier(reference_id)
             + '/analyses/' + identifier(analysis_id) + '/stop', body)
 
+    def video_analysis_frame(self, owner, reference_id, analysis_id, frame_sha256):
+        return self._request(owner, 'GET', PREFIX + '/references/' + identifier(reference_id)
+            + '/analyses/' + identifier(analysis_id) + '/frames/' + identifier(frame_sha256), artifact=True)
+
 
 def _artifact(handler, value):
     path, mime = value
@@ -96,6 +100,8 @@ def route_private(handler, owner, method, path, body=None):
             _artifact(handler, service.reference_artifact(owner, pieces[1]))
         elif len(pieces) == 4 and pieces[0] == 'references' and pieces[2] == 'analyses':
             handler._send(service.get_analysis(owner, pieces[1], pieces[3]))
+        elif len(pieces) == 6 and pieces[0] == 'references' and pieces[2] == 'analyses' and pieces[4] == 'frames':
+            _artifact(handler, service.analysis_reference_artifact(owner, pieces[1], pieces[3], pieces[5]))
         elif len(pieces) == 2 and pieces[0] == 'projects':
             _send_detail(handler, service.get(owner, pieces[1]))
         elif len(pieces) == 5 and pieces[0] == 'projects' and pieces[2] == 'experiments' and pieces[4] == 'input':
@@ -151,6 +157,9 @@ def route_public(handler, client, owner, method, path, body=None):
             handler._send_artifact(raw, mime)
         elif len(pieces) == 4 and pieces[0] == 'references' and pieces[2] == 'analyses':
             handler._json(client.video_analysis(owner, pieces[1], pieces[3]))
+        elif len(pieces) == 6 and pieces[0] == 'references' and pieces[2] == 'analyses' and pieces[4] == 'frames':
+            raw, mime = client.video_analysis_frame(owner, pieces[1], pieces[3], pieces[5])
+            handler._send_artifact(raw, mime)
         elif len(pieces) == 2 and pieces[0] == 'projects':
             handler._json(client.video_get(owner, pieces[1]))
         elif len(pieces) == 5 and pieces[0] == 'projects' and pieces[2] == 'experiments' and pieces[4] == 'input':

@@ -20,6 +20,7 @@ from .video_learning_store import VideoLearningStore
 from .video_learning_media import VideoLearningMedia, MAX_UPLOAD, MAX_DURATION, LIMITATIONS
 from .video_learning_analysis import VideoLearningAnalysis
 from .video_learning_repair import VideoLearningRepairMixin
+from .remote_reference_service import remote_reference, MAX_SOURCE_SECONDS
 
 PREFIX = '/api/video-lab'
 
@@ -81,18 +82,23 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
         'start_seconds', 'end_seconds', 'learn_audio', 'analysis_id', 'segment_index'}
 
     def __init__(self, root, *, author_gateway, review_gateway, renderer,
-                 library_adapter=None, media_adapter=None, clock=time.time):
+                 library_adapter=None, media_adapter=None, remote_media_adapter=None, clock=time.time):
         super().__init__(root, author_gateway=author_gateway, review_gateway=review_gateway,
-            renderer=renderer, library_adapter=library_adapter, clock=clock)
+            renderer=renderer, library_adapter=library_adapter,
+            remote_media_adapter=remote_media_adapter, clock=clock)
         self.media = media_adapter or VideoLearningMedia(self.root / 'media-preparation')
 
     def _reference_public(self, row):
+        if remote_reference(row):
+            return self._remote_reference_public(row)
         return {key: deepcopy(row[key]) for key in ('id', 'file_name', 'mime_type', 'sha256',
             'width', 'height', 'duration_seconds', 'has_audio', 'source_url', 'created_at')} | {
                 'url': self.prefix + '/references/' + row['id'] + '/media',
                 'observation_status': 'uploaded_not_model_observed'}
 
     def upload_reference(self, owner, body):
+        if type(body) is dict and body.get('source_type') == 'video-url':
+            return self._register_remote_reference(owner, body, picture=False)
         owner_id(owner)
         require(type(body) is dict and {'request_id', 'file_name', 'mime_type', 'content_base64'}
                 <= set(body) <= {'request_id', 'file_name', 'mime_type', 'content_base64', 'source_url'},
@@ -143,7 +149,7 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
         require(type(body.get('learn_audio', True)) is bool, 'video_learning_audio_intent_invalid')
         return super().start(owner, body)
 
-    def _extra_frozen(self, owner, body, references):
+    def _extra_frozen(self, owner, body, references, *, deadline_at=None):
         ref = references[0]
         # A missing end on a long upload must never quietly choose its first minute.
         require('start_seconds' in body and 'end_seconds' in body,
@@ -164,9 +170,16 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
                     'video_learning_analysis_selection_range_changed')
             selection = dict(analysis_id=analysis['id'], segment_index=body['segment_index'],
                 candidate=deepcopy(segment), analysis_input_sha256=analysis['input_sha256'])
-        observed = self.media.sample(self.store.blob_path(ref['sha256']),
-            media_sha256=ref['sha256'], start_seconds=clip['start_seconds'],
-            end_seconds=clip['end_seconds'], store=self.store)
+        if remote_reference(ref):
+            observed = self._remote_sample_reference(ref, clip['start_seconds'], clip['end_seconds'],
+                deadline_at=deadline_at)
+            remote_fields = dict(reference_sources=[self._remote_source_input(ref,
+                clip['start_seconds'], clip['end_seconds'])])
+        else:
+            observed = self.media.sample(self.store.blob_path(ref['sha256']),
+                media_sha256=ref['sha256'], start_seconds=clip['start_seconds'],
+                end_seconds=clip['end_seconds'], store=self.store)
+            remote_fields = {}
         return dict(clip=clip, start_seconds=clip['start_seconds'], end_seconds=clip['end_seconds'],
             fps=24, duration_seconds=clip['duration_seconds'],
             reference_observation=observed, learn_audio=body.get('learn_audio', True),
@@ -174,7 +187,7 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
             audio_observation=dict(has_audio=ref['has_audio'],
                 learning_requested=body.get('learn_audio', True), status='unverified',
                 reason='当前角色接收实际画面序列，尚未接入实际音频听审。'),
-            continuous_motion_verified=False, audio_verified=False)
+            continuous_motion_verified=False, audio_verified=False, **remote_fields)
 
     def _baseline_observation(self, candidate):
         return deepcopy(candidate['observation'])
@@ -188,8 +201,11 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
     def _purpose_frames(observation, purpose):
         result = []
         for index, frame in enumerate(observation.get('frames', [])):
-            result.append(deepcopy(frame) | dict(purpose=purpose, frame_id=f'{purpose}-{index + 1}',
-                file_name=f'{purpose}-{index + 1}.jpg'))
+            value = deepcopy(frame) | dict(purpose=purpose, frame_id=f'{purpose}-{index + 1}',
+                file_name=f'{purpose}-{index + 1}.jpg')
+            if 'source_snapshot_sha256' in frame:
+                value['source_frame_id'] = frame['frame_id']
+            result.append(value)
         return result
 
     def _frames(self, run, mode):
@@ -207,7 +223,7 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
             observed = baseline['observation'] if baseline else run['frozen'].get('base_observation')
             if observed:
                 frames += self._purpose_frames(observed, 'baseline')
-        return frames
+        return self._with_remote_supplemental_frames(run, frames)
 
     def _document(self, run, mode):
         document = super()._document(run, mode)
@@ -223,7 +239,7 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
             document['sound_events'] = deepcopy(self._candidate(run).get('sound_events', []))
         if mode in {'review', 'transfer_plan'}:
             document['constraints']['output_contract'] = review_output_contract(mode)
-        return self._render_repair_document(run, document)
+        return self._remote_document(run, self._render_repair_document(run, document))
 
     def _agent(self, run, operation):
         super()._agent(run, operation)
@@ -310,9 +326,11 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
             preview = next((item for item in candidates if item['id'] == chosen), None)
             preview = preview or (candidates[0] if candidates else None)
             row = {key: deepcopy(value) for key, value in project.items() if key != 'owner'}
+            reference = self._reference(owner, project['reference_ids'][0])
             row.update(state=latest['state'], experiments_count=len(runs),
                 latest_experiment_request_id=latest['request_id'],
-                reference_url=self.prefix + '/references/' + project['reference_ids'][0] + '/media',
+                reference_url=None if remote_reference(reference) else
+                    self.prefix + '/references/' + project['reference_ids'][0] + '/media',
                 preview_url=self.prefix + '/projects/' + project['id'] + '/artifacts/'
                     + preview['artifacts']['poster']['id'] if preview else None)
             projects.append(row)
@@ -320,10 +338,13 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
             owner_key=hashlib.sha256(owner.encode('utf-8')).hexdigest(), projects=projects,
             availability=dict(enabled=self._enabled(), reason=None if self._enabled() else '视频学习执行器尚未配置'),
             limits=dict(reference_bytes=MAX_UPLOAD, reference_count=1, reference_duration_seconds=MAX_DURATION,
-                clip_seconds=60, max_rounds=8, max_seconds=3600, max_width=1280, max_height=720, fps=24),
+                clip_seconds=60, max_rounds=8, max_seconds=3600, max_width=1280, max_height=720, fps=24,
+                remote_reference_duration_seconds=MAX_SOURCE_SECONDS,
+                supplemental_observation_requests=4, supplemental_observation_frames=32),
             references=[self._reference_public(value) for value in self.store.list('references', owner)],
             analyses=[self._analysis_public(value) for value in self.store.analyses(owner)],
             capabilities=dict(explicit_clip=True, long_video_candidate_analysis=True,
+                remote_video_reference=True, on_demand_reference_observation=True,
                 sampled_visual_comparison=True, continuous_motion_observation=False, audio_observation=False,
                 **self._capabilities_public()), runtime_capabilities=self._runtime_capabilities(),
             verification_scope='sampled_frames_only')
