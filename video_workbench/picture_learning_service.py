@@ -19,6 +19,7 @@ from agent_service.profiles import video_picture_learning as protocol
 from .animation_creation_service import _run_lock
 from .learning_capabilities import LearningCapabilitiesMixin
 from .learning_strategy_service import LearningStrategyMixin
+from .learning_execution_guidance import learning_execution_guidance
 from .picture_learning_store import (
     PictureLearningStore, TERMINAL, identifier, new_id, owner_id, require,
 )
@@ -320,8 +321,8 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                 restored = deepcopy(previous)
                 restored['retry_of_candidate_id'] = restored['id']
                 restored['id'] = new_id()
-                for kind, artifact in restored.get('artifacts', {}).items():
-                    artifact['id'] = restored['id'] + '-' + kind
+                for artifact_kind, artifact in restored.get('artifacts', {}).items():
+                    artifact['id'] = restored['id'] + '-' + artifact_kind
                 run['candidates'].append(restored)
                 run.update(active_candidate_id=restored['id'], stage=prior['stage'])
                 if run['best_candidate_id'] == previous['id']:
@@ -330,6 +331,9 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
             self._restore_learning_resources(prior, run)
             if prior.get('learning_strategy') or prior.get('resource_plan'):
                 run['stage'] = prior['stage']
+            restore_repair = getattr(self, '_restore_render_repair', None)
+            if restore_repair is not None:
+                restore_repair(prior, run)
         with self.store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             existing = self.store.request(owner, kind, body['request_id'], body, db=db)
@@ -420,6 +424,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
         capabilities = frozen['runtime_capabilities']
         constraints = dict(width=frozen['width'], height=frozen['height'],
                            allowed_engines=capabilities.get('allowed_engines', ['html-svg', 'canvas']))
+        constraints['execution_guidance'] = learning_execution_guidance()
         # Runtime capability metadata is supplied as data; no drawing recipe
         # is injected by the host in place of the creator's own implementation.
         if capabilities.get('runtime_identity') is not None:

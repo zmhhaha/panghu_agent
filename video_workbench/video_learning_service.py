@@ -19,6 +19,7 @@ from .picture_learning_store import identifier, new_id, owner_id, require
 from .video_learning_store import VideoLearningStore
 from .video_learning_media import VideoLearningMedia, MAX_UPLOAD, MAX_DURATION, LIMITATIONS
 from .video_learning_analysis import VideoLearningAnalysis
+from .video_learning_repair import VideoLearningRepairMixin
 
 PREFIX = '/api/video-lab'
 
@@ -72,7 +73,7 @@ def review_output_contract(mode):
                 motion='unverified', audio='unverified')))
 
 
-class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
+class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, PictureLearningService):
     protocol = protocol
     prefix = PREFIX
     store_type = VideoLearningStore
@@ -222,15 +223,23 @@ class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
             document['sound_events'] = deepcopy(self._candidate(run).get('sound_events', []))
         if mode in {'review', 'transfer_plan'}:
             document['constraints']['output_contract'] = review_output_contract(mode)
-        return document
+        return self._render_repair_document(run, document)
 
     def _agent(self, run, operation):
         super()._agent(run, operation)
+        self._consume_render_repair_author(run, operation)
         if operation['stage'] == 'author' and operation.get('status') == 'completed':
             candidate = next((item for item in run['candidates'] + run.get('internal_attempts', [])
                 if item.get('author_operation_id') == operation['id']), None)
             if candidate is not None:
                 candidate['sound_events'] = deepcopy(operation['result'].get('sound_events', []))
+
+    def _adopt_resource_proposal(self, run, operation, result):
+        if 'render_repair' in operation['input']['constraints']:
+            method = result.get('method') or {}
+            require(method.get('resource_plan') is None and method.get('learning_strategy') is None,
+                'video_learning_repair_nested_plan_forbidden', 409)
+        return super()._adopt_resource_proposal(run, operation, result)
 
     def _render(self, run, operation):
         candidate = self._candidate(run)
@@ -249,6 +258,8 @@ class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
         if result.get('status') != 'rendered' or result.get('technical_passed') is not True:
             operation.update(status='failed', result=result)
             self._finish_operation(run, operation)
+            if self._schedule_render_repair(run, operation, result):
+                return
             run['error'] = dict(code='video_learning_render_failed')
             self._finish(run, 'render_failed', 'failed')
             return

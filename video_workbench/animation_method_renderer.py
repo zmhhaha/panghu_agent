@@ -55,6 +55,7 @@ PUBLIC_RENDER_FAILURE_CODES = frozenset({
     'animation_method_render_deadline_insufficient', 'animation_method_render_exit_invalid',
     'animation_method_render_image_changed',
     'method_absolute_seek_mismatch', 'method_reverse_seek_mismatch',
+    'method_frame_capture_timeout', 'method_scene_prepare_failed',
 })
 
 
@@ -63,12 +64,16 @@ def public_render_failure_code(value):
     return value if type(value) is str and value in PUBLIC_RENDER_FAILURE_CODES else 'animation_method_render_failed'
 
 
-def _failed_receipt_code(root, binding, outcome):
-    fallback = public_render_failure_code(outcome.get('error'))
+def _bound_failed_receipt(root, binding, outcome):
+    """Read a bounded host report only after checking its frozen identity.
+
+    Failed receipts are an additional diagnostic projection. Their bytes were
+    not included in historical stop proofs; do not rewrite those proofs.
+    """
     if outcome.get('error') != 'animation_method_render_container_failed':
-        return fallback
+        return None
     try:
-        receipt, _ = _json(root / 'work/render-receipt.json', 65536)
+        receipt, raw = _json(root / 'work/render-receipt.json', 65536)
         request = binding['request']
         if (receipt.get('status') != 'failed'
                 or receipt.get('schema') != request['schema'].replace('-request.', '-receipt.')
@@ -80,15 +85,83 @@ def _failed_receipt_code(root, binding, outcome):
                     **{key: request[key] for key in ('engine', 'engine_runtime_sha256', 'project_runtime_sha256')
                        if key in request},
                 }.items())):
-            return fallback
-        # Host errors include the literal "Error: " prefix. Do not extract a
-        # matching substring from an authored exception, stack trace or log.
-        return {
-            'Error: method_absolute_seek_mismatch': 'method_absolute_seek_mismatch',
-            'Error: method_reverse_seek_mismatch': 'method_reverse_seek_mismatch',
-        }.get(receipt.get('error'), fallback) if type(receipt.get('error')) is str else fallback
+            return None
+        return receipt, raw
     except (OSError, ServiceError, KeyError, TypeError, ValueError):
-        return fallback
+        return None
+
+
+def _failed_receipt_observation(root, binding, outcome):
+    bound = _bound_failed_receipt(root, binding, outcome)
+    if bound is None:
+        return None
+    receipt, raw = bound
+    error = receipt.get('error')
+    if type(error) is not str:
+        return None
+    exact = {'Error: method_absolute_seek_mismatch': 'method_absolute_seek_mismatch',
+             'Error: method_reverse_seek_mismatch': 'method_reverse_seek_mismatch'}
+    if error in exact:
+        return dict(code=exact[error], phase='seek_check', origin='legacy_host_report',
+                    receipt_sha256=hashlib.sha256(raw).hexdigest())
+    # Older hosts recorded only String(error). Match the complete known host
+    # shape, never a substring in an authored stack/log, and report the symptom
+    # only. A timeout does not establish hardware failure or excessive shader cost.
+    if re.fullmatch(r'TimeoutError: page\.screenshot: Timeout [1-9][0-9]{0,5}ms exceeded\.\n'
+                    r'Call log:\n(?:  - (?:taking page screenshot|waiting for fonts to load\.\.\.|fonts loaded)\n){1,6}',
+                    error):
+        return dict(code='method_frame_capture_timeout', phase='capture', origin='legacy_host_report',
+                    receipt_sha256=hashlib.sha256(raw).hexdigest())
+    if re.fullmatch(r'Error: page\.evaluate: Error: (?:hyperframes_legacy_seek_missing|method_seek_missing)\n'
+                    r'(?:    at [^\r\n]{1,250}\n?){1,8}', error):
+        return dict(code='method_scene_prepare_failed', phase='prepare', origin='legacy_host_report',
+                    receipt_sha256=hashlib.sha256(raw).hexdigest())
+    return None
+
+
+def _failed_receipt_code(root, binding, outcome):
+    observed = _failed_receipt_observation(root, binding, outcome)
+    return observed['code'] if observed else public_render_failure_code(outcome.get('error'))
+
+
+def _failure_diagnostic(root, binding, outcome, operation_id, proof):
+    """Bounded fixed guidance, never raw exception, scene text, stack or path."""
+    observed = _failed_receipt_observation(root, binding, outcome)
+    code = observed['code'] if observed else public_render_failure_code(outcome.get('error'))
+    categories = {
+        'method_frame_capture_timeout': ('frame_capture_timeout',
+            'The render host reported a timeout while capturing a frame.',
+            ['Reduce per-frame work while preserving the visual goal and explicit capability constraints.',
+             'Choose lower-cost admitted drawing or composition methods when they can meet the same visual target.',
+             'This report does not establish the visual result, exact frame duration or a specific hardware cause.']),
+        'method_scene_prepare_failed': ('scene_interface_unavailable',
+            'The render host could not complete scene preparation.',
+            ['Check browser initialization, script execution and the required absolute-time scene interface.',
+             'The host report does not identify the original script exception.']),
+        'method_absolute_seek_mismatch': ('non_deterministic_seek',
+            'The render host reported different pixels for equivalent absolute-time states.',
+            ['Reconstruct each frame from absolute time; preserve stable initialization and seeded randomness.']),
+        'method_reverse_seek_mismatch': ('non_deterministic_seek',
+            'The render host reported a reverse-seek frame mismatch.',
+            ['Remove accumulated animation state and reconstruct equivalent absolute-time states.']),
+    }
+    category, summary, guidance = categories.get(code, ('runtime_failure_unknown',
+        'The rendering attempt failed without a classified scene diagnostic.',
+        ['Preserve the original attempt and investigate runtime evidence before selecting a recovery action.']))
+    cleanup, identity = outcome.get('cleanup', {}), outcome.get('container_id')
+    stopped = ((identity is None and cleanup.get('status') == 'not_created'
+                and cleanup.get('container_id') is None) or
+               (type(identity) is str and _SHA.fullmatch(identity) is not None
+                and cleanup.get('container_id') == identity
+                and cleanup.get('status') in {'confirmed_absent', 'removed_and_confirmed_absent'}))
+    return dict(schema='video.animation-render-failure.v1', category=category, code=code,
+        phase=observed['phase'] if observed else 'unknown', summary=summary, guidance=guidance,
+        source_repair_recommended=bool(observed and code in categories and stopped),
+        operation_id=operation_id, source_sha256=binding['source_sha256'],
+        input_sha256=binding['input_sha256'], evidence_sha256=proof,
+        receipt_sha256=observed['receipt_sha256'] if observed else None,
+        receipt_bound=observed is not None, origin=observed['origin'] if observed else 'unknown',
+        evidence_scope='host_report_not_visual_or_root_cause_validation')
 
 
 def _require(condition, code='animation_method_render_invalid', status=409):
@@ -876,7 +949,8 @@ class MethodAnimationRenderer:
         # Preserve the immutable historical result/proof shape in the private
         # ledger. Failure receipts only improve the returned diagnostic; they
         # never admit media, alter custody proofs or authorize another attempt.
-        public_result = (dict(result, error=_failed_receipt_code(root, binding, outcome))
+        public_result = (dict(result, error=_failed_receipt_code(root, binding, outcome),
+                             diagnostic=_failure_diagnostic(root, binding, outcome, operation_id, proof))
                          if not rendered else result)
         if row['proof_sha256'] is not None:
             _require(row['proof_sha256'] == proof, 'animation_method_render_proof_changed')
