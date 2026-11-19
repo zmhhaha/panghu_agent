@@ -37,7 +37,8 @@ class VideoLearningRepairMixin:
         repair = dict(failed_candidate_id=candidate['id'], failed_candidate_experiment_id=run['id'],
             operation_id=operation['id'],
             input_sha256=operation['input_sha256'], source_sha256=candidate['source_sha256'],
-            diagnostic=deepcopy(diagnostic), status='pending', created_at=self.clock())
+            diagnostic=deepcopy(diagnostic), status='pending', created_at=self.clock(),
+            remaining_seconds=max(0, run['deadline_at'] - self.clock()))
         repairs.append(repair)
         run['render_repair_pending'] = len(repairs) - 1
         state = run.get('learning_strategy')
@@ -97,8 +98,8 @@ class VideoLearningRepairMixin:
             else deepcopy(candidate['source']))
         document['constraints']['render_repair'] = dict(schema='video.learning-render-repair.v1',
             failed_candidate_id=candidate['id'], failed_source=deepcopy(candidate['source']),
-            diagnostic=deepcopy(repair['diagnostic']), remaining_seconds=max(0,
-                run['deadline_at'] - self.clock()), instructions=[
+            diagnostic=deepcopy(repair['diagnostic']), remaining_seconds=repair['remaining_seconds'],
+            instructions=[
                 'Repair this failed implementation while preserving the actual visual goal and reference, not the failed technology choice.',
                 'The host report establishes a technical failure only. No output frames, aesthetic improvement, motion or sound acceptance are established by it.',
                 'Use the failure evidence to fix or redesign your complete source. When comparable visual quality can be achieved more cheaply, prefer the simpler, stable implementation.',

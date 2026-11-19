@@ -182,3 +182,15 @@ def test_new_guidance_is_frozen_and_does_not_change_historical_document_reconstr
     assert 'execution_guidance' not in service._document(historical, 'create')['constraints']
     assert historical == original
     assert not author.submissions and not renderer.calls
+
+
+def test_repair_input_budget_snapshot_is_stable_across_reconstruction(system, real_mp4):
+    service, author, reviewer, renderer = system
+    project, run = at_failed_render(system, real_mp4, max_rounds=2)
+    first = service._document(run, 'create')
+    now = service.clock()
+    service.clock = lambda: now + 15
+    assert service._document(run, 'create') == first
+    # A resumed budget cannot rewrite the old repair's own frozen facts.
+    run['deadline_at'] += 100
+    assert service._document(run, 'create') == first
