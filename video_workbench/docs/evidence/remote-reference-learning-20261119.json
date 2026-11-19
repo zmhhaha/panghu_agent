@@ -1,0 +1,258 @@
+{
+  "schema": "video.remote-reference-release-evidence.v1",
+  "implementation_date": "2026-11-19",
+  "production_acceptance_date": "2026-11-20",
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "change_id": "add-on-demand-remote-reference-learning",
+    "revision": "6df49d3f68213b68e785041258037cbcb09423e7",
+    "task_status": {
+      "total": 18,
+      "completed": 18,
+      "remaining": 0
+    },
+    "validation": "valid, exact readback"
+  },
+  "revisions": {
+    "base": "2a1a8bb7f1919453658dc152b9d16d66fde375f0",
+    "executor": "43a03798f8b75db17b18a8228bb0543f90c503df"
+  },
+  "images": {
+    "control": "arm-cluster-master:5000/agent-service-control:latest@sha256:2f00ccc5e6c30badccf12c3884356db60b247a57f20cbb17d6640aa7c1bc5aff",
+    "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:0e7547b06093858f5d2d1a2cb75d1ee6b4658ff05a5db8e21d3d186e447bdb44",
+    "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:f5ac94e18bf57239eaa9789f8785d441cda0493be7b72e6cd8dfaad4f1c6a67a",
+    "worker": "arm-cluster-master:5000/agent-service-pi:latest@sha256:3b8f73cc32e0bf712cecce4033efa6d43fdeaed3f18858cd62b4859d806d5dd3"
+  },
+  "build": {
+    "clean_git_source": true,
+    "source_overlays": false,
+    "tag": "latest",
+    "renderer_image_changed": false
+  },
+  "activation": {
+    "status": "activated",
+    "public_configmap": "agent-service-remote-learning-fbdb40c9d88e6940b712",
+    "caller_tokens_preserved": true,
+    "runtime_secret_preserved": true,
+    "uid_database_conflicts": 0,
+    "final_quiet": true,
+    "maintenance_lock_available": true
+  },
+  "technical_admission": {
+    "roles": {
+      "picture_author": {
+        "accepted_host": true,
+        "profile": "video.picture-learning-author.v1",
+        "acceptance_report_sha256": "f98960da94a81257f5d9cbc0ca423031d30907065f791fc627e19a40ad3e1286",
+        "rendered_output": {
+          "scope": "static_only",
+          "sha256": "ec00b20c44ff955c89bfb8b0d5b740ac9a22d8c848a0aff752987d96e35d97f6",
+          "container_absent_verified": true
+        }
+      },
+      "picture_review": {
+        "accepted_host": true,
+        "profile": "video.picture-learning-review.v1",
+        "acceptance_report_sha256": "7306e29a996f235f4ae3d0a76306d386c732afa4b96144ee5d0aa093ba358ce1",
+        "rendered_output": null
+      },
+      "reference_author": {
+        "accepted_host": true,
+        "profile": "video.reference-learning-author.v1",
+        "acceptance_report_sha256": "775428b950e2677bf0196f54e1b52c9dc6b96808f8f648b3e5bad2a396cc4707",
+        "rendered_output": {
+          "scope": "sampled_frames_only",
+          "sha256": "49e2952b6e7846029c4817c3ea6ab6b589ce55e3cf76e7c9dcc5cae8ad11d331",
+          "container_absent_verified": true
+        }
+      },
+      "reference_review": {
+        "accepted_host": true,
+        "profile": "video.reference-learning-review.v1",
+        "acceptance_report_sha256": "1a5b213447f8134dc56e02f910e14f50bde62175cf42bebcc0f6596b1519443e",
+        "rendered_output": null
+      }
+    },
+    "model_requests_total": 25,
+    "model_requests_successful_candidates": 16,
+    "failed_candidates": 3,
+    "failed_candidate_evidence_preserved": true,
+    "all_candidate_resources_deleted": true,
+    "scope": "Technical role admission precedes production activation; it does not approve artistic quality."
+  },
+  "api_smoke": {
+    "status": "passed",
+    "checks": 66,
+    "source_metadata_records": 2,
+    "scope": {
+      "registered_source_only": true,
+      "created_projects": 0,
+      "created_analyses": 0,
+      "created_experiments": 0,
+      "submitted_model_tasks": 0,
+      "extracted_frames": false,
+      "continuous_motion_verified": false,
+      "audio_verified": false,
+      "catalog_read_only_evidence": "Owner table hashes, global blob manifests and temporary-frame manifests unchanged. Unit tests independently assert observation is never called."
+    }
+  },
+  "web_http_smoke": {
+    "status": "passed",
+    "checks": 93,
+    "asset_count": 12,
+    "requests": 14,
+    "assets_match_revision": "2a1a8bb7f1919453658dc152b9d16d66fde375f0",
+    "scope": {
+      "http_methods": [
+        "GET"
+      ],
+      "http_mutations": 0,
+      "source_registration": 0,
+      "projects_created": 0,
+      "analyses_created": 0,
+      "experiments_created": 0,
+      "model_tasks_submitted": 0,
+      "remote_media_reads": 0,
+      "visual_browser_verification": false
+    }
+  },
+  "source_observation": {
+    "source_url": "https://www.bilibili.com/video/BV1BxWu6SESe/?p=1",
+    "duration_seconds": 111.0,
+    "source_dimensions": [
+      852,
+      480
+    ],
+    "source_identity_scope": "provider_metadata",
+    "detail_observations": [
+      {
+        "frame": {
+          "sha256": "5325dc9be7d8e63de9e3b31379c8cbdb99bb2b5e7bd94e18fbaf308c65f18e6d",
+          "width": 852,
+          "height": 480,
+          "requested_time": 38,
+          "actual_pts": 38.0,
+          "pts_ticks": 608000,
+          "time_base": [
+            1,
+            16000
+          ],
+          "crop": null,
+          "quality": "detail",
+          "bytes": 136337
+        },
+        "received_bytes": 7619627,
+        "temporary_directory_empty": true
+      },
+      {
+        "frame": {
+          "sha256": "35fd73094f4bd7c2f6c15687c41900a555d3d42496a078fbda5848ddbe28b9b5",
+          "width": 426,
+          "height": 240,
+          "requested_time": 38,
+          "actual_pts": 38.0,
+          "pts_ticks": 608000,
+          "time_base": [
+            1,
+            16000
+          ],
+          "crop": {
+            "x": 0.25,
+            "y": 0.25,
+            "width": 0.5,
+            "height": 0.5
+          },
+          "quality": "detail",
+          "bytes": 32941
+        },
+        "received_bytes": 6849502,
+        "temporary_directory_empty": true
+      }
+    ],
+    "whole_source_overview": {
+      "frames": 24,
+      "unique_pts": 24,
+      "elapsed_seconds": 14.926,
+      "received_bytes": 107676186,
+      "requests": 51,
+      "max_bytes": 134217728,
+      "temporary_media_reclaimed": true
+    },
+    "full_reference_video_stored": false,
+    "model_or_business_task_started": false
+  },
+  "limits": {
+    "host_initial_overview_frames": 24,
+    "agent_supplementary_frames_per_request": 8,
+    "agent_supplementary_requests": 4,
+    "agent_supplementary_frames_total": 32,
+    "reference_quality": "Highest source/account-accessible; tested source currently 852x480 without login.",
+    "unsupported_sources": [
+      "HLS",
+      "live streams",
+      "encrypted media",
+      "segmented durl"
+    ]
+  },
+  "verification_boundaries": {
+    "new_remote_business_creation_end_to_end": false,
+    "observation_handoff_service_regressions": true,
+    "actual_remote_frames": true,
+    "browser_visual_interaction": false,
+    "continuous_motion": false,
+    "audio": false,
+    "artistic_quality": false,
+    "wikiskill_published": false
+  },
+  "operator_evidence_directory": "D:/codex-work/operations/remote-reference-learning-20261119",
+  "receipts": [
+    {
+      "file": "release-evidence/build-completed.json",
+      "sha256": "b5db708fa58fe5fed70c794e4efea141ac8cdf9a8596b7ffe2b2fa4ceb57bf71"
+    },
+    {
+      "file": "release-evidence/executor-build-completed.json",
+      "sha256": "e6930da790d4881e136bb9d39ce466fba14f3bcf5d7162032892ea53a4208a74"
+    },
+    {
+      "file": "release-evidence/executor-smoke.json",
+      "sha256": "af37c9443bfd6fd9b7c98a1e5e691bcce7a6aa7c25a617e506c6afc946dcaffe"
+    },
+    {
+      "file": "release-evidence/activation-receipt.json",
+      "sha256": "10d51f6d353f282e0e5d0ec12890532b77f6dc7ec2b66821605715a266a9f11e"
+    },
+    {
+      "file": "release-evidence/maintenance-release-check.json",
+      "sha256": "6b5dd168f62800303e346852663a51f64a9da22f2ebd45c67e027adba36a19cf"
+    },
+    {
+      "file": "four-role-admission-summary.json",
+      "sha256": "f3e3d58abb93a7e2394cfe5764c1164f000c532e43e5e282a8980029e6dd5251"
+    },
+    {
+      "file": "post-deploy-api-smoke-result.json",
+      "sha256": "4fed36973250a87822588aa23afaa0b903ad6b4acffd3272cfaaf973c9676558"
+    },
+    {
+      "file": "operator-evidence/lab-static-http-smoke-result.json",
+      "sha256": "1facb3d4173ed5f27e3684aa0337856d9d1d24ef11bb7c0cbb73ed666dd4b104"
+    },
+    {
+      "file": "core-pod-two-observations/result.json",
+      "sha256": "0d959c8dd45d2bb70b7aeda463a7ebe8bfd845ed155d9ab22168fef262f23c8f"
+    },
+    {
+      "file": "core-pod-24-overview/result.json",
+      "sha256": "19dc9e2f9fc5dc9d19befb545641b0875b4b970134f7bfea58d89748686eeb48"
+    },
+    {
+      "file": "core-summary.json",
+      "sha256": "e1881dd9c9b283b0ace39389f24a8701b4aecd8068a490cd88d85a1a4448b2c1"
+    },
+    {
+      "file": "service-validation.json",
+      "sha256": "49489314384eb8c87f7924e0b739a91e36307dee5bc1b30cd2e6b765db2fe2bf"
+    }
+  ]
+}

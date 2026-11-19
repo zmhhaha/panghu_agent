@@ -17,7 +17,7 @@
 | 三库与图片／视频参考学习 | [参考学习设计与实施拆分](reference-learning-libraries-design.md) | 完整目标与分阶段差距；图片已上线，视频有内部 6 秒参考产品证据，长片及内部小样、自适应多人学习待补齐 |
 | 使用图片学习库 | [网页与结构化 API](picture-learning-library.md) | 看参考、生成绘制源码、渲染单帧、对照迭代与保存技法；单帧是验证产物，完整创作学习流程保持 |
 | 了解视频学习实现合同 | [网页与结构化 API](video-learning-library.md) | 参考视频、独立选片、实际 MP4／源码／独立评审的实现；部署和产品结论另看验证记录 |
-| 按链接学习与视频截图学习 | [按需远程参考设计](remote-reference-learning.md) | 共用原站链接、真实时间帧及高清局部；不长期存参考整片，Agent 可在同一预算内补看 |
+| 按链接学习与视频截图学习 | [按需远程参考设计](remote-reference-learning.md)、[验证记录](remote-reference-validation-20261119.md) | 共用原站链接、真实时间帧及高清局部；不长期存参考整片，Agent 可在同一预算内补看 |
 | 核对视频学习当前验证范围 | [2026-11-18 验证记录](video-learning-validation-20261118.md)、[精简证据](evidence/video-learning-20261118.json) | 技术准入、最终部署、内部参考 API 产品与浏览器技术验收；采样帧不替代连续观看或听审 |
 | 核对图片真实渲染 | [源码与 PNG 验证](picture-learning-render-validation-20261118.md) | 水墨历史源码逐像素复现、Canvas／Three.js 真实渲染、新作者源码保全；不替代艺术认可 |
 | 核对图片完整实验 | [真实产品循环与上线](picture-learning-product-validation-20261118.md)、[看图角色准入](picture-learning-agent-validation-20261118.md) | 两轮复现、一次换内容、实际输入和原件下载、静态知识快照；水墨质感仍可继续改善 |
