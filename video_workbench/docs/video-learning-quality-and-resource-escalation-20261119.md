@@ -33,3 +33,13 @@
 视频和完整独立收据位于 `D:/codex-work/archives/video-service/20261119/peak-original-local-gpu/`。本机硬件GPU路径与服务器CPU路径分别记录，前者不能证明服务器完整导出、生产准入或逐像素跨后端一致。按帧序列可见原版云层遮挡、冷暖暗部更明显，也有云层条带、山峰裁切与几何细节不足；这不是连续播放评审或开发者认可结论。
 
 资源优先策略的三个定向测试模块共90项通过，包含实际绑定的host截图超时安全投影、禁止旧超时建议触发创作、原源码与输入保留，以及明确源码/seek故障的有界修复。
+
+策略代码 revision `1b10d4ec126cb23969856e313b5b58a88bc724df` 已通过完整Git构建，以 `latest@sha256:be66a34d1c1a9f354bf2436302f30a70c0d06b7f0cfbc1f4620dbc4d7976e10a` 上线。运行58项源码核对、Ready、health 200和19库在线备份完整性检查通过；生产host、准入、WikiSkill及其他5个服务保持。本次发布改变超时后的源码处理政策，没有将离线4CPU/3GiB/180秒单帧参数设为生产默认，也没有新增普通retry的扩资源字段。
+
+## 服务器 CPU 原版完整结果
+
+独立 full 最终成功，耗时1201.125秒（20分1秒），144帧及另外9张定位核验图全部完成，原scene、原assets及原engine/HyperFrames runtime保持。真实退出0、`OOMKilled=false`，容器按所有权核验后移除并确认不存在。媒体 SHA-256 为 `e4a1d05190f134fbeb83d72dec50670e0b4630ca6029e38121627d89270f98e8`，1280×720、24fps、6秒，反向/重复/空闲/重新加载定位、本地ffprobe和整段解码通过。
+
+27份下载文件逐项SHA核对，归档在 `D:/codex-work/archives/video-service/20261119/peak-original-extended/full/`，视频为 `work/output.mp4`，完整证据为 `validation.json` 和 `download-evidence.json`。原受信host仍为 `df7253899839aef3df112e13ccc3a2c2ca09ceee96b037c84800021e1dd26d81`，仅独立full派生host使用 `0561cd77d7e545b317b1b1a5fb1d60a3bb7db1fbd73ca1421f58e9828bc00240` 并在新请求中绑定，不进入生产准入或原实验ledger。
+
+这次仅CPU导出与检查即超过原15分钟整项预算，原版首帧捕获也超过原10秒截图限制。复杂效果应依据实际后端及代表帧测量安排创作、渲染和检查时间，不能把固定小预算下的失败当作品质结论。本机GPU与CPU总耗时是不同后端和独立host的实际记录，不能当作受控性能基准或承诺其他作品同样耗时。
