@@ -168,3 +168,17 @@ def test_repair_cannot_start_a_new_resource_or_collaboration_plan(system, field)
     with pytest.raises(ServiceError, match='video_learning_repair_nested_plan_forbidden'):
         service._adopt_resource_proposal({}, operation, dict(method={field: {}}))
     assert not author.submissions and not reviewer.submissions and not renderer.calls
+
+
+def test_new_guidance_is_frozen_and_does_not_change_historical_document_reconstruction(system, real_mp4):
+    service, author, reviewer, renderer = system
+    project, _ = start(service, real_mp4)
+    run = service.store.read('experiments', 'developer', project['latest_experiment_id'])
+    current = service._document(run, 'create')
+    assert current['constraints']['execution_guidance'] == run['frozen']['runtime_capabilities']['execution_guidance']
+    historical = deepcopy(run)
+    historical['frozen']['runtime_capabilities'].pop('execution_guidance')
+    original = deepcopy(historical)
+    assert 'execution_guidance' not in service._document(historical, 'create')['constraints']
+    assert historical == original
+    assert not author.submissions and not renderer.calls

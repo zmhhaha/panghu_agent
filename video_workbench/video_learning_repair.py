@@ -6,6 +6,7 @@ report, never a visual verdict; uncertain executions cannot authorize a repair.
 from copy import deepcopy
 
 from agent_service.contracts import digest
+from .learning_execution_guidance import learning_execution_guidance
 from .picture_learning_store import require
 
 
@@ -87,7 +88,8 @@ class VideoLearningRepairMixin:
             'video_learning_repair_source_changed', 409)
         # Retain the exact effective task, reference images, review, tool
         # restrictions and WikiSkill binding that produced this failed work.
-        execution_guidance = deepcopy(document['constraints'].get('execution_guidance'))
+        execution_guidance = deepcopy(document['constraints'].get('execution_guidance',
+            learning_execution_guidance()))
         document = deepcopy(operation['input'])
         document.update(mode='create', experiment_id=run['id'], frozen_at=run['created_at'])
         document.pop('sound_events', None)

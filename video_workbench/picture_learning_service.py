@@ -79,6 +79,11 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
     def _enabled(self):
         return self.author is not None and self.reviewer is not None and self.renderer is not None
 
+    def _runtime_capabilities(self):
+        capabilities = super()._runtime_capabilities()
+        capabilities['execution_guidance'] = learning_execution_guidance()
+        return capabilities
+
     def _reference(self, owner, identity):
         return self.store.read('references', owner, identity)
 
@@ -424,7 +429,8 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
         capabilities = frozen['runtime_capabilities']
         constraints = dict(width=frozen['width'], height=frozen['height'],
                            allowed_engines=capabilities.get('allowed_engines', ['html-svg', 'canvas']))
-        constraints['execution_guidance'] = learning_execution_guidance()
+        if capabilities.get('execution_guidance') is not None:
+            constraints['execution_guidance'] = deepcopy(capabilities['execution_guidance'])
         # Runtime capability metadata is supplied as data; no drawing recipe
         # is injected by the host in place of the creator's own implementation.
         if capabilities.get('runtime_identity') is not None:
