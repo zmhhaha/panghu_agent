@@ -428,6 +428,16 @@ class FilmCreationStore:
         with self.store.transaction() as db:
             return self._version(db, owner, version_id)[1]
 
+    def module_reuse_material(self, db, owner, version_id):
+        """Read original custody on the admission caller's existing connection.
+
+        Starting another business transaction here would block the caller's
+        BEGIN IMMEDIATE. This method performs no admission or database write.
+        """
+        version, package = self._version(db, owner, version_id)
+        assets = self._assets_for_operations(db, owner, [version['operation_id']])
+        return dict(version=version, package=package, assets=assets)
+
     def module_predecessor(self, owner, version_id):
         return dict(version_id=version_id, predecessor=predecessor_from_package(self.module_package(owner, version_id)))
 

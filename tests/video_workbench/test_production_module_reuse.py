@@ -2,6 +2,7 @@
 import json
 import hashlib
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,8 @@ from video_workbench.production_run_store import packed
 from video_workbench.hyperframes_film_snapshot import decode_film_execution_snapshot
 from fastapi.testclient import TestClient
 from video_workbench.app import create_app
+from video_workbench.film_creation_workflow import FilmCreationWorkflow
+from agent_service.profiles.video_animation_film_module import PROFILE
 from test_production_film_runs import env, finish_module, children, OWNER
 
 
@@ -197,8 +200,15 @@ def test_wrong_owner_and_audio_or_resource_reuse_cannot_select_prefix(env):
 
 
 def test_http_api_keeps_explicit_reuse_field_and_original_owner_csrf_rules(env):
+    # Exercise the production facade's private-name barrier, not the permissive
+    # local fixture facade used by older store-only orchestration tests.
+    gateway = SimpleNamespace(profile=PROFILE, profile_revision='1', preflight=lambda deadline: None)
+    env.facade = FilmCreationWorkflow(env.creation, gateway, env.adapter, object(),
+        enabled=True, render_readiness=lambda: True)
+    env.runs.film_creation = env.facade
     source = failed_prefix(env)
-    env.facade.stop = lambda: None  # This local child-store facade owns no background writer.
+    with pytest.raises(AttributeError):getattr(env.facade, '_version')
+    with pytest.raises(AttributeError):getattr(env.facade, '_assets_for_operations')
     app = create_app(db_path=env.store.path, local_mode=False, background=False,
         production_runs_enabled=True, trusted_hosts={'testserver'}, film_creation=env.facade)
     project = env.store.project(OWNER, env.project['id'])
@@ -219,8 +229,34 @@ def test_http_api_keeps_explicit_reuse_field_and_original_owner_csrf_rules(env):
         before = custody(env)
         assert client.get('/api/production-runs/' + run['id']).status_code == 200
         assert custody(env) == before
+        app.state.production_run_store.tick()
+        assert len(children(env, 'film_module_operations')) == 3
+        finish_module(env, children(env, 'film_module_operations')[-1]['id'])
+        app.state.production_run_store.tick()
+        renders = children(env, 'film_render_operations')
+        assert len(renders) == 1 and renders[0]['request']['production_run_id'] == run['id']
         client.headers['x-forwarded-user'] = 'foreign-owner'
         assert client.get('/api/production-runs/' + run['id']).status_code == 404
+
+
+def test_real_facade_reuse_material_uses_existing_query_only_connection_and_owner(env, monkeypatch):
+    source = failed_prefix(env)
+    original = document(env, source['id'])
+    version_id = source['items'][0]['module_version_id']
+    facade = FilmCreationWorkflow(env.creation, None, None, None)
+    with env.store.transaction() as db:
+        db.execute('PRAGMA query_only=ON')
+        before = db.total_changes
+        def no_nested_transaction():
+            raise AssertionError('reuse material must use its caller connection')
+        monkeypatch.setattr(env.store, 'transaction', no_nested_transaction)
+        material = facade.module_reuse_material(db, OWNER, version_id)
+        assert material['version']['id'] == version_id
+        assert material['package']['input_sha256'] == original['items'][0]['module_input_sha256']
+        assert isinstance(material['assets'], dict) and db.total_changes == before
+        with pytest.raises(ServiceError):facade.module_reuse_material(db, 'foreign-owner', version_id)
+        with pytest.raises(ServiceError):facade.module_reuse_material(db, OWNER, 'missing-version')
+        monkeypatch.undo()
 
 
 def test_repeated_failed_continuation_reuses_same_real_prefix_with_bounded_lineage(env, monkeypatch):

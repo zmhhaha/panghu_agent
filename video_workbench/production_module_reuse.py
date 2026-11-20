@@ -101,7 +101,8 @@ def _source_prefix(runs, db, source):
             and child is not None and child.get('status') == 'completed'
             and child.get('error') is None and not child.get('cancel_requested')
             and child.get('version_id') == item['module_version_id'])
-        version, package = runs._film_service()._version(db, source['owner'], item['module_version_id'])
+        material = runs._film_service().module_reuse_material(db, source['owner'], item['module_version_id'])
+        version, package, available = (material[key] for key in ('version', 'package', 'assets'))
         document, module = package['input_document'], package['result']['module']
         context = document['film_context']
         delivery = package['skill_delivery']
@@ -113,7 +114,6 @@ def _source_prefix(runs, db, source):
                 _require(all(row['publication_sha256'] == binding['release_sha256']
                     and row['method_version_id'].startswith('wikiskill:' + binding['release_id'] + ':')
                     for row in delivery['catalog']['skills']))
-        available = runs._film_service()._assets_for_operations(db, source['owner'], [child['id']])
         _require(all(name in available and hashlib.sha256(available[name]).hexdigest() == checksum
             for name, checksum in document['assets'].items()))
         _require(document['constraints']['runtime_identity']

@@ -99,6 +99,10 @@ class FilmCreationWorkflow:
         self.creation.store.project(owner, project_id)
         return self.readiness()
 
+    def module_reuse_material(self, db, owner, version_id):
+        """Forward read-only prefix custody using the caller's transaction."""
+        return self.creation.module_reuse_material(db, owner, version_id)
+
     def preflight_resources(self, owner):
         from .manim_film_admission import validate_producer_capabilities
         configuration = self.creation.configuration or {}
