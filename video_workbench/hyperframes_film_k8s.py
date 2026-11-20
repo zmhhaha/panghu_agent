@@ -251,7 +251,9 @@ class KubeFilmRenderer:
         count = snapshot['clock']['frame_count']
         return dict(**metadata, expected_duration_seconds=count / 24, width=snapshot['width'],
             height=snapshot['height'], fps=24, video_codec='h264', audio_codec='aac',
-            audio_sample_rate=48000, audio_channels=2, silent=False, subtitles=False,
+            audio_sample_rate=48000, audio_channels=2,
+            silent=snapshot['clock'].get('authority') == 'explicit_silent_intervals',
+            contains_narration=snapshot['clock'].get('authority') != 'explicit_silent_intervals', subtitles=False,
             visual_mode='hyperframes-film', snapshot_sha256=snapshot['sha256'],
             runtime_fingerprint=self.runtime, quality='draft', elapsed_seconds=0,
             film_export=dict(bundle_sha256=snapshot['bundle_sha256'], film_sha256=snapshot['film_sha256'],

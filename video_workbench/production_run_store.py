@@ -1,4 +1,4 @@
-"""Resumable audio-first draft journals; generated candidates never adopt media.
+"""Resumable draft journals with recorded or explicit visual clocks.
 
 Only local child admissions run here. Their request and stable key are committed
 before calling existing stores, so a restart finds or replays the same child.
@@ -19,6 +19,7 @@ from .audio_store import narration_binding
 from .media import MAX_PROJECT_SECONDS, MAX_SCENES
 from .production_film_context import freeze_production_inputs
 from .speech import inspect_wav
+from .hyperframes_film_limits import MAX_SECONDS, render_timeout
 
 
 ACTIVE = frozenset({'queued', 'running'})
@@ -29,6 +30,7 @@ PUBLIC_ITEM = ('scene_id', 'title', 'audio_operation_id', 'audio_version_id', 'a
                'audio_seconds', 'motion_operation_id', 'motion_version_id', 'status', 'error',
                'module_operation_id', 'module_version_id', 'module_status', 'module_sha256', 'module_engine')
 FILM_RENDERER = 'hyperframes-film'
+SILENT_FILM_CLOCK = 'video.hyperframes-film-clock.v1'
 
 
 def require(value, code='invalid_production_run_request', status=422):
@@ -62,26 +64,33 @@ class ProductionRunStore:
         result = {key: run.get(key) for key in ('id', 'project_id', 'joint_plan_version_id',
             'request_key', 'status', 'phase', 'voice', 'draft_render_id', 'error', 'blocked_reason', 'draining',
             'created_at', 'finished_at', 'renderer_mode', 'draft_render_source', 'library_binding')}
+        silent = run.get('audio_mode') == 'silent'
+        if 'audio_mode' in run:
+            result['audio_mode'] = run['audio_mode']
         raw_items = run.get('items') if type(run.get('items')) is list else []
         frozen = run.get('frozen') if type(run.get('frozen')) is dict else {}
         frozen_scenes = frozen.get('scenes') if type(frozen.get('scenes')) is list else []
         items = []
         for item, frozen in zip(raw_items, frozen_scenes):
             seconds = item.get('audio_seconds')
-            duration = (math.ceil((seconds + frozen['leading_seconds'] + frozen['trailing_seconds']) * 24) / 24
-                        if seconds is not None else None)
+            duration = (math.ceil(frozen['duration_seconds'] * 24) / 24 if silent else
+                math.ceil((seconds + frozen['leading_seconds'] + frozen['trailing_seconds']) * 24) / 24
+                if seconds is not None else None)
             items.append(dict({key: item.get(key) for key in PUBLIC_ITEM}, duration_seconds=duration,
                               candidate_current=bool(current and (item.get('motion_version_id')
                                                      or item.get('module_version_id')))))
+            if silent:
+                items[-1].update(audio_status=item['audio_status'], clock_source='silent')
         result.update(items=items, current=bool(current),
             duration_seconds=sum(item['duration_seconds'] for item in items)
                 if items and all(item['duration_seconds'] is not None for item in items) else None,
-            duration_source='measured_recordings_and_frame_quantized_pauses' if items else None,
+            duration_source=('planned_visual_durations_on_24fps_clock' if silent
+                else 'measured_recordings_and_frame_quantized_pauses') if items else None,
             review_status='not_reviewed', selection='draft_only',
-            progress=dict(done=sum(bool(item.get('audio_version_id'))
+            progress=dict(done=sum((0 if silent else bool(item.get('audio_version_id')))
                                    + bool(item.get('motion_version_id') or item.get('module_version_id'))
                                    for item in raw_items) + int(run['status'] == 'completed'),
-                          total=2 * len(raw_items) + 1))
+                          total=(1 if silent else 2) * len(raw_items) + 1))
         if 'audio_reuse' in run:
             result.update(audio_reuse=deepcopy(run['audio_reuse']),
                 audio_reuse_sha256=run['audio_reuse_sha256'], work_budget=deepcopy(run['work_budget']))
@@ -324,7 +333,7 @@ class ProductionRunStore:
             and type(value.get('configuration_sha256')) is str
             and re.fullmatch(r'[0-9a-f]{64}', value['configuration_sha256'])
             and type(value.get('max_seconds')) in (int, float)
-            and 0 < value['max_seconds'] <= 60 and value.get('fps') == 24,
+            and 0 < value['max_seconds'] <= MAX_SECONDS and value.get('fps') == 24,
             'production_run_film_unavailable', 503)
         require(len(packed(value).encode()) <= 16384, 'production_run_film_configuration_invalid', 503)
         return deepcopy(value)
@@ -415,16 +424,32 @@ class ProductionRunStore:
 
     @staticmethod
     def _freeze_film(run):
-        """Freeze a single bounded full-film clock after every WAV is measured.
+        """Freeze measured speech or an explicitly requested visual clock.
 
         Padding includes the renderer's final partial-frame hold, so later
-        authors receive the actual joined-video clock, not estimated speech.
-        Old journals deliberately continue their original per-scene contract.
+        authors receive the actual joined-video clock. Silence uses approved
+        scene durations; missing speech never selects that mode. Old journals
+        deliberately continue their original per-scene contract.
         """
         if not run.get('continuity_schema') or run.get('film') is not None:
             return
         frozen, rows, cursor = run['frozen'], [], 0
+        silent, cursor_frames = run.get('audio_mode') == 'silent', 0
         for item, scene in zip(run['items'], frozen['scenes']):
+            if silent:
+                ProductionRunStore._require_silent_item(item)
+                seconds = scene['duration_seconds']
+                require(type(seconds) in {int, float} and math.isfinite(seconds) and 0 < seconds <= 60,
+                    'invalid_production_run_timing')
+                frames = math.ceil(seconds * 24)
+                rows.append(dict(scene_id=item['scene_id'], title=scene['title'], narration='',
+                    visual_intent=scene['visual_intent'], clock_source='silent',
+                    audio_version_id=None, audio_sha256=None, audio_seconds=0,
+                    start_seconds=cursor_frames / 24, end_seconds=(cursor_frames + frames) / 24,
+                    leading_silence_seconds=0, trailing_silence_seconds=frames / 24))
+                cursor_frames += frames
+                cursor = cursor_frames / 24
+                continue
             seconds = item['audio_seconds']
             require(seconds is not None and item['audio_version_id'] and item['audio_sha256'],
                     'production_run_film_requires_recordings', 409)
@@ -442,12 +467,37 @@ class ProductionRunStore:
             content_binding_sha256=run['binding_sha256'], title=frozen['title'], script=frozen['script'],
             understanding_goal=joint.get('understanding_goal') or joint.get('summary') or frozen['title'],
             style=joint.get('visual_style') or frozen['style'], scenes=rows, total_seconds=cursor)
+        if silent:
+            run['film']['schema'] = SILENT_FILM_CLOCK
         run['film_sha256'] = digest(run['film'])
+
+    @staticmethod
+    def _require_silent_item(item):
+        require(item.get('audio_status') == 'not_requested'
+            and type(item.get('audio_seconds')) in {int, float} and item['audio_seconds'] == 0
+            and all(item.get(key) is None for key in
+                ('audio_operation_id', 'audio_version_id', 'audio_sha256')),
+            'production_run_silent_audio_identity_changed', 409)
+
+    @staticmethod
+    def _audio_ready(run):
+        if run.get('audio_mode') == 'silent':
+            for item in run['items']:
+                ProductionRunStore._require_silent_item(item)
+            return True
+        return all(item['audio_version_id'] for item in run['items'])
 
     @staticmethod
     def _film_context(run, index, predecessor):
         if not run.get('continuity_schema'):
             return None
+        if run.get('audio_mode') == 'silent':
+            from agent_service.profiles.video_animation_film_module_contract import (
+                EXPLICIT_CONTEXT_SCHEMA, validate_author_film,
+            )
+            film = validate_author_film(run['film'], run['film_sha256'], explicit=True)
+            return dict(schema=EXPLICIT_CONTEXT_SCHEMA, film=film, film_sha256=run['film_sha256'],
+                current_scene_index=index, predecessor=predecessor)
         from agent_service.profiles.video_animation_production_contract import validate_film_context
         return validate_film_context(dict(schema=run['continuity_schema'], film=run['film'],
             film_sha256=run['film_sha256'], current_scene_index=index, predecessor=predecessor))
@@ -566,11 +616,16 @@ class ProductionRunStore:
     def start(self, owner, project_id, request, idem):
         required = {'expected_revision', 'joint_plan_version_id'}
         require(type(request) is dict and required <= set(request) <= required | {
-            'reuse_audio_from_run_id', 'resource_authoring', 'resource_plan'}
+            'reuse_audio_from_run_id', 'resource_authoring', 'resource_plan', 'audio_mode'}
             and type(request['expected_revision']) is int and request['expected_revision'] >= 1
             and type(request['joint_plan_version_id']) is str and 1 <= len(request['joint_plan_version_id']) <= 100
             and ('reuse_audio_from_run_id' not in request or type(request['reuse_audio_from_run_id']) is str
                 and 1 <= len(request['reuse_audio_from_run_id']) <= 100))
+        audio_mode = request.get('audio_mode', 'narration')
+        require(type(audio_mode) is str and audio_mode in {'narration', 'silent'})
+        if audio_mode == 'silent':
+            require(self.film_creation is not None, 'production_run_silent_requires_film', 503)
+            require('reuse_audio_from_run_id' not in request, 'production_run_silent_audio_reuse_conflict')
         resource_authoring = request.get('resource_authoring')
         if resource_authoring is not None:
             require(type(resource_authoring) is dict and 1 <= len(resource_authoring) <= 8
@@ -627,8 +682,10 @@ class ProductionRunStore:
                 from .production_resource_stage import production_plan
                 resource_plan = production_plan(selected_plan, self._freeze(planning_project, film_aware=True),
                     deadline_at=time.time() + 7200,
-                    library_binding=planning_project.get('joint_plan', {}).get('library_binding'))
-                self.resource_stage.preflight(owner, resource_plan)
+                    library_binding=planning_project.get('joint_plan', {}).get('library_binding'),
+                    audio_mode=audio_mode)
+                if resource_plan is not None:
+                    self.resource_stage.preflight(owner, resource_plan)
         require(resource_authoring is None or self.film_creation is not None,
             'production_run_resources_require_film', 503)
         require('resource_plan' not in request or self.film_creation is not None,
@@ -685,8 +742,14 @@ class ProductionRunStore:
                 # This is an explicit plan budget, not a prediction of exact
                 # TTS timing. Recheck the real frame clock after all recordings.
                 planned_seconds = sum(scene['duration_seconds'] for scene in frozen['scenes'])
-                pause_seconds = sum(scene['leading_seconds'] + scene['trailing_seconds']
-                    for scene in frozen['scenes'])
+                pause_seconds = (0 if audio_mode == 'silent' else sum(
+                    scene['leading_seconds'] + scene['trailing_seconds'] for scene in frozen['scenes']))
+                if audio_mode == 'silent':
+                    require(all(type(scene['duration_seconds']) in {int, float}
+                        and math.isfinite(scene['duration_seconds']) and 0 < scene['duration_seconds'] <= 60
+                        for scene in frozen['scenes']), 'invalid_production_run_timing')
+                    planned_seconds = sum(math.ceil(scene['duration_seconds'] * 24)
+                        for scene in frozen['scenes']) / 24
                 require(max(planned_seconds, pause_seconds) <= configuration['max_seconds'],
                     'production_run_film_plan_too_long', 422)
             run = dict(id=str(uuid4()), owner=owner, project_id=project_id, request_key=idem,
@@ -699,6 +762,13 @@ class ProductionRunStore:
                     audio_operation_id=None, audio_version_id=None, audio_sha256=None,
                     audio_seconds=None, motion_operation_id=None, motion_version_id=None)
                     for scene in frozen['scenes']])
+            if 'audio_mode' in request:
+                run['audio_mode'] = audio_mode
+            if audio_mode == 'silent':
+                run.update(voice=None, phase='module')
+                for item in run['items']:
+                    item.update(audio_status='not_requested', audio_seconds=0)
+                self._freeze_film(run)
             if 'library_binding' in project.get('joint_plan', {}):
                 run['library_binding'] = deepcopy(project['joint_plan']['library_binding'])
             if configuration is not None:
@@ -708,9 +778,10 @@ class ProductionRunStore:
                 for item in run['items']:
                     item.update(module_operation_id=None, module_version_id=None, module_status='queued',
                         module_sha256=None, module_package_sha256=None, module_engine=None)
-                run.update(resource_plan=resource_plan,
-                    resource_plan_registration=dict(status='pending', operation_id=run['id'],
-                        request_sha256=digest(resource_plan)), resource_progress={})
+                if resource_plan is not None:
+                    run.update(resource_plan=resource_plan,
+                        resource_plan_registration=dict(status='pending', operation_id=run['id'],
+                            request_sha256=digest(resource_plan)), resource_progress={})
                 if resource_source is not None:
                     run['resource_plan_source'] = resource_source
                 if resource_authoring is not None:
@@ -741,8 +812,9 @@ class ProductionRunStore:
             # Reserve the full-film copy before paying for recordings. Child
             # intents retain only exact references/hashes, never nested sources.
             probe = deepcopy(run)
-            for item in probe['items']:
-                item.update(audio_version_id='x' * 100, audio_sha256='a' * 64, audio_seconds=.1)
+            if audio_mode != 'silent':
+                for item in probe['items']:
+                    item.update(audio_version_id='x' * 100, audio_sha256='a' * 64, audio_seconds=.1)
             self._freeze_film(probe)
             self._film_context(probe, 0, None)
             require(len(packed(probe).encode()) <= 448 * 1024, 'production_run_storage_limit', 413)
@@ -919,6 +991,9 @@ class ProductionRunStore:
     def _validate_film_draft(run, child):
         metadata = child.get('result')
         require(type(metadata) is dict, 'production_run_film_result_invalid', 409)
+        if run.get('audio_mode') == 'silent':
+            require(metadata.get('silent') is True and metadata.get('contains_narration') is False,
+                'production_run_film_result_invalid', 409)
         export = metadata.get('film_export')
         frames = round(run['film']['total_seconds'] * 24)
         require(metadata.get('visual_mode') == FILM_RENDERER and metadata.get('quality') == 'draft'
@@ -1072,7 +1147,8 @@ class ProductionRunStore:
             self._frozen_module_package(run, module_index)
         return dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
             module_version_ids=[item['module_version_id'] for item in run['items']],
-            module_targets=deepcopy(run['module_targets']), production_run_id=run['id'], timeout_seconds=600,
+            module_targets=deepcopy(run['module_targets']), production_run_id=run['id'],
+            timeout_seconds=render_timeout(round(run['film']['total_seconds'] * 24)),
             configuration_sha256=configuration_sha256)
 
     def _step_film(self, run, project, *, admit):
@@ -1081,7 +1157,7 @@ class ProductionRunStore:
         The journal keeps only stable child references and request hashes; it
         never duplicates each large film request, package or render snapshot.
         """
-        if all(item['audio_version_id'] for item in run['items']):
+        if self._audio_ready(run):
             self._freeze_film(run)
             require(run['film']['total_seconds'] <= run['film_creation_configuration']['max_seconds'],
                 'production_run_film_too_long', 422)

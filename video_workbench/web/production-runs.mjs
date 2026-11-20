@@ -53,8 +53,8 @@ export function productionRunActualSeconds(run, renders = []) {
 
 export function productionRunErrorLabel(code) {
   const labels = {
-    production_run_film_plan_too_long: '当前整片制作支持最长 60 秒，请先缩短制作方案。尚未开始配音。',
-    production_run_film_too_long: '实际录音与留白超过当前 60 秒制作上限，已保留录音，请缩短内容后再制作。',
+    production_run_film_plan_too_long: '当前整片制作支持最长 5 分钟，请先缩短制作方案。尚未开始配音。',
+    production_run_film_too_long: '实际录音与留白超过当前 5 分钟制作上限，已保留录音，请缩短内容后再制作。',
     production_run_film_configuration_changed: '制作服务版本已变化，已暂停后续制作。已有结果保留，请重新核对。',
     film_creation_configuration_changed: '制作服务版本已变化，已暂停后续制作。已有结果保留，请重新核对。',
     production_run_film_unavailable: '整片制作依赖暂未就绪，请稍后再试。',

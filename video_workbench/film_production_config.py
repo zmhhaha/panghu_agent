@@ -16,6 +16,7 @@ from .hyperframes_film_execution import _ordinary
 from .hyperframes_film_snapshot import _release
 from .hyperframes_film_k8s import verify_execution_admission
 from .animation_runtime_capabilities import validate_runtime_capabilities
+from .hyperframes_film_limits import MAX_SECONDS, STREAM_MODE
 
 
 @dataclass(frozen=True, repr=False)
@@ -104,9 +105,15 @@ class FilmProductionSettings:
             # Version 2 only admits the complete, pinned optional library.
             # Image digest and the frozen project asset inventory bind these
             # bytes without changing the legacy motion-runtime.v3 schema.
-            if capabilities['schema'] == 'video.animation-runtime-capabilities.v2':
+            if capabilities['schema'] in {'video.animation-runtime-capabilities.v2', 'video.animation-runtime-capabilities.v3'}:
                 from .animejs_library import ASSETS as ANIME_ASSETS
                 expected_assets.update(ANIME_ASSETS)
+            if capabilities.get('drawing_libraries'):
+                from .ink_landscape_library import read_assets as read_drawing_assets
+                drawing_assets = read_drawing_assets()
+                expected_assets.update({name: hashlib.sha256(raw).hexdigest() for name, raw in drawing_assets.items()})
+                if any(assets.get('assets/' + name) != raw for name, raw in drawing_assets.items()):
+                    raise ValueError()
             if any(checksum != expected_assets[key] for key, checksum in capabilities['assets'].items()):
                 raise ValueError()
             return cls(gate == '1', value['image'], runtime, capabilities, hosts, host_files, assets, admission)
@@ -126,7 +133,8 @@ def execution_readiness(renderer, settings):
             and value.get('trusted_host_sha256') == settings.trusted_host_sha256
             and value.get('admission_sha256') == settings.admission['sha256']
             and value.get('fps') == 24 and value.get('audio_sample_rate') == 48000
-            and value.get('audio_channels') == 2 and value.get('max_seconds') == 60)
+            and value.get('audio_channels') == 2 and value.get('max_seconds') == MAX_SECONDS
+            and STREAM_MODE in value.get('capture_modes', []))
         return {'available': bool(available)}
     except (ServiceError, ValueError, KeyError, TypeError, AttributeError):
         return {'available': False}

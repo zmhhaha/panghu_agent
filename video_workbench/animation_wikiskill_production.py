@@ -170,7 +170,7 @@ class LibrarySkillProductionAdapter(SkillProductionAdapter):
         return self._entry(binding, intent=intent, snapshot=validate_delivery(result))['snapshot']
 
     def freeze(self, owner, consumer_id, task, engines, existing=None, *, resource_authoring=None,
-               library_binding=None, discovery_only=False):
+               library_binding=None, discovery_only=False, drawing_libraries=None):
         _identity(owner, 200)
         _identity(consumer_id)
         _require(type(task) is dict and len(_canonical(task)) <= MAX_TASK_BYTES and type(discovery_only) is bool)
@@ -197,7 +197,8 @@ class LibrarySkillProductionAdapter(SkillProductionAdapter):
             self.pin_import(owner, library_binding)
         batch = self._batch(owner, library_binding)
         intent = dict(library_binding=deepcopy(library_binding), release=batch['release'],
-            compatibility=freeze_compatibility(task, resource_authoring=resource_authoring),
+            compatibility=freeze_compatibility(task, resource_authoring=resource_authoring,
+                drawing_libraries=drawing_libraries),
             discovery_only=discovery_only)
         reserved = self._entry(binding, intent=intent)
         _require(reserved['intent'].get('library_binding') == library_binding

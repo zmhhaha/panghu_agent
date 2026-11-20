@@ -80,10 +80,17 @@ def test_remote_readiness_requires_exact_executor_not_legacy_top_level(tmp_path)
     value = dict(configured=True, schema='video.hyperframes-film-execution-snapshot.v1',
         image=settings.image, runtime_fingerprint=settings.runtime_fingerprint,
         trusted_host_sha256=settings.trusted_host_sha256, admission_sha256=settings.admission['sha256'],
-        fps=24, audio_sample_rate=48000, audio_channels=2, max_seconds=60)
+        fps=24, audio_sample_rate=48000, audio_channels=2, max_seconds=300,
+        capture_modes=['frame-inventory-v1', 'streaming-png-v2'])
     payload = {'hyperframes_film': value}
     renderer = SimpleNamespace(_request=lambda *args: SimpleNamespace(json=lambda: payload))
     assert execution_readiness(renderer, settings) == {'available': True}
+    value['max_seconds'] = 60
+    assert execution_readiness(renderer, settings) == {'available': False}
+    value['max_seconds'] = 300
+    value['capture_modes'] = ['frame-inventory-v1']
+    assert execution_readiness(renderer, settings) == {'available': False}
+    value['capture_modes'].append('streaming-png-v2')
     value['admission_sha256'] = 'b' * 64
     assert execution_readiness(renderer, settings) == {'available': False}
     payload.clear()

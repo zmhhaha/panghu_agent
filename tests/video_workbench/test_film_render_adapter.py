@@ -15,12 +15,29 @@ TOKEN = 'film-token-' + 't' * 40
 VIDEO = b'fixture bytes only, never claimed as a real decoded MP4'
 
 
+def test_default_long_film_polling_covers_frozen_job_deadline_without_overriding_explicit_recovery_limit():
+    short = dict(clock=dict(frame_count=1440), timeout_seconds=600)
+    long = dict(clock=dict(frame_count=7200), timeout_seconds=3600)
+    renderer = RemoteFilmRenderer('http://executor.invalid', TOKEN)
+    explicit = RemoteFilmRenderer('http://executor.invalid', TOKEN, wait_seconds=5)
+    try:
+        assert renderer._wait_budget(short) == 1800
+        assert renderer._wait_budget(long) == 3750
+        assert explicit._wait_budget(long) == 5
+    finally:
+        renderer.client.close()
+        explicit.client.close()
+
+
 def result_metadata(snapshot):
     count = snapshot['clock']['frame_count']
     return dict(sha256=hashlib.sha256(VIDEO).hexdigest(), bytes=len(VIDEO),
         duration_seconds=count / 24, expected_duration_seconds=count / 24,
         width=snapshot['width'], height=snapshot['height'], fps=24, video_codec='h264', audio_codec='aac',
-        audio_sample_rate=48000, audio_channels=2, silent=False, subtitles=False, quality='draft',
+        audio_sample_rate=48000, audio_channels=2,
+        silent=snapshot['clock'].get('authority') == 'explicit_silent_intervals',
+        contains_narration=snapshot['clock'].get('authority') != 'explicit_silent_intervals',
+        subtitles=False, quality='draft',
         visual_mode='hyperframes-film', snapshot_sha256=snapshot['sha256'],
         runtime_fingerprint=deepcopy(snapshot['runtime_fingerprint']), elapsed_seconds=1,
         film_export=dict(bundle_sha256=snapshot['bundle_sha256'], film_sha256=snapshot['film_sha256'],

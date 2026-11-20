@@ -93,7 +93,7 @@ export async function startFilmResourceServer(verified,{hyperFramesDist}={}){
  }catch{return false;}},async close(){await new Promise(resolve=>server.close(resolve));}};
 }
 export async function probeFilmBrowser({bundleRoot,expectedBundleSha256,chromium,executablePath,hyperFramesDist,
- frames=[0],onFrame}={}){
+ frames=[0],onFrame,reconstructFromOrdinal}={}){
  const verified=readFilmBrowserBundle(bundleRoot,expectedBundleSha256),server=await startFilmResourceServer(verified,{hyperFramesDist});
  let browser;const errors=[],blocked=[],observations=[];
  try{
@@ -118,8 +118,12 @@ export async function probeFilmBrowser({bundleRoot,expectedBundleSha256,chromium
   await page.waitForFunction(()=>typeof window.__trustedFilmBrowser?.seekFrame==='function',null,{timeout:30000});
   const serviceWorkerDisabled=await page.evaluate(()=>navigator.serviceWorker===undefined);
   check(serviceWorkerDisabled,'film_browser_service_worker_exposed');
+  let ordinal=0;
   for(const frame of frames){
-   const observation=await page.evaluate(frame=>window.__trustedFilmBrowser.seekFrame(frame),frame);
+   const fresh=Number.isInteger(reconstructFromOrdinal)&&ordinal>=reconstructFromOrdinal;
+   const observation=reconstructFromOrdinal===undefined
+    ?await page.evaluate(frame=>window.__trustedFilmBrowser.seekFrame(frame),frame)
+    :await page.evaluate(({frame,fresh})=>window.__trustedFilmBrowser.seekFrame(frame,{fresh}),{frame,fresh});
    check(errors.length===0,'film_browser_page_error:'+JSON.stringify(errors));
    check(blocked.length===0,'film_browser_network_blocked:'+JSON.stringify(blocked));
    const image=await page.screenshot({type:'png',animations:'allow'});
@@ -127,12 +131,14 @@ export async function probeFilmBrowser({bundleRoot,expectedBundleSha256,chromium
    const idle=await page.screenshot({type:'png',animations:'allow'});
    check(image.equals(idle),'film_browser_autonomous_frame_changed');
    observations.push({...observation,frame_sha256:hash(image)});if(onFrame)await onFrame(frame,image,observation);
+   ordinal++;
   }
   const cleanup=await page.evaluate(()=>window.__trustedFilmBrowser.close());
   check(cleanup.remaining_iframes===0&&cleanup.pending_cleanup_modules===0,'film_browser_cleanup_incomplete');
   check(errors.length===0&&blocked.length===0&&server.blocked.length===0,
    'film_browser_late_failure:'+JSON.stringify({errors,blocked,server:server.blocked}));
   return {schema:'video.hyperframes-film-technical-probe.v1',bundle_sha256:expectedBundleSha256,
+   ...(verified.config.capture_lifecycle?{lifecycle_mode:verified.config.capture_lifecycle}:{}),
    core_sha256:server.artifact.core_sha256,observations,cleanup,errors,blocked,
    service_worker_accessor_disabled:serviceWorkerDisabled,
    loaded_resources:[...server.loaded].sort(),evidence_scope:'real_core_and_technical_fixture_not_agent_visual_or_formal_delivery'};

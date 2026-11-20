@@ -1,7 +1,8 @@
 """Offline verified project -> full frames -> one MP4 with the original audio clock.
 
 No Agent, business adoption, Job submission or production admission runs here.
-The initial exporter accepts at most 60 seconds; chunked export is a later unit.
+Short frozen films retain their PNG inventory. Longer films use a bounded PNG
+pipe into one continuous encoder, under the same root-project frame clock.
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from fractions import Fraction
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -20,9 +22,13 @@ import time
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from .hyperframes_film_audio import mix_film_audio
 from .hyperframes_film_browser import verify_film_browser_bundle
+from .hyperframes_film_limits import (
+    MAX_FRAMES, LEGACY_MAX_FRAMES, MAX_TIMEOUT_SECONDS, MAX_FRAME_BYTES,
+    MAX_STREAM_FRAME_BYTES, STREAM_MODE,
+)
 
 SCHEMA = 'video.hyperframes-film-offline-export.v1'
-MAX_FRAMES, MAX_MEDIA_BYTES = 1440, 128 * 1024 * 1024
+MAX_MEDIA_BYTES = 128 * 1024 * 1024
 
 
 def _require(value, code='hyperframes_film_export_invalid', status=422):
@@ -84,14 +90,15 @@ def _run(command, *, cwd, deadline):
         error = ServiceError('hyperframes_film_export_process_failed', 502)
         error.process_diagnostic = stderr[-4096:].decode('utf-8', errors='replace')
         raise error
-    _require(len(stdout) <= 4 * 1024 * 1024,
+    _require(len(stdout) <= 64 * 1024 * 1024,
         'hyperframes_film_export_output_budget', 502)
     return stdout
 
 
 def _validate_frames(receipt, work, bundle, checksum, project):
     count, config = project['clock']['frame_count'], bundle['root_config']
-    _require(type(receipt) is dict and receipt.get('schema') == 'video.hyperframes-film-frame-capture.v1'
+    streaming = count > LEGACY_MAX_FRAMES
+    _require(type(receipt) is dict and receipt.get('schema') == 'video.hyperframes-film-frame-capture.' + ('v2' if streaming else 'v1')
         and receipt.get('bundle_sha256') == checksum
         and receipt.get('project_manifest_sha256') == bundle['project_manifest_sha256']
         and receipt.get('film_sha256') == project['film_sha256']
@@ -101,21 +108,35 @@ def _validate_frames(receipt, work, bundle, checksum, project):
     frames = receipt.get('frames')
     _require(type(frames) is list and len(frames) == count,
         'hyperframes_film_export_capture_incomplete', 502)
-    expected, total = set(), 0
+    expected, total, maximum = set(), 0, 0
+    chain = hashlib.sha256()
     for index, frame in enumerate(frames):
         name = 'frame-' + str(index).zfill(6) + '.png'
         path = work / 'frames' / name
         _require(type(frame) is dict and frame.get('frame') == index and frame.get('path') == name
-            and path.is_file() and not path.is_symlink() and path.stat().st_size <= 12 * 1024 * 1024,
+            and type(frame.get('bytes')) is int and 0 < frame['bytes'] <= MAX_FRAME_BYTES
+            and type(frame.get('sha256')) is str and re.fullmatch(r'[0-9a-f]{64}', frame['sha256']),
             'hyperframes_film_export_frame_invalid', 502)
-        raw = path.read_bytes()
-        _require(raw.startswith(b'\x89PNG\r\n\x1a\n') and len(raw) == frame.get('bytes')
-            and _sha(raw) == frame.get('sha256'), 'hyperframes_film_export_frame_changed', 409)
-        total += len(raw)
-        _require(total <= 512 * 1024 * 1024, 'hyperframes_film_export_frame_budget', 502)
+        if not streaming:
+            _require(path.is_file() and not path.is_symlink() and path.stat().st_size <= MAX_FRAME_BYTES,
+                'hyperframes_film_export_frame_invalid', 502)
+            raw = path.read_bytes()
+            _require(raw.startswith(b'\x89PNG\r\n\x1a\n') and len(raw) == frame['bytes']
+                and _sha(raw) == frame['sha256'], 'hyperframes_film_export_frame_changed', 409)
+        total += frame['bytes']
+        maximum = max(maximum, frame['bytes'])
+        chain.update((str(index) + ':' + str(frame['bytes']) + ':' + frame['sha256'] + '\n').encode())
+        _require(total <= (MAX_STREAM_FRAME_BYTES if streaming else 512 * 1024 * 1024),
+            'hyperframes_film_export_frame_budget', 502)
         expected.add(name)
-    _require({path.name for path in (work / 'frames').iterdir()} == expected
+    _require({path.name for path in (work / 'frames').iterdir()} == (set() if streaming else expected)
         and receipt.get('frame_bytes') == total, 'hyperframes_film_export_frame_inventory', 502)
+    if streaming:
+        _require(config.get('capture_lifecycle') == 'persistent-active-modules-v1'
+            and receipt.get('storage') == dict(schema='video.hyperframes-film-png-stream.v1', mode=STREAM_MODE,
+                encoder_invocations=1, frame_files=0, peak_pending_frames=1, max_frame_bytes=maximum,
+                frame_bytes=total, frame_count=count, frame_inventory_sha256=chain.hexdigest()),
+            'hyperframes_film_export_stream_mismatch', 502)
     probe = receipt.get('probe', {})
     _require(type(probe) is dict, 'hyperframes_film_export_probe_incomplete', 502)
     observations = probe.get('observations', [])
@@ -130,6 +151,7 @@ def _validate_frames(receipt, work, bundle, checksum, project):
         'hyperframes_film_export_probe_incomplete', 502)
     modules = {row['module_id']: row for row in project['modules']}
     previous_dispatches = 0
+    prior_instances, observed_instances = {}, set()
     for index, frame in enumerate(order):
         row = observations[index]
         _require(type(row) is dict and row.get('frame_sha256') == frames[frame]['sha256']
@@ -142,6 +164,10 @@ def _validate_frames(receipt, work, bundle, checksum, project):
             and type(row.get('dispatch_count')) is int and row['dispatch_count'] > previous_dispatches,
             'hyperframes_film_export_probe_mismatch', 502)
         previous_dispatches = row['dispatch_count']
+        if streaming:
+            _require(probe.get('lifecycle_mode') == 'persistent-active-modules-v1'
+                and row.get('fresh_reconstruction') is (index >= count),
+                'hyperframes_film_export_stream_reconstruction_missing', 502)
         active = {}
         for scene in project['scenes']:
             if scene['active_start_frame'] <= frame < scene['active_end_frame']:
@@ -156,12 +182,23 @@ def _validate_frames(receipt, work, bundle, checksum, project):
         _require(type(realms) is list and len(realms) == len(active),
             'hyperframes_film_export_realm_mismatch', 502)
         seen = set()
+        current_instances = {}
         for realm in realms:
             mid = realm.get('module_id') if type(realm) is dict else None
             _require(mid in active and mid not in seen and realm.get('module_sha256') == modules[mid]['module_sha256']
                 and realm.get('sandbox') == 'allow-scripts' and realm.get('realm_origin') == 'null'
                 and realm.get('context') == active[mid], 'hyperframes_film_export_realm_mismatch', 502)
             observation = realm.get('observation')
+            if streaming:
+                instance = realm.get('instance_id')
+                _require(type(instance) is int and instance > 0,
+                    'hyperframes_film_export_instance_mismatch', 502)
+                if index < count and mid in prior_instances:
+                    _require(instance == prior_instances[mid], 'hyperframes_film_export_instance_mismatch', 502)
+                else:
+                    _require(instance not in observed_instances, 'hyperframes_film_export_instance_mismatch', 502)
+                current_instances[mid] = instance
+                observed_instances.add(instance)
             _require(type(observation) is dict and observation.get('engine') == modules[mid]['engine']
                 and observation.get('revision') == 'film-opaque-realm-guard-1'
                 and observation.get('pending_animation_frames') == 0
@@ -179,6 +216,7 @@ def _validate_frames(receipt, work, bundle, checksum, project):
                         and value.get('context_lost') is False and value.get('gl_error') == 0)) for value in contexts),
                     'hyperframes_film_export_native_context_missing', 502)
             seen.add(mid)
+        prior_instances = current_instances
 
 
 @dataclass(frozen=True)
@@ -198,13 +236,15 @@ def export_film_browser_bundle(files, *, expected_bundle_sha256, scratch_dir,
     caller's trusted boundary. This function verifies bytes, not authorization.
     It never updates adoption, history or production capabilities.
     """
-    _require(type(timeout_seconds) in (int, float) and 0 < timeout_seconds <= 1200)
+    _require(type(timeout_seconds) in (int, float) and 0 < timeout_seconds <= MAX_TIMEOUT_SECONDS)
     _require(type(files) is dict)
     frozen = dict(files)
     bundle = verify_film_browser_bundle(frozen, expected_bundle_sha256=expected_bundle_sha256)
     project_files = {name[len('project/'):]: raw for name, raw in frozen.items() if name.startswith('project/')}
     project = json.loads(project_files['manifest.json'])
     count, config = project['clock']['frame_count'], bundle['root_config']
+    streaming = count > LEGACY_MAX_FRAMES
+    _require(timeout_seconds <= (MAX_TIMEOUT_SECONDS if streaming else 1200))
     _require(0 < count <= MAX_FRAMES, 'hyperframes_film_export_duration_budget')
     # yuv420p's even dimensions are a delivery requirement, not a silent crop.
     _require(config['width'] % 2 == 0 and config['height'] % 2 == 0,
@@ -215,7 +255,10 @@ def export_film_browser_bundle(files, *, expected_bundle_sha256, scratch_dir,
     binaries = {name: _binary(value) for name, value in dict(node=node, ffmpeg=ffmpeg, ffprobe=ffprobe).items()}
     runner = Path(__file__).parent / 'motion_renderer/hyperframes_film_capture.mjs'
     _require(runner.is_file() and not runner.is_symlink(), 'hyperframes_film_export_runner_missing', 503)
-    identities = {name: _file_sha(path) for name, path in {**binaries, 'capture_entry': runner}.items()}
+    sources = {**binaries, 'capture_entry': runner}
+    if streaming:
+        sources['stream_encoder'] = runner.with_name('hyperframes_film_stream.mjs')
+    identities = {name: _file_sha(path) for name, path in sources.items()}
     deadline = time.monotonic() + timeout_seconds
     with tempfile.TemporaryDirectory(prefix='hf-film-export-', dir=root) as temporary:
         work = Path(temporary)
@@ -230,6 +273,9 @@ def export_film_browser_bundle(files, *, expected_bundle_sha256, scratch_dir,
         (work / 'delivery.wav').write_bytes(audio.data)
         command_config = dict(bundleRoot=str(work / 'bundle'), expectedBundleSha256=expected_bundle_sha256,
             framesRoot=str(work / 'frames'))
+        if streaming:
+            command_config['streamEncoding'] = dict(ffmpegPath=str(binaries['ffmpeg']),
+                audioInput=str(work / 'delivery.wav'), outputPath=str(work / 'film.mp4'), maxMediaBytes=MAX_MEDIA_BYTES)
         for key, value in dict(playwright_module=playwright_module, executablePath=chromium_path,
                 hyperFramesDist=hyperframes_dist).items():
             if value is not None:
@@ -242,14 +288,15 @@ def export_film_browser_bundle(files, *, expected_bundle_sha256, scratch_dir,
         except (ValueError, UnicodeError):
             raise ServiceError('hyperframes_film_export_capture_invalid', 502) from None
         _validate_frames(capture, work, bundle, expected_bundle_sha256, project)
-        _run([str(binaries['ffmpeg']), '-hide_banner', '-loglevel', 'error', '-nostdin', '-n',
+        if not streaming:
+            _run([str(binaries['ffmpeg']), '-hide_banner', '-loglevel', 'error', '-nostdin', '-n',
             '-threads', '1', '-filter_threads', '1', '-framerate', '24', '-start_number', '0',
             '-i', 'frames/frame-%06d.png', '-i', 'delivery.wav', '-map', '0:v:0', '-map', '1:a:0',
             # The exact finite PNG inventory supplies video EOF. In FFmpeg 5.1
             # an output -frames:v limit can stop the muxer before audio drains.
             '-c:v', 'libx264', '-threads:v', '1', '-crf', '20', '-pix_fmt', 'yuv420p',
             '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2', '-map_metadata', '-1',
-            '-movie_timescale', '48000', '-movflags', '+faststart', 'film.mp4'], cwd=work, deadline=deadline)
+                '-movie_timescale', '48000', '-movflags', '+faststart', 'film.mp4'], cwd=work, deadline=deadline)
         output = work / 'film.mp4'
         _require(output.is_file() and not output.is_symlink() and 0 < output.stat().st_size <= MAX_MEDIA_BYTES,
             'hyperframes_film_export_media_invalid', 502)
@@ -280,7 +327,7 @@ def export_film_browser_bundle(files, *, expected_bundle_sha256, scratch_dir,
             '-i', 'film.mp4', '-map', '0:v:0', '-map', '0:a:0', '-f', 'null', '-'], cwd=work, deadline=deadline)
         _require(_sha((work / 'delivery.wav').read_bytes()) == audio.receipt['output']['sha256'],
             'hyperframes_film_export_audio_changed', 409)
-        for name, source in {**binaries, 'capture_entry': runner}.items():
+        for name, source in sources.items():
             _require(_file_sha(source) == identities[name], 'hyperframes_film_export_binary_changed', 409)
         for name, content in frozen.items():
             _require(_file_sha(work / 'bundle' / name) == _sha(content),

@@ -58,7 +58,9 @@ ENV PYTHONPATH=/app PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     PRODUCER_HEADLESS_SHELL_PATH=/opt/browser/headless_shell \
     PUPPETEER_EXECUTABLE_PATH=/opt/browser/headless_shell \
     XDG_CACHE_HOME=/tmp/cache XDG_CONFIG_HOME=/tmp/config TMPDIR=/tmp
-RUN node runtime.mjs > /opt/renderer/runtime.json \
+RUN python3 -c "from pathlib import Path; from video_workbench.ink_landscape_library import read_assets; [(Path('/opt/assets') / name).write_bytes(raw) for name, raw in read_assets().items()]" \
+    && node --input-type=module -e "const ink=await import('/opt/assets/ink-landscape.mjs'); if(typeof ink.createStrokeGroupDocument!=='function'||typeof ink.renderCanvas!=='function')throw Error('ink_landscape_exports_missing')" \
+    && node runtime.mjs > /opt/renderer/runtime.json \
     && node --input-type=module -e "const {chromium}=await import('/opt/renderer/node_modules/playwright-core/index.mjs'); if(typeof chromium.launch!=='function')throw Error('playwright_export_missing')" \
     && python3 -c "from video_workbench.hyperframes_film_execution import main; from video_workbench.hyperframes_film_export import export_film_browser_bundle"
 ARG SOURCE_REVISION

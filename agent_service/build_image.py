@@ -77,6 +77,8 @@ ANIMATION_RUNTIME_BUNDLES = (
      frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
     ('animation-film-module-v1', 'fc40e7b8cab8bbbefc5ede30f9001aa64f197f296e84e9113fb45880106a628f',
      frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
+    ('animation-film-module-v2', '53d43557bbd8e672ee2c45e536cff046f2f522b0b6086adc38d19ed5af01c414',
+     frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
     ('video-joint-plan-v1', 'bc38815a2f394181383fa4cea3811380dc899f0cf3ad1e61a7e15f84552cc9ca',
      frozenset({'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md'})),
     ('animation-review-v1', '165e4bc85eeae28a1fd30028f555b5d5a832f4dfdcfed09904bfd49859126f29', REVIEW_FILES),

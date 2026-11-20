@@ -78,7 +78,7 @@ function schedule(manifest){
 // verifiedManifest and its external digest must come from the independent
 // package verifier. This function validates scheduling shape, not byte custody.
 export function createHyperFramesFilmHost({verifiedManifest,manifestSha256,
- trustedLoadModule,createRoot,removeRoot}={}){
+ trustedLoadModule,createRoot,removeRoot,reuseActiveModules=false}={}){
  check(sha(manifestSha256)&&typeof trustedLoadModule==='function'&&typeof createRoot==='function'
   &&typeof removeRoot==='function','hyperframes_film_host_input_invalid');
  const manifest=freeze(copy(verifiedManifest)),modules=schedule(manifest);
@@ -88,9 +88,11 @@ export function createHyperFramesFilmHost({verifiedManifest,manifestSha256,
   live_roots:entries.filter(entry=>!entry.removed).length,pending_cleanup_modules:entries.length,
   package_execution_status:manifest.execution.status,
   evidence_scope:'lifecycle_calls_not_capture_visual_proof_or_runtime_admission'});
- async function cleanup(){
+ check(typeof reuseActiveModules==='boolean','hyperframes_film_host_input_invalid');
+ async function cleanup(keep=new Set()){
   const errors=[];
   for(const entry of [...entries].reverse()){
+   if(keep.has(entry.module.module_id))continue;
    if(!entry.disposed){
     try{await entry.exports.dispose();entry.disposed=true;}catch(error){errors.push(error);}
    }
@@ -132,12 +134,15 @@ export function createHyperFramesFilmHost({verifiedManifest,manifestSha256,
   busy=true;status='executing';completedFrame=null;
   let previousCleanupFailed=false;
   try{
-   const oldErrors=await cleanup();
-   if(oldErrors.length){previousCleanupFailed=true;throw new AggregateError(oldErrors,'hyperframes_film_cleanup_failed');}
    const planned=active(frame);
+   const keep=reuseActiveModules?new Set(planned.map(({module})=>module.module_id)):new Set();
+   const oldErrors=await cleanup(keep);
+   if(oldErrors.length){previousCleanupFailed=true;throw new AggregateError(oldErrors,'hyperframes_film_cleanup_failed');}
+   check(planned.length<=3,'hyperframes_film_active_module_budget');
    // Roots follow film scene order, then the associated transition order.
    // The factory owns root creation; this host never changes author styles.
    for(const {module,context} of planned){
+    if(entries.some(entry=>entry.module.module_id===module.module_id))continue;
     const exports=await trustedLoadModule(module,freeze({fresh_instance:true}));
     check(own(exports)&&['mount','renderAt','dispose'].every(name=>typeof exports[name]==='function'),
      'hyperframes_film_lifecycle_exports_missing');
@@ -149,6 +154,7 @@ export function createHyperFramesFilmHost({verifiedManifest,manifestSha256,
     entry.removed=false;
     await exports.mount(entry.root,context);
    }
+   entries=planned.map(({module})=>entries.find(entry=>entry.module.module_id===module.module_id));
    // Mount all participants before rendering so both sides and their authored
    // transition share one completed global-frame operation.
    for(let index=0;index<planned.length;index++)await entries[index].exports.renderAt(planned[index].context);
@@ -162,6 +168,11 @@ export function createHyperFramesFilmHost({verifiedManifest,manifestSha256,
    throw error;
   }finally{busy=false;}
  }
+ async function resetInstances(){
+  check(!busy&&status==='idle','hyperframes_film_busy');busy=true;completedFrame=null;
+  try{const errors=await cleanup();if(errors.length){status='failed';throw new AggregateError(errors,'hyperframes_film_cleanup_failed');}}
+  finally{busy=false;}
+ }
  async function dispose(){
   check(!busy,'hyperframes_film_busy');busy=true;completedFrame=null;
   try{
@@ -170,7 +181,7 @@ export function createHyperFramesFilmHost({verifiedManifest,manifestSha256,
    return snapshot();
   }finally{busy=false;}
  }
- const host=Object.freeze({renderFrame,dispose,getState:snapshot});
+ const host=Object.freeze({renderFrame,dispose,resetInstances,getState:snapshot});
  hosts.set(host,{manifest,bound:false});return host;
 }
 

@@ -33,6 +33,7 @@ from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
 from .audio_workflow import AudioWorkflow
 from .production import Production
+from .hyperframes_film_limits import MAX_SECONDS as MAX_FILM_SECONDS
 from .explanation_gateway import ExplanationAgentGateway
 from .explanation_store import ExplanationStore
 from .explanation_workflow import ExplanationWorkflow
@@ -66,9 +67,11 @@ MESSAGES = {
     'film_creation_unavailable': '整片动画制作暂未就绪，尚未开始新的制作任务。',
     'hyperframes_film_not_admitted': '整片渲染服务暂未就绪，尚未开始新的制作任务。',
     'production_run_film_unavailable': '整片制作依赖暂未就绪，尚未开始新的制作任务。',
-    'production_run_film_plan_too_long': '当前整片制作支持最长 60 秒，请先将制作方案控制在一分钟内。尚未开始配音。',
-    'production_run_film_too_long': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
-    'film_creation_duration_budget': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
+    'production_run_silent_requires_film': '无旁白制作需要整片制作服务，尚未开始新的制作任务。',
+    'production_run_silent_audio_reuse_conflict': '无旁白制作不能同时选择复用录音。',
+    'production_run_film_plan_too_long': '当前整片制作支持最长 5 分钟，请缩短制作方案。尚未开始配音。',
+    'production_run_film_too_long': '实际录音与留白超过当前 5 分钟制作上限，请缩短内容后再制作。',
+    'film_creation_duration_budget': '实际录音与留白超过当前 5 分钟制作上限，请缩短内容后再制作。',
     'creative_skills_unavailable': '暂时无法读取已发布的动画 Skill 目录，尚未提交制作任务。',
     'creative_film_context_required': '请从整片草稿制作入口生成动画，以绑定完整内容和真实配音时钟。',
     'skill_production_profile_unavailable': '通用 Agent 的动画 Skill 制作能力尚未完成独立准入或配置，暂不能开始新的制作任务。',
@@ -301,6 +304,7 @@ class JointPlanRequest(ExplanationRequest):
 
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
+    audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
     reuse_audio_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
     resource_authoring: dict[str, dict] | None = Field(default=None, min_length=1, max_length=8)
     resource_plan: dict | None = Field(default=None)
@@ -929,7 +933,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     joint_plan_configured=joint_gate and joint_plan_gateway is not None,
                     production_runs_enabled=production_run_workflow.enabled,
                     production_refinement_enabled=refinement_workflow.enabled,
-                    production_run_max_seconds=60 if film_creation is not None else None,
+                    production_run_max_seconds=MAX_FILM_SECONDS if film_creation is not None else None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
                     creative_enabled=creative_gate, creative_configured=creative_gate and author_configured,

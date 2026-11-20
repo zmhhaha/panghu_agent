@@ -20,6 +20,7 @@ function timeout(operation,label,milliseconds=15000){
   .finally(()=>clearTimeout(timer));
 }
 const host=createHyperFramesFilmHost({verifiedManifest:manifest,manifestSha256:config.project_manifest_sha256,
+ reuseActiveModules:config.capture_lifecycle==='persistent-active-modules-v1',
  trustedLoadModule(module){
   const instance={module,id:++serial,iframe:null,port:null,pending:new Map(),counter:0,observation:null,closed:false};
   instances.set(module.module_id,instance);
@@ -79,9 +80,10 @@ const clock=connectHyperFramesFilmCore({host,eventTarget:window,player:window.__
  waitForSeekCompletion:window.__hfWaitForSeekCompletion,forceReseek:window.__hfReseekGpu});
 Object.defineProperty(window,'__trustedFilmBrowser',{configurable:false,writable:false,value:Object.freeze({
  inspect(){return {remaining_iframes:container.querySelectorAll('iframe').length,...host.getState()};},
- async seekFrame(frame){
+ async seekFrame(frame,{fresh=false}={}){
+  if(fresh)await host.resetInstances();
   const result=await clock.seekFrame(frame);
-  return {...result,realms:[...instances.values()].map(instance=>({module_id:instance.module.module_id,
+  return {...result,...(config.capture_lifecycle?{fresh_reconstruction:fresh}:{}),realms:[...instances.values()].map(instance=>({module_id:instance.module.module_id,
    module_sha256:instance.module.module_sha256,instance_id:instance.id,sandbox:instance.iframe.getAttribute('sandbox'),
    realm_origin:instance.effectiveOrigin,context:instance.context,observation:instance.observation})),execution_scope:'technical_realm_lifecycle_not_formal_film_delivery'};
  },async close(){await clock.close();return {remaining_iframes:container.querySelectorAll('iframe').length,...host.getState()};}

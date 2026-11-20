@@ -22,6 +22,7 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 from .hyperframes_film_browser import HOST_NAMES
 from .hyperframes_film_audio import _schedule, _filters
 from .hyperframes_film_export import export_film_browser_bundle, MAX_MEDIA_BYTES, _run
+from .hyperframes_film_limits import LEGACY_MAX_FRAMES, MAX_STREAM_FRAME_BYTES, STREAM_MODE
 from .hyperframes_film_snapshot import (
     MAX_ARCHIVE_BYTES, MAX_METADATA_BYTES, decode_film_execution_snapshot, require, sha,
 )
@@ -31,9 +32,13 @@ INPUT_PREFIX = 'hyperframes-films/inputs'
 OUTPUT_PREFIX = 'hyperframes-films/results'
 LABEL = 'video-workbench.panghuer.top/'
 RESULT_FILES = frozenset({'video.mp4', 'export-receipt.json', 'capture-receipt.json', 'audio-mix-receipt.json'})
-MAX_RESULT_JSON_BYTES = 16 * 1024 * 1024
+MAX_RESULT_JSON_BYTES = 64 * 1024 * 1024
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _KUBE = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z')
+
+
+def _result_json_limit(snapshot):
+    return MAX_RESULT_JSON_BYTES if snapshot['clock']['frame_count'] > LEGACY_MAX_FRAMES else 16 * 1024 * 1024
 
 
 def _link(path):
@@ -226,7 +231,8 @@ def _verify_receipt_bindings(snapshot, project, result, receipt, capture, audio)
         and receipt['delivery_wav_sha256'] == audio['output']['sha256']
         and _SHA.fullmatch(audio['output']['sha256']),
         'hyperframes_film_result_original_audio_mismatch', 409)
-    require(capture['schema'] == 'video.hyperframes-film-frame-capture.v1'
+    streaming = count > LEGACY_MAX_FRAMES
+    require(capture['schema'] == 'video.hyperframes-film-frame-capture.' + ('v2' if streaming else 'v1')
         and capture['frame_count'] == count and capture['fps'] == 24
         and capture['width'] == snapshot['width'] and capture['height'] == snapshot['height']
         and type(capture['frames']) is list and len(capture['frames']) == count,
@@ -239,8 +245,16 @@ def _verify_receipt_bindings(snapshot, project, result, receipt, capture, audio)
             and type(frame['sha256']) is str and _SHA.fullmatch(frame['sha256']),
             'hyperframes_film_result_capture_mismatch', 409)
         frame_bytes += frame['bytes']
-    require(capture['frame_bytes'] == frame_bytes <= 512 * 1024 * 1024,
+    require(capture['frame_bytes'] == frame_bytes <= (MAX_STREAM_FRAME_BYTES if streaming else 512 * 1024 * 1024),
             'hyperframes_film_result_capture_mismatch', 409)
+    if streaming:
+        import hashlib
+        chain = hashlib.sha256(''.join(str(row['frame']) + ':' + str(row['bytes']) + ':'
+            + row['sha256'] + '\n' for row in capture['frames']).encode()).hexdigest()
+        require(capture.get('storage') == dict(schema='video.hyperframes-film-png-stream.v1', mode=STREAM_MODE,
+            encoder_invocations=1, frame_files=0, peak_pending_frames=1,
+            max_frame_bytes=max(row['bytes'] for row in capture['frames']), frame_bytes=frame_bytes,
+            frame_count=count, frame_inventory_sha256=chain), 'hyperframes_film_result_capture_mismatch', 409)
     probe = capture['probe']
     require(probe['schema'] == 'video.hyperframes-film-technical-probe.v1'
         and probe['bundle_sha256'] == snapshot['bundle_sha256']
@@ -253,6 +267,10 @@ def _verify_receipt_bindings(snapshot, project, result, receipt, capture, audio)
     dispatches = 0
     for ordinal, frame in enumerate([*range(count), count - 1, 0, count // 2]):
         row = probe['observations'][ordinal]
+        if streaming:
+            require(probe.get('lifecycle_mode') == 'persistent-active-modules-v1'
+                and row.get('fresh_reconstruction') is (ordinal >= count),
+                'hyperframes_film_result_capture_mismatch', 409)
         require(row['requested_frame'] == row['completed_frame'] == frame
             and abs(row['actual_seconds'] - frame / 24) <= 1e-7
             and row['manifest_sha256'] == snapshot['project_manifest_sha256']
@@ -281,7 +299,7 @@ def verify_completed_film_output(directory, *, snapshot, expected_snapshot_sha25
             and result['sha256'] == digest({key: value for key, value in result.items() if key != 'sha256'})
             and set(result['artifacts']) == RESULT_FILES, 'hyperframes_film_result_binding_mismatch', 409)
         for name, identity in result['artifacts'].items():
-            content = _ordinary(root / name, MAX_MEDIA_BYTES if name == 'video.mp4' else MAX_RESULT_JSON_BYTES)
+            content = _ordinary(root / name, MAX_MEDIA_BYTES if name == 'video.mp4' else _result_json_limit(snapshot))
             require(identity == dict(bytes=len(content), sha256=sha(content)),
                     'hyperframes_film_result_changed', 409)
         receipt = json.loads((root / 'export-receipt.json').read_bytes())
@@ -330,7 +348,7 @@ def run_staged_film(input_directory, output_directory, scratch_directory, *,
         'capture-receipt.json': canonical_bytes(exported.capture),
         'audio-mix-receipt.json': canonical_bytes(exported.audio_mix)}
     require(0 < len(entries['video.mp4']) <= MAX_MEDIA_BYTES
-        and all(0 < len(value) <= MAX_RESULT_JSON_BYTES for name, value in entries.items() if name != 'video.mp4'),
+        and all(0 < len(value) <= _result_json_limit(snapshot) for name, value in entries.items() if name != 'video.mp4'),
         'hyperframes_film_result_budget', 413)
     result = dict(schema='video.hyperframes-film-job-result.v1', snapshot_sha256=expected_snapshot_sha256,
         bundle_sha256=snapshot['bundle_sha256'], film_sha256=snapshot['film_sha256'],

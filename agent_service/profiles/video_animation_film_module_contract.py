@@ -22,6 +22,8 @@ from .video_motion_contract import validate_beats
 INPUT_SCHEMA = 'video.animation-film-module-input.v1'
 RESULT_SCHEMA = 'video.animation-film-module-result.v1'
 CONTEXT_SCHEMA = 'video.hyperframes-film-author-context.v1'
+EXPLICIT_CONTEXT_SCHEMA = 'video.hyperframes-film-author-context.v2'
+FILM_CLOCK_SCHEMA = 'video.hyperframes-film-clock.v1'
 MODULE_SCHEMA = 'video.hyperframes-composable-module.v1'
 BOUNDARY_SCHEMA = 'video.hyperframes-film-boundary.v1'
 INPUT_MAX_BYTES = 4 * 1024 * 1024
@@ -189,18 +191,86 @@ def _target(value):
     require(type(value['namespace']) is str and _NS.fullmatch(value['namespace']), 'film_module_target_invalid')
 
 
+def validate_author_film(film, film_sha256, *, explicit=False):
+    """Validate a deliberate visual clock without inferring silence from gaps.
+
+    This pure worker contract mirrors the independent project compiler's
+    explicit clock. The older recording-backed context keeps its own checks.
+    """
+    if not explicit:
+        return validate_film_context(dict(schema='video.film-context.v1', film=film,
+            film_sha256=film_sha256, current_scene_index=0, predecessor=None))['film']
+    require(type(film) is dict and set(film) == {'schema', 'project_id', 'joint_plan_version_id',
+        'content_binding_sha256', 'title', 'script', 'understanding_goal', 'style', 'scenes', 'total_seconds'}
+        and film['schema'] == FILM_CLOCK_SCHEMA, 'film_module_explicit_clock_invalid')
+    checksum(film_sha256); checksum(film['content_binding_sha256'])
+    require(digest(film) == film_sha256, 'film_module_film_integrity')
+    for key, maximum in [('project_id', 100), ('joint_plan_version_id', 100), ('title', 300),
+            ('script', 100000), ('understanding_goal', 16000), ('style', 10000)]:
+        text(film[key], maximum, empty=key in {'script', 'style'})
+    require(type(film['scenes']) is list and 1 <= len(film['scenes']) <= 24,
+        'film_module_explicit_clock_invalid')
+    previous, seen = 0, set()
+    for row in film['scenes']:
+        require(type(row) is dict and set(row) == {'scene_id', 'title', 'narration', 'visual_intent',
+            'audio_version_id', 'audio_sha256', 'audio_seconds', 'start_seconds', 'end_seconds',
+            'leading_silence_seconds', 'trailing_silence_seconds', 'clock_source'},
+            'film_module_explicit_clock_invalid')
+        for key, maximum in [('scene_id', 100), ('title', 300), ('visual_intent', 16000)]:
+            text(row[key], maximum)
+        require(row['scene_id'] not in seen, 'film_module_explicit_clock_invalid'); seen.add(row['scene_id'])
+        start, end = (number(row[key], 0, 600) for key in ('start_seconds', 'end_seconds'))
+        require(abs(start * 24 - round(start * 24)) <= 1e-6
+            and abs(end * 24 - round(end * 24)) <= 1e-6 and start == previous
+            and start < end <= start + 60, 'film_module_explicit_clock_invalid')
+        previous = end
+        seconds, leading, trailing = (number(row[key], 0, 60) for key in
+            ('audio_seconds', 'leading_silence_seconds', 'trailing_silence_seconds'))
+        require(abs(end - start - seconds - leading - trailing) <= 1e-6,
+            'film_module_explicit_clock_invalid')
+        if row['clock_source'] == 'silent':
+            require(row['audio_version_id'] is None and row['audio_sha256'] is None and seconds == leading == 0
+                and row['narration'] == '', 'film_module_silent_interval_invalid')
+        else:
+            require(row['clock_source'] == 'recording' and seconds > 0, 'film_module_explicit_clock_invalid')
+            text(row['audio_version_id'], 100); checksum(row['audio_sha256']); text(row['narration'], 10000)
+    number(film['total_seconds'], 1 / 24, 600)
+    require(film['total_seconds'] == previous, 'film_module_explicit_clock_invalid')
+    return deepcopy(film)
+
+
+def is_silent_task(document):
+    """Use only after core validation; absence of a recording is never a flag."""
+    context = document['film_context']
+    return (context['schema'] == EXPLICIT_CONTEXT_SCHEMA
+        and context['film']['scenes'][context['current_scene_index']]['clock_source'] == 'silent')
+
+
 def validate_core_task(document):
     require(type(document) is dict and set(document) == CORE_FIELDS, 'film_module_core_invalid')
     scene, bounds, context = document['scene'], document['constraints'], document['film_context']
+    require(type(context) is dict and set(context) == {'schema', 'film', 'film_sha256',
+        'current_scene_index', 'predecessor'} and context['schema'] in {CONTEXT_SCHEMA, EXPLICIT_CONTEXT_SCHEMA},
+        'film_module_context_invalid')
+    film = validate_author_film(context['film'], context['film_sha256'],
+        explicit=context['schema'] == EXPLICIT_CONTEXT_SCHEMA)
+    index = context['current_scene_index']
+    require(film['total_seconds'] <= 600 and type(index) is int and 0 <= index < len(film['scenes']),
+        'film_module_context_invalid')
+    row, silent = film['scenes'][index], is_silent_task(document)
     require(type(scene) is dict and set(scene) == _SCENE_FIELDS, 'film_module_scene_invalid')
     for key, maximum in [('scene_id', 100), ('title', 300), ('visual_description', 16000),
         ('narration', 10000), ('style', 10000), ('instruction', 16000)]:
-        text(scene[key], maximum, empty=key in {'style', 'instruction'})
-    beats = validate_beats(scene['beats'])
-    alignment = validate_clock(scene['alignment'], beats)
-    checksum(scene['audio_sha256'])
-    require(beats['source_text'] == scene['narration']
-        and alignment['audio_sha256'] == scene['audio_sha256'], 'film_module_audio_binding_mismatch')
+        text(scene[key], maximum, empty=key in {'style', 'instruction'} or silent and key == 'narration')
+    if silent:
+        require(scene['narration'] == '' and scene['beats'] is None and scene['alignment'] is None
+            and scene['audio_sha256'] is None, 'film_module_silent_interval_invalid')
+    else:
+        beats = validate_beats(scene['beats'])
+        alignment = validate_clock(scene['alignment'], beats)
+        checksum(scene['audio_sha256'])
+        require(beats['source_text'] == scene['narration']
+            and alignment['audio_sha256'] == scene['audio_sha256'], 'film_module_audio_binding_mismatch')
     require(type(bounds) is dict and set(bounds) == {'width', 'height', 'fps', 'duration_seconds',
         'allowed_engines', 'runtime_identity'}, 'film_module_constraints_invalid')
     require(all(type(bounds[key]) is int and bounds[key] == value
@@ -210,21 +280,12 @@ def validate_core_task(document):
         and engine in {'html-svg', 'canvas', 'three'} for engine in engines)
         and len(set(engines)) == len(engines), 'film_module_engines_invalid')
     validate_runtime_identity(bounds['runtime_identity'])
-    number(bounds['duration_seconds'], .1, 60)
-    require(bounds['duration_seconds'] == alignment['audio_seconds'], 'film_module_audio_binding_mismatch')
-    require(type(context) is dict and set(context) == {'schema', 'film', 'film_sha256',
-        'current_scene_index', 'predecessor'} and context['schema'] == CONTEXT_SCHEMA,
-        'film_module_context_invalid')
-    # Reuse the complete recording-clock checks, never the legacy source/handoff.
-    validate_film_context(dict(schema='video.film-context.v1', film=context['film'],
-        film_sha256=context['film_sha256'], current_scene_index=0, predecessor=None))
-    film, index = context['film'], context['current_scene_index']
-    require(film['total_seconds'] <= 600 and type(index) is int and 0 <= index < len(film['scenes']),
-        'film_module_context_invalid')
-    row = film['scenes'][index]
+    number(bounds['duration_seconds'], 1 / 24 if silent else .1, 60)
+    require(bounds['duration_seconds'] == (row['end_seconds'] - row['start_seconds'] if silent
+        else alignment['audio_seconds']), 'film_module_audio_binding_mismatch')
     require(row['scene_id'] == scene['scene_id'] and row['narration'] == scene['narration']
         and row['audio_sha256'] == scene['audio_sha256']
-        and row['audio_seconds'] == bounds['duration_seconds'], 'film_module_film_scene_mismatch', 409)
+        and (silent or row['audio_seconds'] == bounds['duration_seconds']), 'film_module_film_scene_mismatch', 409)
     target = document['target']
     require(type(target) is dict and set(target) == {'module_id', 'namespace', 'transition_target'},
         'film_module_target_invalid')

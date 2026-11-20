@@ -13,7 +13,9 @@ from uuid import uuid4
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles.video_animation_film_module import PROFILE, BUNDLE_MANIFEST_SHA256
-from agent_service.profiles.video_animation_film_module_contract import CONTEXT_SCHEMA
+from agent_service.profiles.video_animation_film_module_contract import (
+    CONTEXT_SCHEMA, EXPLICIT_CONTEXT_SCHEMA, FILM_CLOCK_SCHEMA, validate_author_film,
+)
 from agent_service.profiles.video_animation_production_contract import validate_film_context
 from .animation_runtime_capabilities import validate_runtime_capabilities
 from .animation_skill_production import MAX_TASK_BYTES
@@ -26,6 +28,7 @@ from .hyperframes_film_snapshot import _release, verify_film_execution_snapshot
 from .motion import make_beats, estimated_alignment
 from .motion_snapshot import _audio
 from .production_film_context import freeze_production_inputs
+from .hyperframes_film_limits import MAX_SECONDS
 
 ACTIVE = frozenset({'queued', 'submitting', 'running', 'cancelling'})
 TERMINAL = frozenset({'completed', 'failed', 'needs_input', 'cancelled', 'timed_out'})
@@ -71,7 +74,7 @@ class FilmCreationStore:
         self.configuration = dict(schema='video.film-creation-configuration.v1', profile=PROFILE, profile_revision='1',
             bundle_manifest_sha256=BUNDLE_MANIFEST_SHA256, runtime_capabilities=deepcopy(caps),
             runtime_fingerprint=self.runtime, trusted_host_sha256=self.hosts, image=image,
-            renderer_mode='hyperframes-film', max_seconds=60, fps=24)
+            renderer_mode='hyperframes-film', max_seconds=MAX_SECONDS, fps=24)
         if resource_authoring is not None:
             from .manim_film_admission import validate_consumer_context
             self.configuration['resource_authoring'] = validate_consumer_context(resource_authoring,
@@ -363,8 +366,7 @@ class FilmCreationStore:
         project = self.store._project(db, owner, project_id)
         self.store._revision(project, request['expected_revision'])
         film = request['film']
-        validate_film_context(dict(schema='video.film-context.v1', film=film, film_sha256=request['film_sha256'],
-            current_scene_index=0, predecessor=None))
+        validate_author_film(film, request['film_sha256'], explicit=film.get('schema') == FILM_CLOCK_SCHEMA)
         frozen = freeze_production_inputs(self.store, project, film_aware=True)
         joint = frozen.get('joint_plan') or {}
         require(film['project_id'] == project_id
@@ -376,18 +378,24 @@ class FilmCreationStore:
             and [row['scene_id'] for row in film['scenes']] == [scene['id'] for scene in project['scenes']],
             'film_creation_project_binding_mismatch', 409)
         for row, scene in zip(film['scenes'], frozen['scenes']):
-            duration = math.ceil((row['audio_seconds'] + scene['leading_seconds'] + scene['trailing_seconds']) * 24) / 24
+            silent = row.get('clock_source') == 'silent'
+            duration = (math.ceil(scene['duration_seconds'] * 24) / 24 if silent else
+                math.ceil((row['audio_seconds'] + scene['leading_seconds'] + scene['trailing_seconds']) * 24) / 24)
             require(row['title'] == scene['title'] and row['visual_intent'] == scene['visual_intent']
-                and row['leading_silence_seconds'] == scene['leading_seconds']
+                and row['leading_silence_seconds'] == (0 if silent else scene['leading_seconds'])
                 and abs(row['end_seconds'] - row['start_seconds'] - duration) < 1e-8,
                 'film_creation_project_binding_mismatch', 409)
-        require(film['total_seconds'] <= 60, 'film_creation_duration_budget', 422)
+        require(film['total_seconds'] <= MAX_SECONDS, 'film_creation_duration_budget', 422)
         return project, film
 
     def _recordings(self, db, project, film):
         result = []
         voices = set()
         for row in film['scenes']:
+            if row.get('clock_source') == 'silent':
+                # The full explicit clock was validated before entering here.
+                # No missing/failed recording is converted into this branch.
+                continue
             scene = self.store._scene(project, row['scene_id'])
             record = db.execute('SELECT document,data FROM audio_versions WHERE id=? AND project_id=? AND scene_id=?',
                 (row['audio_version_id'], project['id'], row['scene_id'])).fetchone()
@@ -450,7 +458,8 @@ class FilmCreationStore:
             and original['film_context']['current_scene_index'] == index
             and original['target'] == request['target']
             and original['scene']['audio_sha256'] == row['audio_sha256']
-            and original['constraints']['duration_seconds'] == row['audio_seconds'],
+            and original['constraints']['duration_seconds'] == (row['end_seconds'] - row['start_seconds']
+                if row.get('clock_source') == 'silent' else row['audio_seconds']),
             'film_creation_base_module_mismatch', 409)
         require(original['constraints']['runtime_identity'] == caps['runtime_identity']
             and module['engine'] in caps['allowed_engines'],
@@ -493,7 +502,8 @@ class FilmCreationStore:
                 resource_dependencies.append(previous['operation_id'])
             else:
                 require(request['predecessor_version_id'] is None, 'film_creation_predecessor_mismatch', 409)
-            row, recording = film['scenes'][index], recordings[index]
+            row = film['scenes'][index]
+            recording = next((item for item in recordings if item['scene_id'] == row['scene_id']), None)
             target = request['target']
             require(type(target) is dict and set(target) == {'module_id', 'namespace', 'transition_target'})
             base_module = base_reference = None
@@ -514,12 +524,15 @@ class FilmCreationStore:
                 require(round(row['start_seconds'] * 24) <= placement['global_start_frame']
                     and placement['global_start_frame'] + placement['frame_count'] <= round(row['end_seconds'] * 24),
                     'film_resource_clock_outside_scene', 409)
-            beats = make_beats(row['narration'], recording['spoken_text'])
+            silent = row.get('clock_source') == 'silent'
+            beats = None if silent else make_beats(row['narration'], recording['spoken_text'])
             core = prepare_core_task(scene_id=scene_id, title=row['title'], visual_description=row['visual_intent'],
                 narration=row['narration'], beats=beats,
-                alignment=estimated_alignment(beats, row['audio_sha256'], row['audio_seconds']),
-                audio_sha256=row['audio_sha256'], duration_seconds=row['audio_seconds'],
-                film_context=dict(schema=CONTEXT_SCHEMA, film=film, film_sha256=request['film_sha256'],
+                alignment=None if silent else estimated_alignment(beats, row['audio_sha256'], row['audio_seconds']),
+                audio_sha256=row['audio_sha256'], duration_seconds=row['end_seconds'] - row['start_seconds']
+                    if silent else row['audio_seconds'],
+                film_context=dict(schema=EXPLICIT_CONTEXT_SCHEMA if film.get('schema') == FILM_CLOCK_SCHEMA
+                    else CONTEXT_SCHEMA, film=film, film_sha256=request['film_sha256'],
                     current_scene_index=index, predecessor=predecessor), instruction=request['instruction'],
                 module_id=target['module_id'], namespace=target['namespace'], transition_target=target['transition_target'],
                 runtime_identity=caps['runtime_identity'], allowed_engines=caps['allowed_engines'],
@@ -528,6 +541,8 @@ class FilmCreationStore:
                 predecessor_package=predecessor_package, base_module=base_module)
             from .film_authoring_resources import attach_authoring_libraries
             core = attach_authoring_libraries(core, caps)
+            from .formal_drawing_libraries import attach_drawing_libraries
+            core = attach_drawing_libraries(core, caps)
             from .film_authoring_resources import attach_film_resource, merge_film_resources
             merge_film_resources(self.assets, [*self._resource_records(db, owner, resource_dependencies), *prepared])
             for resource in prepared:
@@ -575,6 +590,8 @@ class FilmCreationStore:
             if op.get('generated_resource') or op.get('resource_references') else None
         delivery = adapter.freeze(op['owner'], 'video-film-module:' + op['id'], core, core['constraints']['allowed_engines'],
             **({'resource_authoring': producer} if producer else {}),
+            **({'drawing_libraries': op['configuration']['runtime_capabilities']['drawing_libraries']}
+                if op['configuration']['runtime_capabilities'].get('drawing_libraries') else {}),
             **({'library_binding': op['library_binding']} if 'library_binding' in op else {}))
         document = build_module_input(core, delivery)
         with self.store.transaction() as db:

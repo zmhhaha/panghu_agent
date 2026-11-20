@@ -29,13 +29,17 @@ def audio_node_id(scene_id):
     return 'audio_' + scene_id
 
 
-def production_plan(value, frozen, *, deadline_at, library_binding=None):
-    """Add real recording dependencies to the confirmed creative requirements."""
+def production_plan(value, frozen, *, deadline_at, library_binding=None, audio_mode='narration'):
+    """Add recording dependencies unless the run explicitly requests silence."""
     require(value is None or type(value) is dict and set(value) <= {'nodes', 'budget'},
         'production_resource_plan_invalid')
     value = {} if value is None else deepcopy(value)
+    require(type(audio_mode) is str and audio_mode in {'narration', 'silent'})
+    silent = audio_mode == 'silent'
     nodes = value.get('nodes', [])
     require(type(nodes) is list and len(nodes) <= 32)
+    if silent and not nodes:
+        return None
     scenes = {scene['id']: scene for scene in frozen['scenes']}
     reserved = {audio_node_id(scene_id) for scene_id in scenes}
     for node in nodes:
@@ -47,7 +51,11 @@ def production_plan(value, frozen, *, deadline_at, library_binding=None):
         node.setdefault('dependencies', [])
         require(type(node['dependencies']) is list, 'production_resource_plan_invalid')
         dependency = audio_node_id(placement['scene_id'])
-        if dependency not in node['dependencies']:
+        if silent:
+            require(node.get('producer') != 'verified-recording' and node.get('kind') != 'narration'
+                and all(type(name) is str and name not in reserved for name in node['dependencies']),
+                'production_resource_silent_recording_conflict')
+        elif dependency not in node['dependencies']:
             node['dependencies'].append(dependency)
         if node.get('producer') == 'manim':
             require(node.get('kind') == 'animation' and type(node.get('inputs')) is dict,
@@ -75,12 +83,15 @@ def production_plan(value, frozen, *, deadline_at, library_binding=None):
     require(all(sum(node['placement']['scene_id'] == scene_id for node in nodes) <= 16
         for scene_id in scenes), 'production_resource_reference_limit', 413)
     for scene_id, scene in scenes.items():
+        if silent:
+            continue
         nodes.append(dict(id=audio_node_id(scene_id), kind='narration', producer='verified-recording',
             inputs=dict(scene_id=scene_id, input_sha256=narration_binding(scene['audio_input'])),
             dependencies=[], objective='Use the complete original measured narration recording.',
             required_capabilities=['measured-recording'], key_effects=[], local_timing={},
             placement=dict(scene_id=scene_id, start_frame=0)))
-    budget = value.get('budget', dict(max_attempts=max(1, len(nodes) - len(scenes)), max_attempts_per_node=1))
+    budget = value.get('budget', dict(max_attempts=max(1, len(nodes) - (0 if silent else len(scenes))),
+        max_attempts_per_node=1))
     result = validate_request(dict(nodes=nodes, budget=budget, deadline_at=deadline_at))
     for node in result['nodes']:
         if node['producer'] == 'manim':
@@ -252,7 +263,15 @@ class ProductionResourceStage:
     def advance(self, run, *, admit=True):
         require(run['resource_plan_registration']['status'] == 'registered', 'production_resource_plan_not_registered', 409)
         self.ledger.get(run['owner'], run['id'])
+        silent = run.get('audio_mode') == 'silent'
         for item, frozen in zip(run['items'], run['frozen']['scenes']):
+            if silent:
+                require(item.get('audio_status') == 'not_requested'
+                    and type(item.get('audio_seconds')) in {int, float} and item['audio_seconds'] == 0
+                    and all(item.get(key) is None for key in
+                        ('audio_operation_id', 'audio_version_id', 'audio_sha256')),
+                    'production_resource_silent_recording_conflict', 409)
+                continue
             if not item['audio_version_id']:
                 continue
             audio = self.business.audio_version(run['owner'], item['audio_version_id'])
@@ -272,7 +291,7 @@ class ProductionResourceStage:
                     sample_count=info.frame_count), capabilities=['measured-recording'], key_effects=[])
             self.ledger.adopt(run['owner'], run['id'], audio_node_id(item['scene_id']), output,
                 'recording-' + audio['id'])
-        if all(item['audio_version_id'] for item in run['items']):
+        if silent or all(item['audio_version_id'] for item in run['items']):
             return self._workflow(run['owner']).advance(run['owner'], run['id'], admit=admit)
         return self.ledger.get(run['owner'], run['id'])
 
