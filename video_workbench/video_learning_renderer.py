@@ -5,11 +5,17 @@ description. Rendering and reverse-seek checks confer technical evidence only;
 they never assert that an Agent watched continuous motion or heard the audio.
 """
 from copy import deepcopy
+import hashlib
+from pathlib import Path
 
 from agent_service.contracts import digest
 from agent_service.profiles import video_reference_learning as protocol
 from agent_service.profiles import video_animation_method as method
-from .animation_method_renderer import MethodAnimationRenderer, ASSET_SHA256, _require
+from .animation_method_renderer import MethodAnimationRenderer, ASSET_SHA256, _require, _read
+from .learning_drawing_libraries import drawing_libraries, validate_observation
+
+
+HOST = Path(__file__).with_name('video_learning_host.mjs')
 
 
 class VideoLearningRenderer(MethodAnimationRenderer):
@@ -21,6 +27,22 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         _require(runtime_renderer.hyperframes is True, 'video_learning_hyperframes_required', 422)
         self.runtime_renderer = runtime_renderer
 
+    def _host_path(self):
+        return HOST
+
+    def _static_asset_checksums(self, context):
+        assets = super()._static_asset_checksums(context)
+        libraries = drawing_libraries(context['constraints'].get('drawing_libraries'), context['assets'])
+        for library in libraries.values():
+            assets.update(library['assets'])
+        return assets
+
+    def _read_static_asset(self, name):
+        from .ink_landscape_library import descriptor, read_assets
+        if name in descriptor()['assets']:
+            return read_assets()[name]
+        return super()._read_static_asset(name)
+
     def capabilities(self):
         result = deepcopy(self.runtime_renderer.capabilities())
         # This first reference-learning contract admits three drawing engines
@@ -28,6 +50,12 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         result.pop('authoring_libraries', None)
         result['assets'] = {name: checksum for name, checksum in result.get('assets', {}).items()
                             if name in ASSET_SHA256}
+        from .ink_landscape_library import descriptor, read_assets
+        library = descriptor()
+        read_assets()
+        result['drawing_libraries'] = {'ink-landscape': library}
+        result['assets'].update(library['assets'])
+        result['runtime_identity']['host_sha256'] = hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest()
         result['schema'] = 'video.reference-learning-runtime-capabilities.v1'
         result['evidence_scope'] = 'sampled_frames_only'
         result['limits'] = dict(width=1280, height=720, fps=24, duration_seconds=60)
@@ -53,10 +81,27 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         payload = {key: checked[key] for key in ('engine', 'strategy', 'files')}
         binding = super()._snapshot(operation_id, payload, self._adapter(context), events,
             deadline_at=deadline_at)
+        libraries = drawing_libraries(context['constraints'].get('drawing_libraries'), context.get('assets', {}))
+        if libraries:
+            request = binding['request']
+            request['drawing_libraries'] = libraries
+            request.pop('identity')
+            request['identity'] = digest(request)
+            binding['request_sha256'] = digest(request)
         binding['document'] = context
         binding['input_sha256'] = digest(context)
         binding['learning_source_sha256'] = checked['source_sha256']
         return binding
+
+    def _outputs(self, root, binding, outcome):
+        receipt, raw, audio = super()._outputs(root, binding, outcome)
+        libraries = binding['request'].get('drawing_libraries')
+        if libraries is not None:
+            validate_observation(receipt.get('drawing_library_observation'), libraries)
+        else:
+            _require('drawing_library_observation' not in receipt,
+                'learning_drawing_library_evidence_invalid', 409)
+        return receipt, raw, audio
 
     def _public(self, operation_id, result):
         if result is None:
@@ -74,6 +119,12 @@ class VideoLearningRenderer(MethodAnimationRenderer):
                 receipt_path=str(root/'work/render-receipt.json'), sha256=result['media']['sha256'],
                 width=binding['request']['constraints']['width'], height=binding['request']['constraints']['height'],
                 duration_seconds=binding['request']['constraints']['duration_seconds'], fps=24)
+            if 'drawing_libraries' in binding['request']:
+                from .animation_method_renderer import _json
+                receipt, _ = _json(root / 'work/render-receipt.json')
+                value['runtime'].update(
+                    drawing_libraries=deepcopy(binding['request']['drawing_libraries']),
+                    drawing_library_observation=deepcopy(receipt['drawing_library_observation']))
         return value
 
     def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None):

@@ -1,0 +1,2 @@
+# Frozen assets are hashed as bytes on both Windows and Linux.
+* -text

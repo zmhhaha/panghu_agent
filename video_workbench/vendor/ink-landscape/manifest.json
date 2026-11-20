@@ -1,0 +1,25 @@
+{
+  "schema": "video.ink-landscape-vendor.v1",
+  "source_repository": "https://github.com/zmhhaha/ink-landscape",
+  "source_revision": "bb7338a5c57d4151c3d8635a8549057bb0383ca0",
+  "version": "0.1.0",
+  "license": "MIT",
+  "build": {
+    "tool": "esbuild",
+    "version": "0.25.12",
+    "target": "es2022",
+    "format": "esm",
+    "platform": "browser"
+  },
+  "assets": {
+    "ink-landscape.mjs": "03ff8324ebee4e33ab1991399fe43ae7751f189bfa0116c30db29d64fd5f7469",
+    "ink-landscape.LICENSE.txt": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108"
+  },
+  "skill_files": {
+    "references/brush-and-cun.md": "d195901465004f27ae36b85321aa42891c593b74c3ab887b963d1bba0e100064",
+    "references/ink-and-water.md": "7c1e31c6b90d2e0659c17c9098c05050aa7e14de2e255473b2b932a96e54f81b",
+    "references/runtime-and-validation.md": "a0c1648e3296cc91562607317df2554398c4f42f3e3ff909ee682b880c46a702",
+    "references/subjects-and-source.md": "eaa503a2b05734ed59460d03dd4fe30f551e018d1d9053caae701c0c3a275881",
+    "SKILL.md": "d36c70ca8a08c15e498f5f7a460d907fcbb74a760119bdddd2c5d918c02adf83"
+  }
+}

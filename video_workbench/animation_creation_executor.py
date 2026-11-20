@@ -239,6 +239,12 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                         raise
                 return sorted(records, key=lambda row: row['record_id'])
             methods.wikiskill.capture = capture_video_library
+        if methods is not None:
+            from .ink_landscape_knowledge import with_ink_landscape_records
+            # Read the image-owned API guides only when a developer requests a
+            # new whole-library publication. Startup, GET and learning results
+            # never inject or replace an existing published release.
+            methods.wikiskill.capture = with_ink_landscape_records(methods.wikiskill.capture)
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources,
             picture_service=pictures, video_learning_service=videos,

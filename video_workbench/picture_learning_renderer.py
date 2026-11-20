@@ -34,6 +34,11 @@ class PictureLearningRenderer(MethodAnimationRenderer):
         result = deepcopy(self.runtime_renderer.capabilities())
         result.pop('authoring_libraries', None)
         result['assets'] = {name: sha for name, sha in result.get('assets', {}).items() if name in ASSET_SHA256}
+        from .ink_landscape_library import descriptor, read_assets
+        library = descriptor()
+        read_assets()
+        result['drawing_libraries'] = {'ink-landscape': library}
+        result['assets'].update(library['assets'])
         result['schema'] = 'video.picture-learning-runtime-capabilities.v1'
         result['runtime_identity'].update(host_sha256=digest_bytes(_read(HOST, 1024 * 1024)),
             project_runtime_sha256=digest_bytes(_read(PROJECT_RUNTIME, 1024 * 1024)),
@@ -52,7 +57,13 @@ class PictureLearningRenderer(MethodAnimationRenderer):
         width, height = (context['constraints'][key] for key in ('width', 'height'))
         assets = context.get('assets', context['constraints'].get('assets', {}))
         _require(type(assets) is dict, 'picture_render_assets_changed', 409)
-        allowed_assets = dict(caps['assets'])
+        from .learning_drawing_libraries import drawing_libraries
+        libraries = drawing_libraries(context['constraints'].get('drawing_libraries'), assets)
+        allowed_assets = {name: sha for name, sha in caps['assets'].items() if name in ASSET_SHA256}
+        if libraries:
+            _require(libraries == caps['drawing_libraries'], 'picture_render_drawing_library_changed', 409)
+            for library in libraries.values():
+                allowed_assets.update(library['assets'])
         generated = context['constraints'].get('generated_resources')
         if generated is not None:
             from .manim_method_resources import validate_descriptor
@@ -93,6 +104,8 @@ class PictureLearningRenderer(MethodAnimationRenderer):
             image_digest=self.image_digest, hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256)
         if generated is not None:
             request.update(schema='video.picture-learning-render-request.v2', generated_resources=deepcopy(generated))
+        if libraries:
+            request['drawing_libraries'] = libraries
         request['identity'] = digest(request)
         return dict(schema='video.picture-learning-render-binding.v1', operation_id=operation_id,
             source=payload, source_sha256=payload['source_sha256'], document=context,
@@ -130,6 +143,9 @@ class PictureLearningRenderer(MethodAnimationRenderer):
             generated_assets = {}
             for descriptor in binding['request'].get('generated_resources', []):
                 generated_assets.update(self.generated_resource_resolver(descriptor))
+            if binding['request'].get('drawing_libraries'):
+                from .ink_landscape_library import read_assets
+                generated_assets.update(read_assets())
             for name, sha in binding['request']['assets_sha256'].items():
                 raw = (generated_assets[name] if name in generated_assets
                        else _read(self.assets_dir / name, 32 * 1024 * 1024))
@@ -218,6 +234,12 @@ class PictureLearningRenderer(MethodAnimationRenderer):
                     and observation.get('loaded_png_paths') == expected_png
                     and observation.get('helpers_loaded') is True,
                     'picture_render_resource_evidence_invalid', 409)
+            if 'drawing_libraries' in request:
+                from .learning_drawing_libraries import validate_observation
+                validate_observation(receipt.get('drawing_library_observation'), request['drawing_libraries'])
+            else:
+                _require('drawing_library_observation' not in receipt,
+                    'learning_drawing_library_evidence_invalid', 409)
             png = _read(root / 'work/output.png', MAX_PNG_BYTES)
             checksum = digest_bytes(png)
             _require(checksum == receipt.get('output_sha256') and len(png) == receipt.get('output_bytes')
@@ -245,6 +267,9 @@ class PictureLearningRenderer(MethodAnimationRenderer):
             if 'generated_resources' in request:
                 result['runtime'].update(generated_resources=deepcopy(request['generated_resources']),
                     generated_resource_observation=deepcopy(receipt['generated_resource_observation']))
+            if 'drawing_libraries' in request:
+                result['runtime'].update(drawing_libraries=deepcopy(request['drawing_libraries']),
+                    drawing_library_observation=deepcopy(receipt['drawing_library_observation']))
         else:
             result['error'] = 'picture_render_failed'
         proof = digest(dict(binding_sha256=digest(binding),outcome_sha256=digest_bytes(raw_outcome),

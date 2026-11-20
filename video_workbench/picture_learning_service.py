@@ -175,7 +175,8 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
             return dict(batch_id=experiment_id, use_wikiskill=enabled, release_id=None,
                         release_sha256=None, publisher_owner=None, release_sequence=None), None
         binding = self.library_adapter.pin(owner, experiment_id, use_wikiskill=enabled)
-        snapshot = self.library_adapter.laboratory_snapshot(owner, binding) if enabled else None
+        snapshot = self.library_adapter.laboratory_snapshot(owner, binding,
+            drawing_libraries=self.renderer.capabilities().get('drawing_libraries', {})) if enabled else None
         return binding, snapshot
 
     def start(self, owner, body):
@@ -455,6 +456,10 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
                            allowed_engines=capabilities.get('allowed_engines', ['html-svg', 'canvas']))
         if capabilities.get('execution_guidance') is not None:
             constraints['execution_guidance'] = deepcopy(capabilities['execution_guidance'])
+        if capabilities.get('drawing_libraries') is not None:
+            from .ink_landscape_library import runtime_guidance
+            constraints['drawing_libraries'] = deepcopy(capabilities['drawing_libraries'])
+            constraints['drawing_library_api'] = runtime_guidance()
         # Runtime capability metadata is supplied as data; no drawing recipe
         # is injected by the host in place of the creator's own implementation.
         if capabilities.get('runtime_identity') is not None:

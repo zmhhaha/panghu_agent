@@ -40,6 +40,7 @@ RUN python -c "import os,re; assert re.fullmatch(r'[0-9a-f]{40}',os.environ['SOU
     && python -c "from agent_service.profiles.video_animation_wikiskill import verified_bundle; from agent_service.profiles.video_joint_plan_skills import verified_bundle as planner_bundle; from video_workbench.animation_wikiskill_production import LibrarySkillProductionAdapter; verified_bundle(); planner_bundle()" \
     && python -c "from agent_service.profiles.video_picture_learning import verified_bundle; from video_workbench.picture_learning_renderer import PictureLearningRenderer,HOST; from video_workbench.picture_learning_service import PictureLearningService; verified_bundle(); assert HOST.is_file()" \
     && python -c "from agent_service.profiles.video_reference_learning import verified_bundle; from video_workbench.video_learning_service import VideoLearningService; from video_workbench.video_learning_renderer import VideoLearningRenderer; verified_bundle()" \
+    && python -c "from video_workbench.ink_landscape_library import read_assets,read_skill_files; from video_workbench.ink_landscape_knowledge import capture_ink_landscape_records; from video_workbench.video_learning_renderer import HOST; assert len(read_assets()) == 2 and len(read_skill_files()) == 5 and len(capture_ink_landscape_records()) == 6 and HOST.is_file()" \
     && mkdir -p /var/lib/video-animation-creation
 LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \

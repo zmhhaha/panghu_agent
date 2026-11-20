@@ -116,6 +116,9 @@ def test_static_capabilities_exclude_unconsumed_animation_library_assets(rendere
         assets={'gsap.min.js':module.ASSET_SHA256['gsap.min.js'],'anime_timeline.mjs':'a'*64},
         authoring_libraries={'animejs':{'version':'4.5.0'}}, runtime_identity={})
     capabilities=renderer.capabilities()
-    assert set(capabilities['assets'])=={'gsap.min.js'}
+    from video_workbench.ink_landscape_library import descriptor
+    assert set(capabilities['assets'])=={'gsap.min.js'} | set(descriptor()['assets'])
+    assert capabilities['drawing_libraries']=={'ink-landscape':descriptor()}
+    assert 'anime_timeline.mjs' not in capabilities['assets']
     assert 'authoring_libraries' not in capabilities
     assert capabilities['evidence_scope']=='static_only'

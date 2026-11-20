@@ -333,6 +333,18 @@ class MethodAnimationRenderer:
         self.authoring_library_admission_file = (_plain(authoring_library_admission_file)
             if authoring_library_admission_file is not None else None)
 
+    def _host_path(self):
+        """Release-owned host; subclasses cannot select a host from task data."""
+        return HOST
+
+    def _static_asset_checksums(self, context):
+        """Fixed assets admitted by this renderer, before generated resources."""
+        return dict(ASSET_SHA256)
+
+    def _read_static_asset(self, name):
+        _require(self.assets_dir is not None, 'animation_method_render_assets_missing', 422)
+        return _read(self.assets_dir / name, 32 * 1024 * 1024)
+
     def capabilities(self):
         assets = {}
         if self.assets_dir is not None:
@@ -343,7 +355,7 @@ class MethodAnimationRenderer:
                     _require(actual == expected, 'animation_method_render_assets_changed')
                     assets[name] = actual
         identity = dict(image_digest=self.image_digest,
-            host_sha256=hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest(),
+            host_sha256=hashlib.sha256(_read(self._host_path(), 1024 * 1024)).hexdigest(),
             engine_runtime_sha256=hashlib.sha256(_read(ENGINE_RUNTIME, 1024 * 1024)).hexdigest(),
             admission_id='method-html-svg-v1@' + self.image_digest)
         engines = ['html-svg']
@@ -477,7 +489,7 @@ class MethodAnimationRenderer:
                  set(capabilities['allowed_engines']) | set(self.candidate_engines),
                  'animation_method_render_engine_not_admitted', 422)
         payload = _validate_source_output(source, context)
-        asset_checksums = dict(ASSET_SHA256)
+        asset_checksums = self._static_asset_checksums(context)
         libraries = bounds.get('authoring_libraries')
         if libraries is not None:
             from .animejs_library import ASSETS as ANIME_ASSETS, validate_libraries, read_assets
@@ -523,7 +535,7 @@ class MethodAnimationRenderer:
             constraints={key: bounds[key] for key in ('width', 'height', 'fps', 'duration_seconds')},
             files_sha256=files, assets_sha256=context['assets'], sound_events=events,
             sound_events_sha256=digest(events),
-            host_sha256=hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest(),
+            host_sha256=hashlib.sha256(_read(self._host_path(), 1024 * 1024)).hexdigest(),
             image_digest=self.image_digest, max_frames=MAX_FRAMES,
             max_media_bytes=MAX_MEDIA_BYTES, max_evidence_bytes=MAX_EVIDENCE_BYTES)
         if engine_aware:
@@ -621,14 +633,13 @@ class MethodAnimationRenderer:
                 if name in resource_assets:
                     raw = resource_assets[name]
                 else:
-                    _require(self.assets_dir is not None, 'animation_method_render_assets_missing', 422)
-                    raw = _read(self.assets_dir / name, 32 * 1024 * 1024)
+                    raw = self._read_static_asset(name)
                 _require(hashlib.sha256(raw).hexdigest() == expected,
                          'animation_method_render_assets_changed')
                 target = root / 'input/scene/assets' / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 _write(target, raw)
-            _write(root / 'host.mjs', _read(HOST, 1024 * 1024))
+            _write(root / 'host.mjs', _read(self._host_path(), 1024 * 1024))
             if binding['request'].get('engine_runtime_sha256'):
                 _write(root / 'engine_runtime.mjs', _read(ENGINE_RUNTIME, 1024 * 1024))
             if binding['request'].get('project_runtime_sha256'):

@@ -102,12 +102,19 @@ def requirements_compatible(requirements, context):
     _require(type(requirements) is dict)
     libraries = requirements.get('authoring_libraries', {})
     resources = requirements.get('resource_authoring', {})
-    _require(type(libraries) is dict and type(resources) is dict)
+    drawing = requirements.get('drawing_libraries', {})
+    _require(type(libraries) is dict and type(resources) is dict and type(drawing) is dict)
     _require(all(type(name) is str and type(spec) is dict for name, spec in libraries.items())
-        and all(type(name) is str and type(spec) is dict for name, spec in resources.items()))
+        and all(type(name) is str and type(spec) is dict for name, spec in resources.items())
+        and all(type(name) is str and type(spec) is dict for name, spec in drawing.items()))
     # Only an explicitly frozen producer context can satisfy these methods.
     # Ordinary consumers keep {}, even if their task contains generated PNGs.
-    return (all(context['resource_authoring'].get(name) == spec for name, spec in resources.items())
+    # This formal-consumer context has no admitted drawing-library slot. A
+    # published method requiring one must be excluded even if task metadata
+    # happens to contain its name or assets. Learning has a separate exact
+    # descriptor check against its renderer's frozen capabilities.
+    return (not drawing
+        and all(context['resource_authoring'].get(name) == spec for name, spec in resources.items())
         and all(context['authoring_libraries'].get(name) == spec for name, spec in libraries.items()))
 
 
