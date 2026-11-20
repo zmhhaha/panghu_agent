@@ -549,7 +549,10 @@ class FilmCreationStore:
                 core = attach_film_resource(core, resource['descriptor'], resource['assets'],
                     placement=resource['reference']['placement'],
                     resource_version_id=resource['reference']['resource_version_id'])
-            if predecessor_package is not None:
+            if film.get('schema') == FILM_CLOCK_SCHEMA:
+                from .film_appearance_context import attach_structured_predecessor_appearance
+                core = attach_structured_predecessor_appearance(core, predecessor_package)
+            elif predecessor_package is not None:
                 from .film_appearance_context import attach_predecessor_appearance
                 from .formal_drawing_libraries import compact_module_runtime_guidance
                 core = attach_predecessor_appearance(core, predecessor_package,
