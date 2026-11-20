@@ -254,6 +254,79 @@ def test_worker_transport_loss_does_not_renew_lease_forever(setup_chain):
     host._thread.join(5)
 
 
+def test_observed_cold_start_renews_worker_before_next_envelope_read(setup_chain):
+    now = [1000.0]
+    _, driver, host, _, adapter, store, app = setup_chain(wait=True, clock=lambda: now[0])
+    submit(app)
+    original_start = adapter.start
+    def cold_start(envelope):
+        observed = original_start(envelope)
+        now[0] += 50  # Input staging and cold admission consumed the first lease.
+        return observed
+    adapter.start = cold_start
+    dispatcher = Dispatcher(store, {'pi': adapter}, clock=lambda: now[0])
+    try:
+        running = dispatcher.dispatch_once()
+        assert running['state'] == 'running' and driver.calls == 1
+        assert running['lease_expires_at'] == now[0] + 60
+        assert host._state['lease_expires_at'] == running['lease_expires_at']
+    finally:
+        host._cancel.set()
+        host._thread.join(5)
+
+
+def test_worker_receives_lease_before_slow_optional_event_read(setup_chain):
+    now = [1000.0]
+    _, _, host, _, adapter, store, app = setup_chain(wait=True, clock=lambda: now[0])
+    submit(app)
+    dispatcher = Dispatcher(store, {'pi': adapter}, clock=lambda: now[0])
+    running = dispatcher.dispatch_once()
+    previous_lease = host._state['lease_expires_at']
+    original_events = adapter.events
+    calls = []
+    def slow_events(envelope, after=0, limit=100):
+        # Optional event I/O must not retain the old Worker lease while the
+        # authoritative store has already granted a later one.
+        calls.append(host._state['lease_expires_at'])
+        assert host._state['lease_expires_at'] == 1110
+        now[0] += 20
+        assert now[0] > previous_lease
+        return original_events(envelope, after, limit)
+    adapter.events = slow_events
+    now[0] = 1050
+    try:
+        result = dispatcher.poll(running)
+        assert result['state'] == 'running' and calls == [1110]
+        assert host._state['lease_expires_at'] == result['lease_expires_at'] == 1110
+        assert not host._cancel.is_set()
+    finally:
+        host._cancel.set()
+        host._thread.join(5)
+
+
+def test_already_expired_cold_start_is_not_revived(setup_chain):
+    now = [1000.0]
+    _, _, host, _, adapter, store, app = setup_chain(wait=True, clock=lambda: now[0])
+    submit(app)
+    original_start = adapter.start
+    renewals = []
+    def expired_start(envelope):
+        observed = original_start(envelope)
+        now[0] += 61
+        return observed
+    def forbidden_renew(*args):
+        renewals.append(args)
+        pytest.fail('An expired attempt must not be revived')
+    adapter.start, adapter.renew = expired_start, forbidden_renew
+    try:
+        result = Dispatcher(store, {'pi': adapter}, clock=lambda: now[0]).dispatch_once()
+        assert result['state'] == 'quarantined' and result['outcome']['error_code'] == 'lease_lost'
+        assert renewals == []
+    finally:
+        host._cancel.set()
+        host._thread.join(5)
+
+
 def test_deadline_stop_grace_does_not_extend_execution(setup_chain):
     now = [1000.0]
     _, _, host, _, adapter, store, app = setup_chain(wait=True, clock=lambda: now[0])
