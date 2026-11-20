@@ -43,6 +43,7 @@ def result_for(document):
 class Gateway:
     def __init__(self):
         self.jobs, self.submissions, self.uploads, self.lookups = {}, [], [], []
+        self.submission_timing = []
         self.lose_response = self.invalid_result = self.lookup_missing = False
 
     def preflight(self, deadline):
@@ -54,7 +55,8 @@ class Gateway:
         return [dict(input_id=str(uuid4()), path=name, sha256=hashlib.sha256(raw).hexdigest(), role='fixture')
                 for name, raw in files.items()]
 
-    def prepare_submission(self, operation_id, document, deadline, refs):
+    def prepare_submission(self, operation_id, document, deadline, refs, **timing):
+        self.submission_timing.append(dict(deadline_at=deadline, **timing))
         def admit():
             self.submissions.append(operation_id)
             self.jobs[operation_id] = dict(job_id=str(uuid4()), state='running', stop_proven=False,
@@ -216,6 +218,88 @@ def test_post_start_is_unpaid_reads_are_passive_and_replay_does_not_recapture(wo
         coordinator.start('publisher', {**request, 'note': 'different'})
     with pytest.raises(ServiceError, match='in_progress'):
         start(work)
+
+
+def test_new_publication_reserves_collection_time_and_replay_preserves_budget(work):
+    from video_workbench.animation_wikiskill_store import PUBLICATION_TIMING
+    store, gateway, coordinator, captures = work
+    job = start(work)
+    assert job['deadline_at'] == job['created_at'] + 1200
+    assert job['publication_timing'] == PUBLICATION_TIMING
+    restarted = WikiSkillCoordinator(AnimationWikiSkillStore(store.path, clock=lambda: 1100.),
+        gateway, lambda _: pytest.fail('must not recapture'), clock=lambda: 1100.)
+    assert restarted.start('publisher', {'request_id': job['request_id']}) == job
+    assert captures == ['publisher']
+    assert restarted.advance('publisher', job['id'])['state'] == 'prepared'
+    assert restarted.advance('publisher', job['id'])['state'] == 'running'
+    assert gateway.submission_timing == [dict(deadline_at=2200., collection_reserve_seconds=250)]
+    token = store.acquire('publisher', job['id'])
+    with pytest.raises(ServiceError):
+        store.change('publisher', job['id'], token, deadline_at=2300.)
+    with pytest.raises(ServiceError):
+        store.change('publisher', job['id'], token, publication_timing={})
+    store.release_lease('publisher', job['id'], token)
+
+
+def test_legacy_publication_keeps_original_900_second_clock_and_gateway_call(work):
+    store, gateway, _, captures = work
+    job = start(work)
+    # Seed an old persisted record in this isolated test DB. Deployment code
+    # never rewrites a historical job or adds the new marker to one.
+    with store._transaction() as db:
+        original = json.loads(db.execute('SELECT document FROM wikiskill_jobs WHERE id=?', (job['id'],)).fetchone()[0])
+        original.pop('publication_timing')
+        original['deadline_at'] = original['created_at'] + 900
+        raw = canonical_bytes(original).decode()
+        db.execute('UPDATE wikiskill_jobs SET document=? WHERE id=?', (raw, job['id']))
+    reopened = AnimationWikiSkillStore(store.path, clock=lambda: 1100.)
+    restarted = WikiSkillCoordinator(reopened, gateway, lambda _: pytest.fail('must not recapture'), clock=lambda: 1100.)
+    recovered = restarted.start('publisher', {'request_id': job['request_id']})
+    assert recovered['deadline_at'] == 1900. and 'publication_timing' not in recovered
+    with reopened._transaction() as db:
+        assert db.execute('SELECT document FROM wikiskill_jobs WHERE id=?', (job['id'],)).fetchone()[0] == raw
+    restarted.advance('publisher', job['id'])
+    assert restarted.advance('publisher', job['id'])['state'] == 'running'
+    assert gateway.submission_timing == [dict(deadline_at=1900.)]
+    assert reopened.snapshot('publisher', job['snapshot_id'])['sha256'] == job['snapshot_sha256']
+    assert captures == ['publisher']
+
+
+def test_new_publication_does_not_consume_collection_reserve_before_admission(work):
+    store, gateway, coordinator, _ = work
+    job = start(work)
+    store.clock = coordinator.clock = lambda: 1950.
+    failed = coordinator.advance('publisher', job['id'])
+    assert failed['state'] == 'failed' and not gateway.uploads and not gateway.submissions
+    assert failed['deadline_at'] == 2200.
+
+
+@pytest.mark.parametrize('collected_at,expected', [(2100., 'published'), (2200., 'failed')])
+def test_collection_has_separate_outer_window_and_cannot_publish_after_it(work, collected_at, expected):
+    store, gateway, coordinator, _ = work
+    finish(work, start(work))
+    previous = store.active('publisher')
+    job = start(work)
+    coordinator.advance('publisher', job['id'])
+    coordinator.advance('publisher', job['id'])
+    gateway.jobs[job['operation_id']].update(state='completed', stop_proven=True)
+    now = [2000.]  # Collection begins after the former 900-second window.
+    store.clock = coordinator.clock = lambda: now[0]
+    collect = gateway.collect
+    def delayed_collection(*args):
+        result = collect(*args)
+        now[0] = collected_at
+        return result
+    gateway.collect = delayed_collection
+    done = coordinator.advance('publisher', job['id'])
+    assert done['state'] == expected and done['deadline_at'] == 2200.
+    if expected == 'published':
+        assert store.active('publisher')['job_id'] == job['id']
+    else:
+        assert done['error']['code'] == 'animation_wikiskill_publication_deadline_expired'
+        assert store.active('publisher') == previous
+    assert store.snapshot('publisher', job['snapshot_id'])['sha256'] == job['snapshot_sha256']
+    assert gateway.submissions.count(job['operation_id']) == 1
 
 
 def test_complete_release_switches_atomically_and_preserves_exact_source_snapshot(work):

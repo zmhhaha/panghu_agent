@@ -9,7 +9,7 @@ import time
 
 from agent_service.animation_wikiskill_contract import make_snapshot, build_input, input_files
 from agent_service.contracts import ServiceError
-from .animation_wikiskill_store import TERMINAL, validate_start
+from .animation_wikiskill_store import TERMINAL, collection_reserve_seconds, validate_start
 
 _REMOTE_TERMINAL = {'failed', 'cancelled', 'timed_out', 'quarantined', 'needs_input'}
 
@@ -65,6 +65,8 @@ class WikiSkillCoordinator:
             operation = self.store.operation(owner, job_id, token)
             state = operation['state']
             document = operation['input_document']
+            reserve = collection_reserve_seconds(operation)
+            submission_deadline = operation['deadline_at'] - (reserve or 0)
             if state in {'submitting', 'submission_unknown'}:
                 try:
                     remote = self.gateway.lookup(operation['operation_id'])
@@ -81,23 +83,24 @@ class WikiSkillCoordinator:
                     remote_stop_proven=self.gateway.stopped(remote))
                 return self.store.get(owner, job_id)
             if state in {'queued', 'uploading'}:
-                if operation['deadline_at'] <= self.clock():
+                if submission_deadline <= self.clock():
                     self.store.change(owner, job_id, token, state='failed',
                         error=dict(code='animation_wikiskill_deadline_expired_before_submission'))
                     return self.store.get(owner, job_id)
-                self.gateway.preflight(operation['deadline_at'])
+                self.gateway.preflight(submission_deadline)
                 self.store.change(owner, job_id, token, state='uploading', error=None)
                 snapshot = self.store.snapshot(owner, operation['snapshot_id'])
                 refs = self.gateway.upload(document, input_files(snapshot, document))
                 self.store.change(owner, job_id, token, state='prepared', input_refs=refs, error=None)
                 return self.store.get(owner, job_id)
             if state == 'prepared':
-                if operation['deadline_at'] <= self.clock():
+                if submission_deadline <= self.clock():
                     self.store.change(owner, job_id, token, state='failed',
                         error=dict(code='animation_wikiskill_deadline_expired_before_submission'))
                     return self.store.get(owner, job_id)
+                timing = {} if reserve is None else dict(collection_reserve_seconds=reserve)
                 admit = self.gateway.prepare_submission(operation['operation_id'], document,
-                    operation['deadline_at'], operation['input_refs'])
+                    operation['deadline_at'], operation['input_refs'], **timing)
                 self.store.change(owner, job_id, token, state='submitting', submission_attempted=True, error=None)
                 try:
                     remote = admit()
@@ -116,6 +119,8 @@ class WikiSkillCoordinator:
                 self.store.change(owner, job_id, token, remote_receipt=remote,
                     remote_state=remote['state'], remote_stop_proven=stopped)
                 if remote['state'] == 'completed' and stopped:
+                    if reserve is not None and self.clock() >= operation['deadline_at']:
+                        raise ServiceError('animation_wikiskill_publication_deadline_expired', 409)
                     result = self.gateway.collect(operation['job_id'], operation['input_sha256'], document)
                     self.store.publish(owner, job_id, token, result)
                 elif remote['state'] in _REMOTE_TERMINAL and stopped:

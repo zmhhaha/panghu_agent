@@ -24,6 +24,9 @@ CATALOGUE_SCHEMA = 'video.animation-wikiskill-catalogue.v1'
 ACTIVATION_SCHEMA = 'video.animation-wikiskill-activation.v1'
 TERMINAL = frozenset({'failed', 'published'})
 STATES = TERMINAL | {'queued', 'uploading', 'prepared', 'submitting', 'running', 'submission_unknown'}
+PUBLICATION_SECONDS = 1200
+PUBLICATION_TIMING = dict(schema='video.animation-wikiskill-publication-timing.v1',
+    publication_seconds=PUBLICATION_SECONDS, native_max_seconds=900, collection_reserve_seconds=250)
 _TABLES = {'wikiskill_snapshots', 'wikiskill_jobs', 'wikiskill_releases',
            'wikiskill_active', 'wikiskill_activations'}
 
@@ -35,6 +38,16 @@ def validate_start(body):
 
 def _json(value):
     return canonical_bytes(value).decode('utf-8')
+
+
+def collection_reserve_seconds(operation):
+    """New jobs reserve collection time; historical jobs keep their exact clocks."""
+    if 'publication_timing' not in operation:
+        return None
+    require(operation['publication_timing'] == PUBLICATION_TIMING
+        and operation['deadline_at'] == operation['created_at'] + PUBLICATION_SECONDS,
+        'animation_wikiskill_publication_timing_invalid', 409)
+    return PUBLICATION_TIMING['collection_reserve_seconds']
 
 
 def _metadata(release):
@@ -134,7 +147,8 @@ class AnimationWikiSkillStore:
                 operation_id=job_id, job_id=None, release_id=None, error=None,
                 created_at=now, updated_at=now, input_document=document, input_refs=None,
                 remote_state=None, remote_stop_proven=False, remote_receipt=None,
-                submission_attempted=False, deadline_at=now + 900)
+                submission_attempted=False, deadline_at=now + PUBLICATION_SECONDS,
+                publication_timing=deepcopy(PUBLICATION_TIMING))
             db.execute('INSERT INTO wikiskill_snapshots VALUES (?,?,?,?)',
                 (snapshot['id'], owner, snapshot['sha256'], _json(snapshot)))
             db.execute('INSERT INTO wikiskill_jobs VALUES (?,?,?,?,?,?,?,?)',
@@ -218,6 +232,9 @@ class AnimationWikiSkillStore:
             require(row['lease_token'] == token and value['state'] == 'running'
                 and value['remote_state'] == 'completed' and value['remote_stop_proven'] is True,
                 'animation_wikiskill_stopped_result_required', 409)
+            if collection_reserve_seconds(value) is not None:
+                require(self.clock() < value['deadline_at'],
+                    'animation_wikiskill_publication_deadline_expired', 409)
             sequence = db.execute('SELECT COALESCE(MAX(sequence),0)+1 FROM wikiskill_releases WHERE owner=?',
                 (owner,)).fetchone()[0]
             release = dict(schema=RELEASE_SCHEMA, id=str(uuid4()), owner=owner, sequence=sequence,

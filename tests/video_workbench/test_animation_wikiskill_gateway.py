@@ -54,6 +54,47 @@ def test_manifest_and_each_record_are_real_bound_input_files(wire):
     assert peer.count('POST', '/v1/jobs') == 1
 
 
+@pytest.mark.parametrize('now,route_limit,expected_timeout', [
+    (1050., 900, 900), (1050., 600, 600), (1100., 900, 850), (1000., 1200, 900)])
+def test_new_publication_keeps_native_route_bound_and_reserves_outer_collection(
+        wire, monkeypatch, now, route_limit, expected_timeout):
+    gateway, peer, document, files = wire
+    peer.profiles[0]['max_timeout_seconds'] = route_limit
+    refs = gateway.upload(document, files)
+    monkeypatch.setattr('video_workbench.animation_wikiskill_gateway.time.time', lambda: now)
+    gateway.prepare_submission('new-budget', document, 2200., refs,
+        collection_reserve_seconds=250)()
+    assert peer.request['timeout_seconds'] == expected_timeout
+    assert peer.request['execution_deadline_at'] == 1950.
+    assert 2200. - peer.request['execution_deadline_at'] == 250.
+    assert peer.count('POST', '/v1/jobs') == 1
+
+
+def test_unmarked_gateway_request_retains_original_absolute_deadline(wire):
+    gateway, peer, document, files = wire
+    peer.profiles[0]['max_timeout_seconds'] = 900
+    gateway.submit('historical-budget', document, 1900., gateway.upload(document, files))
+    assert peer.request['timeout_seconds'] == 900
+    assert peer.request['execution_deadline_at'] == 1900.
+
+
+@pytest.mark.parametrize('reserve', [True, 249, 251, 250.0])
+def test_unrecognized_publication_reserve_never_posts_job(wire, reserve):
+    gateway, peer, document, files = wire
+    with pytest.raises(ServiceError, match='publication_timing_invalid'):
+        gateway.prepare_submission('invalid-budget', document, 2200., gateway.upload(document, files),
+            collection_reserve_seconds=reserve)
+    assert peer.count('POST', '/v1/jobs') == 0
+
+
+def test_exhausted_native_window_never_borrows_collection_margin(wire):
+    gateway, peer, document, files = wire
+    with pytest.raises(ServiceError, match='deadline_expired'):
+        gateway.prepare_submission('exhausted-budget', document, 1250., gateway.upload(document, files),
+            collection_reserve_seconds=250)
+    assert peer.count('POST', '/v1/jobs') == 0
+
+
 def test_stopped_manifest_and_artifact_are_verified_before_result_is_accepted(wire):
     gateway, peer, document, files = wire
     gateway.submit('compile-one', document, 1250., gateway.upload(document, files))
