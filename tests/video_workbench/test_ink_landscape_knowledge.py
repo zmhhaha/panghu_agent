@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import shutil
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -16,7 +17,7 @@ from video_workbench.animation_skill_compatibility import freeze_compatibility, 
 from video_workbench.animation_wikiskill_coordinator import WikiSkillCoordinator
 from video_workbench.animation_wikiskill_production import LibrarySkillProductionAdapter
 from video_workbench.animation_wikiskill_store import AnimationWikiSkillStore
-from video_workbench.ink_landscape_library import descriptor, read_skill_files
+from video_workbench.ink_landscape_library import descriptor, read_publication_files, read_skill_files
 from video_workbench.picture_learning_service import PictureLearningService
 from test_animation_wikiskill import Gateway, finish, records as fixture_records
 from test_animation_wikiskill_production import release
@@ -61,7 +62,7 @@ def _delivered_files(snapshot, package_sha256):
 def test_image_owned_sources_bind_exact_api_text_dependency_and_honest_limits():
     rows = knowledge.capture_ink_landscape_records()
     document_rows = [row for row in rows if row['kind'] == 'drawing_library_documentation']
-    actual = read_skill_files()
+    actual = read_publication_files()
     assert {row['content']['path']: row['content']['text'] for row in document_rows} == actual
     manifest, = [row['content'] for row in rows if row['kind'] == 'drawing_library']
     assert manifest['descriptor'] == descriptor()
@@ -78,6 +79,75 @@ def test_image_owned_sources_bind_exact_api_text_dependency_and_honest_limits():
     frozen = contract.make_snapshot('publisher', rows, captured_at=1000.)
     request = contract.build_input(frozen)
     assert contract.validate_input_files(request, contract.input_files(frozen, request)) == frozen
+
+
+def test_free_composition_is_explicit_verified_static_source_not_automatic_capture():
+    ordinary = knowledge.capture_ink_landscape_records()
+    assert not any(row['kind'].startswith('free_composition') for row in ordinary)
+    rows = knowledge.capture_free_composition_records()
+    assert {row['kind'] for row in rows} == {'free_composition_documentation',
+        'free_composition_source', 'free_composition_render_evidence'}
+    source, = [row['content'] for row in rows if row['kind'] == 'free_composition_source']
+    assert hashlib.sha256(source['source_text'].encode('utf-8')).hexdigest() == source['source_sha256']
+    render, = [row['content'] for row in rows if row['kind'] == 'free_composition_render_evidence']
+    observed = render['observation']
+    assert (observed['width'], observed['height']) == (1600, 1000)
+    assert observed['png_sha256'] == observed['repeat_sha256']
+    calls = {item['name']: item['calls'] for item in observed['actual_library_api_calls']}
+    assert calls['createBrushDocument'] == calls['drawContactStroke'] == 359
+    assert calls['renderCanvas'] == 6
+    for row in rows:
+        assert row['sha256'] == digest(row['content'])
+        assert row['content']['runtime_requirements'] == _requirements()
+        assert row['content']['input_images'] == row['content']['network_inputs'] == 0
+        for field in ('artistic_acceptance', 'static_visual_acceptance',
+                      'continuous_motion_verified', 'audio_verified'):
+            assert row['content'][field] is False
+        assert 'D:/' not in canonical_bytes(row).decode('utf-8')
+    capture = knowledge.with_free_composition_records(lambda _: deepcopy(ordinary))
+    combined = capture('publisher')
+    assert combined == sorted(ordinary + rows, key=lambda row: row['record_id'])
+    snapshot = contract.make_snapshot('publisher', combined, captured_at=1000.)
+    request = contract.build_input(snapshot)
+    assert contract.validate_input_files(request, contract.input_files(snapshot, request)) == snapshot
+
+
+@pytest.mark.parametrize('name', ['scene.js', 'rain-cleared-river.png',
+    'rain-cleared-river-receipt.json', 'rain-cleared-river.md', 'manifest.json'])
+def test_modified_free_composition_artifacts_are_rejected(tmp_path, name):
+    root = tmp_path / 'experience'
+    shutil.copytree(knowledge.FREE_COMPOSITION_ROOT, root)
+    path = root / name
+    path.write_bytes(path.read_bytes() + b'\nchanged')
+    with pytest.raises(ServiceError, match='ink_landscape_library_bytes_invalid'):
+        knowledge.capture_free_composition_records(root)
+
+
+def test_free_composition_capture_happens_only_for_explicit_start_and_preserves_old_release(
+        tmp_path, monkeypatch):
+    store = AnimationWikiSkillStore(tmp_path / 'releases.sqlite3', clock=lambda: 1000.)
+    gateway = Gateway()
+    coordinator = WikiSkillCoordinator(store, gateway, lambda _: fixture_records(), clock=lambda: 1000.)
+    prior = coordinator.start('publisher', {'request_id': str(uuid4())})
+    finish((store, gateway, coordinator, []), prior)
+    previous = store.active('publisher')
+    reads = []
+    original_capture = knowledge.capture_free_composition_records
+    def capture_case(directory=None):
+        reads.append(True)
+        return original_capture(directory)
+    monkeypatch.setattr(knowledge, 'capture_free_composition_records', capture_case)
+    coordinator.capture = knowledge.with_free_composition_records(lambda _: fixture_records())
+    coordinator.catalogue('publisher')
+    assert store.active('publisher') == previous and reads == []
+    body = {'request_id': str(uuid4())}
+    job = coordinator.start('publisher', body)
+    frozen = store.snapshot('publisher', job['snapshot_id'])
+    assert reads == [True] and store.active('publisher') == previous
+    assert any(row['kind'] == 'free_composition_source' for row in frozen['records'])
+    assert coordinator.start('publisher', body) == job and reads == [True]
+    assert store.snapshot('publisher', job['snapshot_id']) == frozen
+    assert store.get_release('publisher', previous['id']) == previous
 
 
 @pytest.mark.parametrize('files', [

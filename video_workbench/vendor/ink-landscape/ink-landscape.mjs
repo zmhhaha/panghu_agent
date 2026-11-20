@@ -80,11 +80,11 @@ function text(value, name) {
   return value;
 }
 function hashText(value) {
-  let hash8 = 2166136261;
+  let hash11 = 2166136261;
   for (let i = 0; i < value.length; i++) {
-    hash8 = Math.imul(hash8 ^ value.charCodeAt(i), 16777619);
+    hash11 = Math.imul(hash11 ^ value.charCodeAt(i), 16777619);
   }
-  return hash8 >>> 0;
+  return hash11 >>> 0;
 }
 function createRandom(seed) {
   let state = seedValue(seed);
@@ -140,13 +140,13 @@ function copyPolygon(points, name = "outline") {
   if (!Number.isFinite(area) || Math.abs(area) <= EPSILON) throw new RangeError(`${name} must have finite, nonzero area`);
   return Object.freeze(copy);
 }
-function pointInPolygon(point2, polygon3) {
+function pointInPolygon(point2, polygon4) {
   copyPoint(point2, "point");
-  if (!Array.isArray(polygon3) || polygon3.length < 3) throw new RangeError("polygon requires at least three points");
-  let inside2 = false;
-  for (let i = 0, j = polygon3.length - 1; i < polygon3.length; j = i++) {
-    const a = polygon3[j];
-    const b = polygon3[i];
+  if (!Array.isArray(polygon4) || polygon4.length < 3) throw new RangeError("polygon requires at least three points");
+  let inside4 = false;
+  for (let i = 0, j = polygon4.length - 1; i < polygon4.length; j = i++) {
+    const a = polygon4[j];
+    const b = polygon4[i];
     finite(a.x, "polygon.x");
     finite(a.y, "polygon.y");
     finite(b.x, "polygon.x");
@@ -156,9 +156,9 @@ function pointInPolygon(point2, polygon3) {
     const cross = (point2.x - a.x) * dy - (point2.y - a.y) * dx;
     const edgeLength = Math.hypot(dx, dy);
     if (edgeLength > 0 && Math.abs(cross) <= EPSILON * Math.max(1, edgeLength) && point2.x >= Math.min(a.x, b.x) - EPSILON && point2.x <= Math.max(a.x, b.x) + EPSILON && point2.y >= Math.min(a.y, b.y) - EPSILON && point2.y <= Math.max(a.y, b.y) + EPSILON) return true;
-    if (a.y > point2.y !== b.y > point2.y && point2.x < (b.x - a.x) * (point2.y - a.y) / (b.y - a.y) + a.x) inside2 = !inside2;
+    if (a.y > point2.y !== b.y > point2.y && point2.x < (b.x - a.x) * (point2.y - a.y) / (b.y - a.y) + a.x) inside4 = !inside4;
   }
-  return inside2;
+  return inside4;
 }
 function resamplePath(points, spacing) {
   positive(spacing, "spacing");
@@ -170,19 +170,19 @@ function resamplePath(points, spacing) {
   let segment = 1;
   let walked = 0;
   for (let sample = 1; sample < steps; sample++) {
-    const distance = sample * spacing;
+    const distance3 = sample * spacing;
     while (segment < source.length - 1) {
       const a2 = source[segment - 1];
       const b2 = source[segment];
       const length2 = Math.hypot(b2.x - a2.x, b2.y - a2.y);
-      if (walked + length2 >= distance && length2 > 0) break;
+      if (walked + length2 >= distance3 && length2 > 0) break;
       walked += length2;
       segment++;
     }
     const a = source[segment - 1];
     const b = source[segment];
     const length = Math.hypot(b.x - a.x, b.y - a.y);
-    const u = length === 0 ? 1 : Math.min(1, Math.max(0, (distance - walked) / length));
+    const u = length === 0 ? 1 : Math.min(1, Math.max(0, (distance3 - walked) / length));
     const point2 = {
       x: a.x + (b.x - a.x) * u,
       y: a.y + (b.y - a.y) * u,
@@ -200,7 +200,7 @@ function timing(options) {
   if (!Number.isFinite(start + duration)) throw new RangeError("start + duration must be finite");
   return { start, duration };
 }
-function strokeMark(id, points, options, fallbackSeed) {
+function strokeMark(id2, points, options, fallbackSeed) {
   const nib = options.nib ?? "round";
   if (nib !== "round" && nib !== "flat") throw new RangeError("nib must be round or flat");
   if (options.smoothing !== void 0 && options.smoothing !== "linear" && options.smoothing !== "catmull-rom") {
@@ -208,7 +208,7 @@ function strokeMark(id, points, options, fallbackSeed) {
   }
   const mark2 = {
     kind: "stroke",
-    id: text(id, "id"),
+    id: text(id2, "id"),
     points: copyPath(points),
     width: positive(options.width ?? 8, "width"),
     ink: text(options.ink ?? "#20251f", "ink"),
@@ -236,37 +236,37 @@ function createInkScene(options) {
     while (ids.has(`${kind}-${serial}`)) serial++;
     return `${kind}-${serial}`;
   }
-  function assertUnused(id) {
-    text(id, "id");
-    if (ids.has(id)) throw new RangeError(`Duplicate mark id: ${id}`);
+  function assertUnused(id2) {
+    text(id2, "id");
+    if (ids.has(id2)) throw new RangeError(`Duplicate mark id: ${id2}`);
   }
   const builder = {
     stroke(points, strokeOptions = {}) {
-      const id = strokeOptions.id ?? availableId("stroke");
-      assertUnused(id);
-      const mark2 = strokeMark(id, points, strokeOptions, seed ^ hashText(id));
+      const id2 = strokeOptions.id ?? availableId("stroke");
+      assertUnused(id2);
+      const mark2 = strokeMark(id2, points, strokeOptions, seed ^ hashText(id2));
       marks.push(mark2);
-      ids.add(id);
+      ids.add(id2);
       return mark2;
     },
     wash(outline, washOptions = {}) {
-      const id = washOptions.id ?? availableId("wash");
-      assertUnused(id);
+      const id2 = washOptions.id ?? availableId("wash");
+      assertUnused(id2);
       const passes = integer(washOptions.passes ?? 4, "passes");
       bounded(passes, "passes", 1, 32);
       const mark2 = Object.freeze({
         kind: "wash",
-        id,
+        id: id2,
         outline: copyPolygon(outline),
         ink: text(washOptions.ink ?? "#30372e", "ink"),
         opacity: bounded(washOptions.opacity ?? 0.22, "opacity"),
         roughness: bounded(washOptions.roughness ?? 0.45, "roughness"),
         passes,
-        seed: seedValue(washOptions.seed ?? seed ^ hashText(id)),
+        seed: seedValue(washOptions.seed ?? seed ^ hashText(id2)),
         ...timing(washOptions)
       });
       marks.push(mark2);
-      ids.add(id);
+      ids.add(id2);
       return mark2;
     },
     cun(outline, cunOptions = {}) {
@@ -303,7 +303,7 @@ function createInkScene(options) {
         const bend = (random() - 0.5) * markLength * (technique === "pima" ? 0.28 : 0.08);
         const steps = technique === "pima" ? 8 : 4;
         const phase = random() * TAU;
-        const path2 = [];
+        const path4 = [];
         let x = origin.x;
         let y = origin.y;
         for (let step = 0; step <= steps; step++) {
@@ -315,21 +315,21 @@ function createInkScene(options) {
           const dy = direction.y / magnitude;
           const offset = Math.sin(t * Math.PI) * bend + Math.sin(t * TAU + phase) * markLength * 0.018;
           const pressure = technique === "pima" ? 0.12 + 0.76 * Math.sin(Math.PI * (0.08 + t * 0.86)) : 0.08 + 0.9 * Math.pow(1 - t, 0.7);
-          path2.push({ x: x - dy * offset, y: y + dx * offset, pressure });
+          path4.push({ x: x - dy * offset, y: y + dx * offset, pressure });
           x += dx * markLength / steps;
           y += dy * markLength / steps;
         }
-        const id = `${prefix2}-${index + 1}`;
+        const id2 = `${prefix2}-${index + 1}`;
         const markOptions = {
           ...cunOptions,
           width: cunOptions.width ?? (technique === "pima" ? 2.2 : 10),
           dryness: cunOptions.dryness ?? (technique === "pima" ? 0.62 : 0.38),
           nib: cunOptions.nib ?? (technique === "pima" ? "round" : "flat"),
           tipAngle: cunOptions.tipAngle ?? Math.atan2(baseDirection.y, baseDirection.x) - 0.55,
-          seed: (baseSeed ^ hashText(id)) >>> 0,
+          seed: (baseSeed ^ hashText(id2)) >>> 0,
           clip: region
         };
-        generated.push(strokeMark(id, path2, markOptions, baseSeed));
+        generated.push(strokeMark(id2, path4, markOptions, baseSeed));
       }
       for (const mark2 of generated) {
         marks.push(mark2);
@@ -451,10 +451,10 @@ function sampleStrokePath(points, options = {}) {
   const result = [];
   let cursor = 1;
   for (let i = 0; i <= steps; i++) {
-    const distance = total * (i / steps);
-    while (cursor < table.length - 1 && table[cursor].distance < distance) cursor++;
+    const distance3 = total * (i / steps);
+    while (cursor < table.length - 1 && table[cursor].distance < distance3) cursor++;
     const left = table[cursor - 1], right = table[cursor];
-    const fraction = right.distance > left.distance ? (distance - left.distance) / (right.distance - left.distance) : 0;
+    const fraction = right.distance > left.distance ? (distance3 - left.distance) / (right.distance - left.distance) : 0;
     const low = left.segment === right.segment ? left.t : 0;
     const t = low + (right.t - low) * fraction;
     const segment = curve[right.segment];
@@ -472,7 +472,7 @@ function sampleStrokePath(points, options = {}) {
       x: endpoint?.x ?? point2.x,
       y: endpoint?.y ?? point2.y,
       pressure: endpoint?.pressure ?? Math.max(0, Math.min(1, point2.pressure)),
-      distance,
+      distance: distance3,
       nx: -dy / magnitude,
       ny: dx / magnitude
     });
@@ -499,9 +499,9 @@ function seedValue2(seed) {
   if (!Number.isSafeInteger(finite3(seed, "seed"))) throw new RangeError("seed must be a safe integer");
   return seed >>> 0;
 }
-function optionsObject(options, fields7) {
+function optionsObject(options, fields10) {
   if (!options || typeof options !== "object" || Array.isArray(options)) throw new TypeError("options must be an object");
-  for (const key of Object.keys(options)) if (!fields7.includes(key)) throw new RangeError(`Unsupported perturbation option: ${key}`);
+  for (const key of Object.keys(options)) if (!fields10.includes(key)) throw new RangeError(`Unsupported perturbation option: ${key}`);
 }
 function hash(seed, lattice) {
   let value = (seed ^ Math.imul(lattice, 2654435761)) >>> 0;
@@ -580,10 +580,10 @@ function jitterPath(points, intensity, options = {}) {
     const before = backward[i] ?? forward[i] ?? { x: 1, y: 0 }, after = forward[i] ?? backward[i] ?? before;
     const x = before.x + after.x, y = before.y + after.y, magnitude = Math.hypot(x, y);
     const tx = magnitude > 1e-9 ? x / magnitude : after.x, ty = magnitude > 1e-9 ? y / magnitude : after.y;
-    const distance = source.distances[i], at2 = distance / wavelength;
+    const distance3 = source.distances[i], at2 = distance3 / wavelength;
     const normal = 0.74 * noise6(at2 + 17.173) + 0.26 * noise6(at2 * 3.17 + 61.71);
     const tangent3 = tangentNoise(at2 * 0.83 + 29.37) * tangentRatio;
-    const envelope = preserve ? ease(Math.min(1, distance / wavelength, (source.length - distance) / wavelength)) : 1;
+    const envelope = preserve ? ease(Math.min(1, distance3 / wavelength, (source.length - distance3) / wavelength)) : 1;
     const scale = intensity * envelope / Math.max(1, Math.hypot(normal, tangent3));
     return {
       ...point2,
@@ -592,14 +592,19 @@ function jitterPath(points, intensity, options = {}) {
     };
   }));
 }
-function splitBristles(path2, count, options = {}) {
+function splitBristles(path4, count, options = {}) {
   if (!Number.isInteger(finite3(count, "count")) || count < 1 || count > 64) throw new RangeError("count must be an integer in 1..64");
-  optionsObject(options, ["seed", "spread", "width", "opacity", "variance", "spacing"]);
+  optionsObject(options, ["seed", "spread", "width", "opacity", "variance", "spacing", "dynamics", "lag", "release", "breakup"]);
+  if (options.dynamics !== void 0 && options.dynamics !== "contact-lag-v1") throw new RangeError("Unknown split contact dynamics");
+  if (options.dynamics === void 0 && [options.lag, options.release, options.breakup].some((value) => value !== void 0)) {
+    throw new RangeError("lag, release and breakup require contact-lag-v1 dynamics");
+  }
   const seed = seedValue2(options.seed ?? 0), width = positive2(options.width ?? 2, "width");
   const spread2 = finite3(options.spread ?? 12, "spread");
   if (spread2 < 0) throw new RangeError("spread must be nonnegative");
   const opacity = bounded2(options.opacity ?? 0.8, "opacity"), variance = bounded2(options.variance ?? 0.3, "variance");
-  const spacing = positive2(options.spacing ?? 2, "spacing"), source = pathData(path2);
+  const spacing = positive2(options.spacing ?? 2, "spacing"), source = pathData(path4);
+  if (options.dynamics === "contact-lag-v1") return splitLaggedContacts(source, count, { ...options, seed, width, spread: spread2, opacity, variance, spacing });
   const zeroPositions = new Set(source.points.flatMap((point2, i) => point2.pressure === 0 && source.length > 0 ? [source.distances[i] / source.length] : []));
   const budget = Math.min(4092, Math.floor(1e5 / count) - 4) - zeroPositions.size;
   if (budget < 2) throw new RangeError("Too many pressure-lift anchors for the split source budget");
@@ -607,18 +612,18 @@ function splitBristles(path2, count, options = {}) {
   const samples = sampleStrokePath(source.points, { spacing: effectiveSpacing });
   const total = samples.at(-1).distance, result = [];
   if (total === 0) throw new RangeError("A split bundle needs a path with nonzero length");
-  const pointAt = (at2) => {
+  const pointAt2 = (at2) => {
     const position = at2 * (samples.length - 1), index = Math.min(samples.length - 2, Math.floor(position)), t = position - index;
     const a = samples[index], b = samples[index + 1];
-    const distance = at2 * total;
+    const distance3 = at2 * total;
     let low = 0, high = source.distances.length - 1;
     while (low < high) {
       const middle = low + high >>> 1;
-      if (source.distances[middle] < distance) low = middle + 1;
+      if (source.distances[middle] < distance3) low = middle + 1;
       else high = middle;
     }
     const previous = Math.max(0, low - 1), span = source.distances[low] - source.distances[previous];
-    const fraction = span > 0 ? (distance - source.distances[previous]) / span : 1;
+    const fraction = span > 0 ? (distance3 - source.distances[previous]) / span : 1;
     const pressure = zeroPositions.has(at2) ? 0 : (source.points[previous].pressure ?? 1) * (1 - fraction) + (source.points[low].pressure ?? 1) * fraction;
     return {
       x: a.x + (b.x - a.x) * t,
@@ -631,9 +636,9 @@ function splitBristles(path2, count, options = {}) {
   for (let strand = 0; strand < count; strand++) {
     const rng = createRandom(seed ^ Math.imul(strand + 1, 2654435761));
     const noise6 = createNoise1D(seed ^ Math.imul(strand + 1, 1374496523));
-    const center = strand === 0, side = strand % 2 ? -1 : 1;
+    const center = strand === 0, side2 = strand % 2 ? -1 : 1;
     const rank = Math.ceil(strand / 2) / Math.max(1, Math.ceil((count - 1) / 2));
-    const lateral = center ? 0 : side * spread2 * 0.5 * rank * (1 + (rng() * 2 - 1) * variance);
+    const lateral = center ? 0 : side2 * spread2 * 0.5 * rank * (1 + (rng() * 2 - 1) * variance);
     const start = center ? 0 : rng() * 0.27, end = center ? 1 : 1 - rng() * 0.25;
     const gap = !center && rng() < 0.68, gapAt = 0.35 + rng() * 0.3, gapSize = 0.035 + rng() * 0.08;
     const ranges = gap ? [[start, gapAt - gapSize], [gapAt + gapSize, end]] : [[start, end]];
@@ -647,7 +652,7 @@ function splitBristles(path2, count, options = {}) {
         ...[...zeroPositions].filter((t) => t >= from && t <= to)
       ])].sort((a, b) => a - b);
       const points = positions.map((t) => {
-        const u = (t - from) / (to - from), point2 = pointAt(t);
+        const u = (t - from) / (to - from), point2 = pointAt2(t);
         const gather = 0.12 + 0.88 * Math.pow(Math.max(0, 4 * t * (1 - t)), 0.72);
         const offset = lateral * gather + (center ? 0.025 : 0.13) * spread2 * noise6(t * 6.7 + 19.173) + tilt * (t - 0.5);
         const taper = center ? 1 : 0.12 + 0.88 * Math.pow(Math.max(0, 4 * u * (1 - u)), 0.6);
@@ -656,6 +661,107 @@ function splitBristles(path2, count, options = {}) {
       });
       result.push(Object.freeze({
         id: `bristle-${strand}${gap ? `-part-${part}` : ""}`,
+        points: freezePoints(points),
+        width: finite3(strandWidth, "bristle width"),
+        opacity: clamp(strandOpacity)
+      }));
+    });
+  }
+  if (result.reduce((sum, item) => sum + item.points.length, 0) > 1e5) throw new RangeError("Split source exceeds the point budget");
+  return Object.freeze(result);
+}
+function splitLaggedContacts(source, count, options) {
+  const { seed, width, spread: spread2, opacity, variance, spacing } = options;
+  const lag = finite3(options.lag ?? spread2 * 0.85, "lag");
+  if (lag < 0) throw new RangeError("lag must be nonnegative");
+  const release = bounded2(options.release ?? 1, "release"), breakup = bounded2(options.breakup ?? 0.65, "breakup");
+  if (source.length === 0) throw new RangeError("A split bundle needs a path with nonzero length");
+  const lifts = [...new Set(source.points.flatMap((p, i) => p.pressure === 0 ? [source.distances[i] / source.length] : []))];
+  const liftSet = new Set(lifts);
+  const anchors = source.points.length <= 128 ? source.distances.map((d) => d / source.length) : [];
+  const budget = Math.min(4080, Math.floor(99e3 / count) - 24) - lifts.length - anchors.length;
+  if (budget < 2) throw new RangeError("Too many pressure-lift anchors for the split source budget");
+  const sampled = sampleStrokePath(source.points, { spacing: Math.max(spacing, source.length / budget) });
+  const total = sampled.at(-1).distance;
+  const at2 = (t) => {
+    const distance3 = Math.max(0, Math.min(total, t * total));
+    let low = 0, high = sampled.length - 1;
+    while (low < high) {
+      const middle = low + high >>> 1;
+      if (sampled[middle].distance < distance3) low = middle + 1;
+      else high = middle;
+    }
+    const a = sampled[Math.max(0, low - 1)], b = sampled[low], u = b.distance === a.distance ? 1 : (distance3 - a.distance) / (b.distance - a.distance);
+    const nx = a.nx * (1 - u) + b.nx * u, ny = a.ny * (1 - u) + b.ny * u, magnitude = Math.hypot(nx, ny) || 1;
+    low = 0;
+    high = source.points.length - 1;
+    while (low < high) {
+      const middle = low + high >>> 1;
+      if (source.distances[middle] < distance3) low = middle + 1;
+      else high = middle;
+    }
+    const previous = Math.max(0, low - 1), span = source.distances[low] - source.distances[previous];
+    const fraction = span === 0 ? 1 : (distance3 - source.distances[previous]) / span;
+    const pressure = liftSet.has(t) ? 0 : (source.points[previous].pressure ?? 1) * (1 - fraction) + (source.points[low].pressure ?? 1) * fraction;
+    return {
+      x: source.points[previous].x * (1 - fraction) + source.points[low].x * fraction,
+      y: source.points[previous].y * (1 - fraction) + source.points[low].y * fraction,
+      nx: nx / magnitude,
+      ny: ny / magnitude,
+      pressure
+    };
+  };
+  const result = [];
+  for (let strand = 0; strand < count; strand++) {
+    const random = createRandom(seed ^ Math.imul(strand + 1, 2654435761));
+    const noise6 = createNoise1D(seed ^ Math.imul(strand + 1, 1374496523));
+    const center = strand === 0, side2 = strand % 2 ? -1 : 1;
+    const rank = Math.ceil(strand / 2) / Math.max(1, Math.ceil((count - 1) / 2));
+    const lateral = center ? 0 : side2 * spread2 * 0.5 * rank * (0.8 + random() * 0.35);
+    const from = center ? 0 : 0.025 + random() * 0.19, to = center ? 1 : 0.79 + random() * 0.18;
+    const memory = center ? 0 : lag * (0.35 + rank * 0.65) * (0.65 + random() * 0.5) / total;
+    const drift = center ? 0 : (random() - 0.5) * spread2 * (0.16 + variance * 0.34);
+    const strandWidth = width * (center ? 1 : (0.24 + random() * 0.43) * (1 - rank * 0.22));
+    const strandOpacity = opacity * (center ? 1 : 0.27 + random() * 0.39);
+    const holes = [];
+    if (!center && breakup > 0) for (let gap = 0; gap < 3; gap++) {
+      const middle = 0.2 + gap * 0.2 + (random() - 0.5) * 0.11;
+      const half = (9e-3 + random() * 0.035) * breakup;
+      if (random() < breakup) holes.push({ from: Math.max(from, middle - half), to: Math.min(to, middle + half) });
+    }
+    holes.sort((a, b) => a.from - b.from);
+    const ranges = [];
+    let cursor = from;
+    for (const hole of holes) {
+      if (hole.to <= cursor || hole.from >= to) continue;
+      if (hole.from > cursor) ranges.push({ from: cursor, to: hole.from });
+      cursor = Math.max(cursor, hole.to);
+    }
+    if (cursor < to) ranges.push({ from: cursor, to });
+    ranges.forEach((range4, part) => {
+      const steps = Math.max(1, Math.ceil((range4.to - range4.from) * (sampled.length - 1)));
+      const positions = [.../* @__PURE__ */ new Set([
+        ...Array.from({ length: steps + 1 }, (_, i) => range4.from + (range4.to - range4.from) * i / steps),
+        ...[...lifts, ...anchors].filter((t) => t >= range4.from && t <= range4.to)
+      ])].sort((a, b) => a - b);
+      const points = positions.map((t) => {
+        const point2 = at2(t), history = at2(Math.max(0, t - memory));
+        const mix4 = center ? 0 : 0.7;
+        const x = point2.nx * (1 - mix4) + history.nx * mix4, y = point2.ny * (1 - mix4) + history.ny * mix4;
+        const length = Math.hypot(x, y), nx = length > 1e-8 ? x / length : point2.nx, ny = length > 1e-8 ? y / length : point2.ny;
+        const u = (t - from) / (to - from), section = (t - range4.from) / (range4.to - range4.from);
+        const gathering = center ? 0 : Math.pow(point2.pressure, 0.7) * (1 - release + release * (0.12 + 0.88 * ease(Math.min(1, (1 - u) / 0.25))));
+        const offset = (lateral + drift * (u - 0.35) + spread2 * 0.055 * variance * noise6(t * 7.3 + 17.11)) * gathering;
+        const tip = center ? 1 : Math.pow(Math.max(0, Math.min(1, section / 0.1, (1 - section) / 0.16)), 0.6);
+        const pressure = center ? point2.pressure : varyPressure(
+          point2.pressure,
+          variance * 0.6,
+          { seed: seed ^ strand, at: t, wavelength: 0.13 }
+        ) * tip;
+        return { x: finite3(point2.x + nx * offset, "bristle x"), y: finite3(point2.y + ny * offset, "bristle y"), pressure };
+      });
+      result.push(Object.freeze({
+        id: `bristle-${strand}${ranges.length > 1 ? `-part-${part}` : ""}`,
         points: freezePoints(points),
         width: finite3(strandWidth, "bristle width"),
         opacity: clamp(strandOpacity)
@@ -805,34 +911,34 @@ function sampleBrushContact(mark2, options = {}) {
   const brush = copyStrokeBrush(mark2.brush ?? { version: 1, controls: [] });
   const sampled = sampleStrokePath(mark2.points, { spacing: options.spacing ?? Math.max(0.65, Math.min(2, mark2.width * 0.05)), smoothing: mark2.smoothing ?? "linear" });
   const total = sampled.at(-1).distance;
-  const positionAt = (distance) => {
+  const positionAt = (distance3) => {
     let low = 0, high = sampled.length - 1;
     while (low < high) {
       const middle = low + high >>> 1;
-      if (sampled[middle].distance < distance) low = middle + 1;
+      if (sampled[middle].distance < distance3) low = middle + 1;
       else high = middle;
     }
     if (low === 0) return sampled[0];
     const a = sampled[low - 1], b = sampled[low];
-    const fraction = (distance - a.distance) / (b.distance - a.distance);
+    const fraction = (distance3 - a.distance) / (b.distance - a.distance);
     const nx = a.nx * (1 - fraction) + b.nx * fraction, ny = a.ny * (1 - fraction) + b.ny * fraction;
     const magnitude = Math.hypot(nx, ny);
     return {
       x: a.x * (1 - fraction) + b.x * fraction,
       y: a.y * (1 - fraction) + b.y * fraction,
       pressure: a.pressure * (1 - fraction) + b.pressure * fraction,
-      distance,
+      distance: distance3,
       nx: magnitude > 1e-8 ? nx / magnitude : b.nx,
       ny: magnitude > 1e-8 ? ny / magnitude : b.ny
     };
   };
   const anchored = new Map(sampled.map((sample) => [sample.distance, sample]));
   for (const control of brush.controls) {
-    const distance = total * control.at;
-    if (!anchored.has(distance)) anchored.set(distance, positionAt(distance));
+    const distance3 = total * control.at;
+    if (!anchored.has(distance3)) anchored.set(distance3, positionAt(distance3));
   }
-  const path2 = [...anchored.values()].sort((a, b) => a.distance - b.distance);
-  return path2.map((sample) => {
+  const path4 = [...anchored.values()].sort((a, b) => a.distance - b.distance);
+  return path4.map((sample) => {
     const state = brushStateAt(
       brush,
       total === 0 ? 0 : sample.distance / total,
@@ -910,11 +1016,11 @@ function split(points, alpha) {
 function releaseFilaments(mark2, samples) {
   const last = samples.at(-1), length = last.distance;
   if (mark2.width < 8 || length < Math.max(24, mark2.width * 6) || last.pressure > 0.08 || last.inkLoad <= 0.15 || mark2.opacity === 0) return [];
-  const station2 = (distance) => {
+  const station3 = (distance3) => {
     let low = 0, high = samples.length - 1;
     while (low < high) {
       const middle = low + high >>> 1;
-      if (samples[middle].distance < distance) low = middle + 1;
+      if (samples[middle].distance < distance3) low = middle + 1;
       else high = middle;
     }
     return samples[low];
@@ -927,19 +1033,19 @@ function releaseFilaments(mark2, samples) {
   if (tail.some((sample, index) => index > 0 && sample.pressure > tail[index - 1].pressure + 0.012)) return [];
   const before = samples[Math.max(0, samples.length - 3)];
   const dx = last.x - before.x, dy = last.y - before.y, magnitude = Math.hypot(dx, dy);
-  const approachStart = station2(length - lookback), approachEnd = station2(length - lookback * 0.45);
+  const approachStart = station3(length - lookback), approachEnd = station3(length - lookback * 0.45);
   const ax = approachEnd.x - approachStart.x, ay = approachEnd.y - approachStart.y, approachLength = Math.hypot(ax, ay);
   if (magnitude < 1e-8 || approachLength < 1e-8 || (dx * ax + dy * ay) / (magnitude * approachLength) < 0.65) return [];
   const tx = dx / magnitude, ty = dy / magnitude, nx = -ty, ny = tx;
   const revealReach = Math.min(3, mark2.width * 0.08, length * 0.012);
-  const anchor = station2(length - revealReach);
+  const anchor = station3(length - revealReach);
   if (anchor.inkLoad <= 0.15) return [];
   const count = 1 + (hash3(mark2.seed, 0, 1100) > 0.76 ? 1 : 0), result = [];
   for (let fiber = 0; fiber < count; fiber++) {
     const extension = Math.min(7, mark2.width * 0.2, length * 0.015) * (0.35 + hash3(mark2.seed, fiber, 1101) * 0.65);
-    const side = hash3(mark2.seed, fiber, 1102) * 2 - 1;
-    const sway = Math.min(1, mark2.width * 0.03) * side;
-    const rootOffset = Math.min(0.65, anchor.halfWidth * 0.35) * side;
+    const side2 = hash3(mark2.seed, fiber, 1102) * 2 - 1;
+    const sway = Math.min(1, mark2.width * 0.03) * side2;
+    const rootOffset = Math.min(0.65, anchor.halfWidth * 0.35) * side2;
     const startX = anchor.centerX + nx * rootOffset, startY = anchor.centerY + ny * rootOffset;
     const endX = last.x + tx * extension + nx * sway, endY = last.y + ty * extension + ny * sway;
     const controlX = last.x + tx * extension * 0.2 - nx * sway * 0.3;
@@ -976,10 +1082,10 @@ function prepare(mark2) {
     const rightGrain = noise(mark2.seed, sample.distance / fineScale + 7.3, 601);
     const leftBody = noise(mark2.seed, sample.distance / broadScale, 620);
     const rightBody = noise(mark2.seed, sample.distance / broadScale + 3.7, 621);
-    const side = sample.side * Math.sin(sample.angle);
+    const side2 = sample.side * Math.sin(sample.angle);
     const roughness = (0.035 + sample.pressure * 0.075 + sample.dryness * 0.1) * Math.min(1, mark2.width / 5);
-    const leftRough = roughness * (1 + Math.max(0, -side) * 2.1);
-    const rightRough = roughness * (1 + Math.max(0, side) * 2.1);
+    const leftRough = roughness * (1 + Math.max(0, -side2) * 2.1);
+    const rightRough = roughness * (1 + Math.max(0, side2) * 2.1);
     const contact = clamp2(1 - Math.pow(sample.dryness / 0.76, 1.18)) * sample.inkLoad;
     const left = clamp2(contact * (1 - leftRough * (0.25 + leftGrain * 0.75) - (1 - leftBody) * 0.1));
     const right = clamp2(contact * (1 - rightRough * (0.25 + rightGrain * 0.75) - (1 - rightBody) * 0.1));
@@ -1050,11 +1156,11 @@ function prepare(mark2) {
   if (immutable) cache.set(mark2, plan);
   return plan;
 }
-function prefix(points, distance) {
-  if (!points.length || points[0].distance >= distance) return [];
-  if (points.at(-1).distance <= distance) return points;
-  const end = points.findIndex((point2) => point2.distance >= distance);
-  const a = points[end - 1], b = points[end], t = (distance - a.distance) / (b.distance - a.distance);
+function prefix(points, distance3) {
+  if (!points.length || points[0].distance >= distance3) return [];
+  if (points.at(-1).distance <= distance3) return points;
+  const end = points.findIndex((point2) => point2.distance >= distance3);
+  const a = points[end - 1], b = points[end], t = (distance3 - a.distance) / (b.distance - a.distance);
   const nx = a.nx * (1 - t) + b.nx * t, ny = a.ny * (1 - t) + b.ny * t, magnitude = Math.hypot(nx, ny);
   return [...points.slice(0, end), {
     x: a.x * (1 - t) + b.x * t,
@@ -1063,7 +1169,7 @@ function prefix(points, distance) {
     ny: magnitude > 1e-8 ? ny / magnitude : b.ny,
     left: a.left * (1 - t) + b.left * t,
     right: a.right * (1 - t) + b.right * t,
-    distance
+    distance: distance3
   }];
 }
 function ribbon(ctx, points) {
@@ -1214,13 +1320,13 @@ function sampleStroke(mark2) {
 }
 function partialSamples(samples, progress) {
   if (progress >= 1 || samples.length < 2) return samples;
-  const distance = samples[samples.length - 1].distance * progress;
-  const end = samples.findIndex((sample) => sample.distance >= distance);
+  const distance3 = samples[samples.length - 1].distance * progress;
+  const end = samples.findIndex((sample) => sample.distance >= distance3);
   if (end <= 0) return [samples[0]];
   const active = samples.slice(0, end);
   const a = samples[end - 1];
   const b = samples[end];
-  const t = (distance - a.distance) / (b.distance - a.distance);
+  const t = (distance3 - a.distance) / (b.distance - a.distance);
   const nx = mix(a.nx, b.nx, t);
   const ny = mix(a.ny, b.ny, t);
   const normalLength = Math.hypot(nx, ny);
@@ -1228,7 +1334,7 @@ function partialSamples(samples, progress) {
     x: mix(a.x, b.x, t),
     y: mix(a.y, b.y, t),
     pressure: mix(a.pressure, b.pressure, t),
-    distance,
+    distance: distance3,
     nx: normalLength > EPSILON3 ? nx / normalLength : b.nx,
     ny: normalLength > EPSILON3 ? ny / normalLength : b.ny
   });
@@ -1395,7 +1501,7 @@ function roughOutline(mark2, pass) {
   const diagonal = Math.hypot(maxX - minX, maxY - minY);
   const amplitude = Math.min(16, diagonal * 0.035) * mark2.roughness;
   const result = [];
-  let distance = 0;
+  let distance3 = 0;
   const perimeter = mark2.outline.reduce((sum, point2, index) => {
     const next = mark2.outline[(index + 1) % mark2.outline.length];
     return sum + Math.hypot(next.x - point2.x, next.y - point2.y);
@@ -1410,11 +1516,11 @@ function roughOutline(mark2, pass) {
     const ny = length < EPSILON3 ? 0 : (b.x - a.x) / length;
     for (let j = 0; j < steps; j++) {
       const t = j / steps;
-      const variation = (noise2(mark2.seed, (distance + length * t) / 12, pass + 101) * 2 - 1) * amplitude;
+      const variation = (noise2(mark2.seed, (distance3 + length * t) / 12, pass + 101) * 2 - 1) * amplitude;
       const displacement = variation * Math.sin(Math.PI * t);
       result.push({ x: mix(a.x, b.x, t) + nx * displacement, y: mix(a.y, b.y, t) + ny * displacement });
     }
-    distance += length;
+    distance3 += length;
   }
   return result;
 }
@@ -1498,9 +1604,9 @@ function measure(points) {
   const distances = [0];
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1], b = points[i];
-    const distance = distances[i - 1] + Math.hypot(b.x - a.x, b.y - a.y);
-    if (!Number.isFinite(distance) || distance <= distances[i - 1]) throw new RangeError("Local brush distances exceed finite coordinate precision");
-    distances.push(distance);
+    const distance3 = distances[i - 1] + Math.hypot(b.x - a.x, b.y - a.y);
+    if (!Number.isFinite(distance3) || distance3 <= distances[i - 1]) throw new RangeError("Local brush distances exceed finite coordinate precision");
+    distances.push(distance3);
   }
   return distances;
 }
@@ -1514,19 +1620,19 @@ function compact(points) {
   }
   return result;
 }
-function at(points, distances, distance) {
+function at(points, distances, distance3) {
   let low = 1, high = points.length - 1;
   while (low < high) {
     const middle = low + high >>> 1;
-    if (distances[middle] < distance) low = middle + 1;
+    if (distances[middle] < distance3) low = middle + 1;
     else high = middle;
   }
   const a = points[low - 1], b = points[low];
   const length = distances[low] - distances[low - 1];
-  const t = clamp4((distance - distances[low - 1]) / length);
+  const t = clamp4((distance3 - distances[low - 1]) / length);
   return {
     ...t === 0 ? a : t === 1 ? b : lerpPoint(a, b, t),
-    distance,
+    distance: distance3,
     dx: (b.x - a.x) / length,
     dy: (b.y - a.y) / length
   };
@@ -1605,14 +1711,14 @@ function corners(source, options) {
   return compact(result);
 }
 function noise3(seed, position) {
-  const hash8 = (index2) => {
+  const hash11 = (index2) => {
     let value = (seed ^ Math.imul(index2, 2654435761)) >>> 0;
     value = Math.imul(value ^ value >>> 16, 2146121005);
     value = Math.imul(value ^ value >>> 15, 2221713035);
     return ((value ^ value >>> 16) >>> 0) / 4294967296;
   };
   const index = Math.floor(position);
-  return mix2(hash8(index), hash8(index + 1), ease3(position - index));
+  return mix2(hash11(index), hash11(index + 1), ease3(position - index));
 }
 function modulate(points, options) {
   if (options.strength === 0 || options.pressureProfile === "preserve" && options.rhythm === "continuous" && options.drag === "forward") return [...points];
@@ -1621,10 +1727,10 @@ function modulate(points, options) {
   const locations = new Set(distances);
   for (let i = 0; i <= steps; i++) locations.add(total * (i / steps));
   const cycleLength = Math.max(options.width * 1.8, total / 128);
-  return [...locations].sort((a, b) => a - b).map((distance) => {
-    const station2 = at(points, distances, distance), t = distance / total, edge = t === 0 || t === 1 ? 0 : Math.sin(Math.PI * t);
-    const cycle = distance / cycleLength;
-    let pressure = station2.pressure, tangentOffset = 0, normalOffset = 0;
+  return [...locations].sort((a, b) => a - b).map((distance3) => {
+    const station3 = at(points, distances, distance3), t = distance3 / total, edge = t === 0 || t === 1 ? 0 : Math.sin(Math.PI * t);
+    const cycle = distance3 / cycleLength;
+    let pressure = station3.pressure, tangentOffset = 0, normalOffset = 0;
     if (options.pressureProfile === "lift-press") pressure *= 1 - options.strength * (1 - (0.2 + 0.8 * Math.pow(Math.sin(Math.PI * t), 0.72)));
     if (options.rhythm === "hesitant") {
       pressure *= 1 - options.strength * 0.46 * noise3(options.seed ^ 1298231915, cycle * 2.4);
@@ -1636,17 +1742,17 @@ function modulate(points, options) {
       pressure *= 1 - options.strength * (0.1 + 0.25 * noise3(options.seed ^ 11, cycle * 4));
     }
     return {
-      x: station2.x + station2.dx * tangentOffset - station2.dy * normalOffset,
-      y: station2.y + station2.dy * tangentOffset + station2.dx * normalOffset,
+      x: station3.x + station3.dx * tangentOffset - station3.dy * normalOffset,
+      y: station3.y + station3.dy * tangentOffset + station3.dx * normalOffset,
       pressure: clamp4(pressure)
     };
   });
 }
 function endpointGeometry(points, options) {
-  let path2 = [...points];
-  if (options.strength === 0) return path2;
+  let path4 = [...points];
+  if (options.strength === 0) return path4;
   if (options.entry === "exposed" || options.finish === "open" || options.finish === "return") {
-    const distances = measure(path2), total = distances.at(-1);
+    const distances = measure(path4), total = distances.at(-1);
     const entryReach = Math.min(options.width * 1.55, total * 0.24) * options.strength;
     const finishReach = Math.min(options.width * (options.finish === "return" ? 0.82 : 1.7), total * 0.24) * options.strength;
     const locations = new Set(distances);
@@ -1654,16 +1760,16 @@ function endpointGeometry(points, options) {
       if (options.entry === "exposed") locations.add(entryReach * i / 16);
       if (options.finish === "open" || options.finish === "return") locations.add(total - finishReach * i / 16);
     }
-    path2 = [...locations].sort((a, b) => a - b).map((distance) => {
-      const station2 = at(path2, distances, distance);
-      const inFactor = options.entry === "exposed" ? mix2(1, ease3(clamp4(distance / entryReach)), options.strength) : 1;
-      const remaining = ease3(clamp4((total - distance) / finishReach));
+    path4 = [...locations].sort((a, b) => a - b).map((distance3) => {
+      const station3 = at(path4, distances, distance3);
+      const inFactor = options.entry === "exposed" ? mix2(1, ease3(clamp4(distance3 / entryReach)), options.strength) : 1;
+      const remaining = ease3(clamp4((total - distance3) / finishReach));
       const outFactor = options.finish === "open" ? mix2(1, remaining, options.strength) : options.finish === "return" ? mix2(1, 0.035 + 0.965 * remaining, options.strength) : 1;
-      return { x: station2.x, y: station2.y, pressure: station2.pressure * inFactor * outFactor };
+      return { x: station3.x, y: station3.y, pressure: station3.pressure * inFactor * outFactor };
     });
   }
   if (options.entry === "concealed") {
-    const a = path2[0], b = path2[1], length = Math.hypot(b.x - a.x, b.y - a.y), total = measure(path2).at(-1);
+    const a = path4[0], b = path4[1], length = Math.hypot(b.x - a.x, b.y - a.y), total = measure(path4).at(-1);
     const dx = (b.x - a.x) / length, dy = (b.y - a.y) / length;
     const reach = Math.min(options.width * 0.8, total * 0.12) * options.strength;
     const p1 = { x: a.x - dx * reach + -dy * reach * 0.22, y: a.y - dy * reach + dx * reach * 0.22 };
@@ -1677,24 +1783,24 @@ function endpointGeometry(points, options) {
         pressure: a.pressure * mix2(1 - 0.96 * options.strength, 1, ease3(t))
       });
     }
-    path2 = [...prefix2, ...path2.slice(1)];
+    path4 = [...prefix2, ...path4.slice(1)];
   }
   if (options.finish === "return") {
-    const b = path2.at(-1), a = path2.at(-2), length = Math.hypot(b.x - a.x, b.y - a.y), total = measure(path2).at(-1);
+    const b = path4.at(-1), a = path4.at(-2), length = Math.hypot(b.x - a.x, b.y - a.y), total = measure(path4).at(-1);
     const dx = (b.x - a.x) / length, dy = (b.y - a.y) / length;
     const reach = Math.min(options.width * 0.45, total * 0.08) * options.strength;
     const control = { x: b.x - dx * reach * 0.32 - dy * reach * 0.15, y: b.y - dy * reach * 0.32 + dx * reach * 0.15 };
     const end = { x: b.x - dx * reach, y: b.y - dy * reach };
     for (let i = 1; i <= 16; i++) {
       const t = i / 16, u = 1 - t;
-      path2.push({
+      path4.push({
         x: b.x * u * u + 2 * control.x * u * t + end.x * t * t,
         y: b.y * u * u + 2 * control.y * u * t + end.y * t * t,
         pressure: b.pressure * mix2(1, 1 - ease3(t), options.strength)
       });
     }
   }
-  return compact(path2);
+  return compact(path4);
 }
 function compileLocalBrushGeometry(source, options) {
   return endpointGeometry(compact(modulate(corners(source, options), options)), options);
@@ -1709,14 +1815,14 @@ function choice(value, name, choices) {
   return value;
 }
 function noise4(seed, position) {
-  const hash8 = (index2) => {
+  const hash11 = (index2) => {
     let value = (seed ^ Math.imul(index2, 2654435761)) >>> 0;
     value = Math.imul(value ^ value >>> 16, 2146121005);
     value = Math.imul(value ^ value >>> 15, 2221713035);
     return ((value ^ value >>> 16) >>> 0) / 4294967296;
   };
   const index = Math.floor(position), t = position - index;
-  return mix3(hash8(index), hash8(index + 1), t * t * (3 - 2 * t));
+  return mix3(hash11(index), hash11(index + 1), t * t * (3 - 2 * t));
 }
 function unique(points) {
   const result = [];
@@ -1731,28 +1837,28 @@ function measure2(points) {
   const distances = [0];
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1], b = points[i];
-    const distance = distances[i - 1] + Math.hypot(b.x - a.x, b.y - a.y);
-    if (distance <= distances[i - 1]) throw new RangeError("Brushwork segment distances exceed coordinate precision");
-    distances.push(distance);
+    const distance3 = distances[i - 1] + Math.hypot(b.x - a.x, b.y - a.y);
+    if (distance3 <= distances[i - 1]) throw new RangeError("Brushwork segment distances exceed coordinate precision");
+    distances.push(distance3);
   }
   return distances;
 }
-function stationAt(points, distances, distance) {
+function stationAt(points, distances, distance3) {
   let low = 1, high = distances.length - 1;
   while (low < high) {
     const middle = low + high >>> 1;
-    if (distances[middle] < distance) low = middle + 1;
+    if (distances[middle] < distance3) low = middle + 1;
     else high = middle;
   }
   const segment = low;
   const a = points[segment - 1], b = points[segment];
   const length = distances[segment] - distances[segment - 1];
-  const t = Math.max(0, Math.min(1, (distance - distances[segment - 1]) / length));
+  const t = Math.max(0, Math.min(1, (distance3 - distances[segment - 1]) / length));
   return {
     x: t === 0 ? a.x : t === 1 ? b.x : mix3(a.x, b.x, t),
     y: t === 0 ? a.y : t === 1 ? b.y : mix3(a.y, b.y, t),
     pressure: t === 0 ? a.pressure : t === 1 ? b.pressure : mix3(a.pressure, b.pressure, t),
-    distance,
+    distance: distance3,
     dx: (b.x - a.x) / length,
     dy: (b.y - a.y) / length
   };
@@ -1796,7 +1902,7 @@ function createBrushStroke(points, options = {}) {
   };
   const width = style.width;
   if (gestureModel === "local-v1") {
-    const path3 = compileLocalBrushGeometry(source, {
+    const path5 = compileLocalBrushGeometry(source, {
       entry: entry2,
       finish: finish2,
       turn,
@@ -1808,10 +1914,10 @@ function createBrushStroke(points, options = {}) {
       seed: validated2.seed,
       smoothing: strokeOptions.smoothing ?? "linear"
     });
-    return createInkScene({ width: 1, height: 1 }).stroke(path3, { ...style, smoothing: "linear" });
+    return createInkScene({ width: 1, height: 1 }).stroke(path5, { ...style, smoothing: "linear" });
   }
   const requiresStations = pressureProfile !== "preserve" || rhythm === "hesitant" || drag === "reverse" || turn === "angular";
-  let path2;
+  let path4;
   if (requiresStations && strength > 0) {
     const steps = Math.max(2, Math.min(MAX_STATIONS2, Math.ceil(total / Math.max(1, width * 0.34))));
     const locations = new Set(distances);
@@ -1828,12 +1934,12 @@ function createBrushStroke(points, options = {}) {
       locations.add(distances[i] + reach);
     }
     const cycleLength = Math.max(width * 1.8, total / 128);
-    path2 = [...locations].sort((a, b) => a - b).map((distance) => {
-      const sample = stationAt(source, distances, distance), t = distance / total;
+    path4 = [...locations].sort((a, b) => a - b).map((distance3) => {
+      const sample = stationAt(source, distances, distance3), t = distance3 / total;
       let pressure = sample.pressure;
       if (pressureProfile === "lift-press") pressure *= 1 - strength * (1 - (0.2 + 0.8 * Math.pow(Math.sin(Math.PI * t), 0.72)));
       const edge = t === 0 || t === 1 ? 0 : Math.sin(Math.PI * t);
-      const cycle = distance / cycleLength;
+      const cycle = distance3 / cycleLength;
       let tangentOffset = 0, normalOffset = 0;
       if (rhythm === "hesitant") {
         const contact = noise4(validated2.seed ^ 1298231915, cycle * 2.4);
@@ -1846,7 +1952,7 @@ function createBrushStroke(points, options = {}) {
         pressure *= 1 - strength * (0.1 + 0.25 * noise4(validated2.seed ^ 11, cycle * 4));
       }
       for (const corner of corners2) {
-        const relative = Math.abs(distance - corner.distance) / corner.reach;
+        const relative = Math.abs(distance3 - corner.distance) / corner.reach;
         if (relative <= 1) {
           pressure *= 1 - 0.28 * strength * Math.pow(Math.sin(relative * Math.PI / 2), 2);
           pressure += pressure * (1 - pressure) * 0.24 * strength * (1 - relative);
@@ -1858,44 +1964,44 @@ function createBrushStroke(points, options = {}) {
         pressure: Math.max(0, Math.min(1, pressure))
       };
     });
-  } else path2 = source.map((point2) => ({ ...point2 }));
+  } else path4 = source.map((point2) => ({ ...point2 }));
   if (entry2 !== "preserve" && strength > 0) {
-    const a = path2[0], sourceLength = distances[1];
+    const a = path4[0], sourceLength = distances[1];
     const dx = (second.x - first.x) / sourceLength, dy = (second.y - first.y) / sourceLength;
     const reach = Math.min(width * 0.55, sourceLength * 0.28, total * 0.06) * strength;
     let skip = 1;
-    while (skip < path2.length - 1 && Math.hypot(path2[skip].x - a.x, path2[skip].y - a.y) < reach) skip++;
-    const b = path2[skip], length = Math.hypot(b.x - a.x, b.y - a.y);
+    while (skip < path4.length - 1 && Math.hypot(path4[skip].x - a.x, path4[skip].y - a.y) < reach) skip++;
+    const b = path4[skip], length = Math.hypot(b.x - a.x, b.y - a.y);
     const lead = { x: a.x + dx * reach, y: a.y + dy * reach, pressure: mix3(a.pressure, b.pressure, Math.min(1, reach / length)) };
-    if (entry2 === "exposed") path2 = [{ ...a, pressure: a.pressure * (1 - 0.98 * strength) }, lead, ...path2.slice(skip)];
-    else path2 = [
+    if (entry2 === "exposed") path4 = [{ ...a, pressure: a.pressure * (1 - 0.98 * strength) }, lead, ...path4.slice(skip)];
+    else path4 = [
       { ...a, pressure: a.pressure * (1 - 0.88 * strength) },
       { x: a.x - dx * reach, y: a.y - dy * reach, pressure: a.pressure * 0.76 },
       { x: a.x - dx * reach * 0.65 - dy * reach * 0.3, y: a.y - dy * reach * 0.65 + dx * reach * 0.3, pressure: a.pressure },
       lead,
-      ...path2.slice(skip)
+      ...path4.slice(skip)
     ];
   }
   if (finish2 !== "preserve" && strength > 0) {
-    const b = path2.at(-1), sourceEnd = source.at(-1), sourceBefore = source.at(-2);
+    const b = path4.at(-1), sourceEnd = source.at(-1), sourceBefore = source.at(-2);
     const sourceLength = Math.hypot(sourceEnd.x - sourceBefore.x, sourceEnd.y - sourceBefore.y);
     const dx = (sourceEnd.x - sourceBefore.x) / sourceLength, dy = (sourceEnd.y - sourceBefore.y) / sourceLength;
     const reach = Math.min(width * 0.62, sourceLength * 0.28, total * 0.06) * strength;
-    let keep = path2.length - 2;
-    while (keep > 0 && Math.hypot(path2[keep].x - b.x, path2[keep].y - b.y) < reach) keep--;
-    const a = path2[keep], length = Math.hypot(b.x - a.x, b.y - a.y);
-    if (finish2 === "open") path2 = [
-      ...path2.slice(0, keep + 1),
+    let keep = path4.length - 2;
+    while (keep > 0 && Math.hypot(path4[keep].x - b.x, path4[keep].y - b.y) < reach) keep--;
+    const a = path4[keep], length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (finish2 === "open") path4 = [
+      ...path4.slice(0, keep + 1),
       { x: b.x - dx * reach, y: b.y - dy * reach, pressure: mix3(b.pressure, a.pressure, Math.min(1, reach / length)) },
       { ...b, pressure: b.pressure * (1 - 0.98 * strength) }
     ];
-    else path2 = [
-      ...path2,
+    else path4 = [
+      ...path4,
       { x: b.x - dx * reach * 0.3 - dy * reach * 0.18, y: b.y - dy * reach * 0.3 + dx * reach * 0.18, pressure: b.pressure * 0.9 },
       { x: b.x - dx * reach, y: b.y - dy * reach, pressure: b.pressure * (1 - 0.92 * strength) }
     ];
   }
-  return createInkScene({ width: 1, height: 1 }).stroke(path2, style);
+  return createInkScene({ width: 1, height: 1 }).stroke(path4, style);
 }
 
 // src/dots.ts
@@ -1917,18 +2023,18 @@ function layout(shape2, spread2, count) {
     case "oblique":
       return [{ x: 0, y: 0, heading: -Math.PI / 3, length: 1.15, width: 0.68 }];
     case "paired":
-      return [-1, 1].map((side) => ({
-        x: side * spread2 * 0.45,
+      return [-1, 1].map((side2) => ({
+        x: side2 * spread2 * 0.45,
         y: 0,
-        heading: Math.PI / 2 + side * 0.24,
+        heading: Math.PI / 2 + side2 * 0.24,
         length: 0.72,
         width: 0.75
       }));
     case "triple":
-      return [-1, 0, 1].map((side) => ({
-        x: side * spread2 * 0.52,
-        y: side === 0 ? -spread2 * 0.3 : 0,
-        heading: Math.PI / 2 + side * 0.35,
+      return [-1, 0, 1].map((side2) => ({
+        x: side2 * spread2 * 0.52,
+        y: side2 === 0 ? -spread2 * 0.3 : 0,
+        heading: Math.PI / 2 + side2 * 0.35,
         length: 0.72,
         width: 0.68
       }));
@@ -1995,13 +2101,13 @@ function createDotMarks(positions, options = {}) {
       const dx = Math.cos(heading), dy = Math.sin(heading);
       const x = point2.x + cos * member.x - sin * member.y, y = point2.y + sin * member.x + cos * member.y;
       const length = size * member.length, bend = (random() - 0.5) * size * 0.045;
-      const path2 = [
+      const path4 = [
         { x, y, pressure: point2.pressure * 0.16 },
         { x: x + dx * length * 0.28 - dy * bend, y: y + dy * length * 0.28 + dx * bend, pressure: point2.pressure },
         { x: x + dx * length * 0.7 - dy * bend * 0.35, y: y + dy * length * 0.7 + dx * bend * 0.35, pressure: point2.pressure * 0.78 },
         { x: x + dx * length, y: y + dy * length, pressure: point2.pressure * 0.04 }
       ];
-      result.push(builder.stroke(path2, {
+      result.push(builder.stroke(path4, {
         ...validated2,
         id: `${idPrefix}-${group + 1}-${index + 1}`,
         width: size * member.width,
@@ -2682,6 +2788,36 @@ var TECHNIQUE_READING_SOURCES = freeze([
     "kind": "teaching",
     "scope": "已读公开文档简介/OCR正文，其中明确列“树及树叶形态：品字点叶、介字点叶、夹叶法”，并再次出现“品字点叶”。课件署上传人x***、2022-09-29、17页；未获原作者/学校，不将平台认证当学术审校。仅页面首5页图可见，未实际查看含该词的叶式图页。",
     "supports": "证明公开教学中确有“品字点叶”命名；不支持固定三笔次序、严格点数或与攒三聚五同义。"
+  },
+  {
+    "id": "jieziyuan-yihua-leaf-preview",
+    "title": "《芥子园画传》点叶图公开预览：菊花点、松叶点、尖头点等",
+    "institution": "以画雅集（Yihua）（二次分发预览；其所述普林斯顿藏本归属未独立核验）",
+    "url": "https://yihua.art/wp-content/uploads/2022/02/jzycjwjkx-2.jpg",
+    "accessed": "2026-11-20",
+    "kind": "historical-facsimile",
+    "scope": "实际查看跨页图：右页上部“菊花點”、右页下部“松葉點”、左页下部“尖頭點”的图题与叶组；观察沿枝成团、各团大小与团间留空。本轮未独立核验网站所述普林斯顿大学图书馆底本归属、具体刊年与藏号；不把纸黄、水渍和木刻颗粒当作毛笔或宣纸物性的证据。",
+    "supports": "支持具名点叶结果图、叶群与枝架的联系及组间纸白；静态印版不能证明统一笔顺、接触压力或真实毛边。"
+  },
+  {
+    "id": "jieziyuan-yihua-axe-jiesuo-preview",
+    "title": "《芥子园画传》大斧劈法与解索皴法图公开预览",
+    "institution": "以画雅集（Yihua）（二次分发预览；其所述普林斯顿藏本归属未独立核验）",
+    "url": "https://yihua.art/wp-content/uploads/2022/02/jzycjwjkx-5.jpg",
+    "accessed": "2026-11-20",
+    "kind": "historical-facsimile",
+    "scope": "实际查看跨页图：左页“大斧劈法”的宽阔角面、长削切形与局部深墨，右页“解索皴法”的长曲折纹分组、石面转折与明面。本轮未独立核验网站所述普林斯顿大学图书馆底本归属、具体刊年与藏号；不把纸黄、水渍和木刻颗粒当作毛笔或宣纸物性的证据。",
+    "supports": "支持两类皴纹服务石面构形的可见实例；不从木刻断裂推定具体腕法、运行速度或含水参数。"
+  },
+  {
+    "id": "jieziyuan-yihua-mi-preview",
+    "title": "《芥子园画传》米法图公开预览（左页）",
+    "institution": "以画雅集（Yihua）（二次分发预览；其所述普林斯顿藏本归属未独立核验）",
+    "url": "https://yihua.art/wp-content/uploads/2022/02/jzycjwjkx-7.jpg",
+    "accessed": "2026-11-20",
+    "kind": "historical-facsimile",
+    "scope": "实际查看跨页图左页米法的短横墨痕、交错叠组、深浅块与其间留白；右页不作为本轮题签或技法归属的证据。本轮未独立核验网站所述普林斯顿大学图书馆底本归属、具体刊年与藏号；不把纸黄、水渍和木刻颗粒当作毛笔或宣纸物性的证据。",
+    "supports": "补充横向短触交错、局部积叠成组的结果图；静态版画不直接支持湿态时序、毛细过程或水墨剂量。"
   },
   {
     "id": "learn-line-dpm-eighteen",
@@ -4018,6 +4154,12 @@ var TECHNIQUE_READINGS = freeze([
         "locator": "“斧劈皴”段的大小、按踢挑拖说明",
         "support": "definition",
         "note": ""
+      },
+      {
+        "sourceId": "jieziyuan-yihua-axe-jiesuo-preview",
+        "locator": "jzycjwjkx-5.jpg：左页题“大斧劈法”的石体图",
+        "support": "example",
+        "note": "可见较宽阔的角面、长短削切形与折角处的重墨片，浅面和纸白仍成片保留。此图支持按石面转折安排宽狭与疏密；不将刻印缺口解释为某种手腕动作或干笔物理。"
       }
     ],
     "name": "斧劈皴",
@@ -4076,6 +4218,12 @@ var TECHNIQUE_READINGS = freeze([
         "locator": "“解索皴”段与王蒙作品说明",
         "support": "definition",
         "note": ""
+      },
+      {
+        "sourceId": "jieziyuan-yihua-axe-jiesuo-preview",
+        "locator": "jzycjwjkx-5.jpg：右页题“解索皴法”的石体图",
+        "support": "example",
+        "note": "长曲折纹在不同石面中分组下行，线群有长短停断，并与较空的面及轮廓交替。此处支持受形体约束的屈曲组织，不以印版线条证明唯一中锋轨迹或规定整面等密排线。"
       }
     ],
     "name": "解索皴",
@@ -4264,6 +4412,12 @@ var TECHNIQUE_READINGS = freeze([
         "locator": "“米点皴”段“不可太模糊或太明露”",
         "support": "definition",
         "note": ""
+      },
+      {
+        "sourceId": "jieziyuan-yihua-mi-preview",
+        "locator": "jzycjwjkx-7.jpg：左页米法图的横向短痕与叠组",
+        "support": "example",
+        "note": "短横墨痕大小和间距不齐，局部叠合为深块，组间仍留纸白并与较细长线相接。只补横触成组的可见结果；含水与先后另依已有文献，不能从木刻黑白直接推断湿态交换。右页不纳入该条证据。"
       }
     ],
     "name": "米点皴",
@@ -4440,6 +4594,12 @@ var TECHNIQUE_READINGS = freeze([
         "locator": "“杂树法”及“点叶法”转录",
         "support": "definition",
         "note": "平台转录未校原刻。"
+      },
+      {
+        "sourceId": "jieziyuan-yihua-leaf-preview",
+        "locator": "jzycjwjkx-2.jpg：右页上部“菊花點”、左页下部“尖頭點”及其叶簇",
+        "support": "example",
+        "note": "图中放射状小叶组与实心尖点各自沿枝聚成团，团与团之间留有纸白。此处仅补点叶结果的变化与枝架关系；不新增菊花点或尖头点目录，也不从静态图指定点数、笔序。"
       }
     ],
     "name": "点叶",
@@ -4642,6 +4802,12 @@ var TECHNIQUE_READINGS = freeze([
         "locator": "全文刺绣语境",
         "support": "mentioned",
         "note": "只排除错误命中，不支持绘画针序。"
+      },
+      {
+        "sourceId": "jieziyuan-yihua-leaf-preview",
+        "locator": "jzycjwjkx-2.jpg：右页下部题“松葉點”的枝叶图",
+        "support": "example",
+        "note": "细长叶痕沿数条斜枝两侧交错，枝与枝之间有疏空；只补此图的叶形与附枝组织。图题为松叶点，不据此裁定所有松针、松叶点与刺松同式，也不推定统一落针方向。"
       }
     ],
     "name": "松针",
@@ -5468,8 +5634,8 @@ var TECHNIQUE_READINGS = freeze([
     "category": "calligraphy"
   }
 ]);
-function getTechniqueReading(id) {
-  return TECHNIQUE_READINGS.find((note) => note.id === id);
+function getTechniqueReading(id2) {
+  return TECHNIQUE_READINGS.find((note) => note.id === id2);
 }
 
 // src/technique-catalog.ts
@@ -5582,16 +5748,16 @@ var firstBatchReview = Object.freeze({
   scope: "首批回修前归档的弧线样片效果获用户认可；不扩为本轮回修材质、所有笔路、真实毛笔动作或传统技法全义的验收。",
   record: "docs/foundation-review.md"
 });
-function entry(id, name, category, level, target, options = {}) {
-  const reading = getTechniqueReading(id);
-  if (!reading) throw new Error(`Missing technique reading: ${id}`);
-  const previousSources = options.sourceIds ?? (surveyMentions.has(id) ? ["dpm-shan-ink-survey"] : []);
+function entry(id2, name, category, level, target, options = {}) {
+  const reading = getTechniqueReading(id2);
+  if (!reading) throw new Error(`Missing technique reading: ${id2}`);
+  const previousSources = options.sourceIds ?? (surveyMentions.has(id2) ? ["dpm-shan-ink-survey"] : []);
   const sourceIds = [.../* @__PURE__ */ new Set([...previousSources, ...reading.evidence.map((item) => item.sourceId)])];
-  const previousStatus = options.evidence ?? (surveyMentions.has(id) ? "mentioned" : "pending");
+  const previousStatus = options.evidence ?? (surveyMentions.has(id2) ? "mentioned" : "pending");
   const hasDefinition = reading.confidence === "supported" && reading.evidence.some((item) => item.support === "definition");
   const evidenceStatus = hasDefinition ? "definition" : previousStatus === "pending" && sourceIds.length ? "mentioned" : previousStatus;
   return Object.freeze({
-    id,
+    id: id2,
     name,
     aliases: Object.freeze([...options.aliases ?? []]),
     variants: Object.freeze([...options.variants ?? []]),
@@ -5603,7 +5769,7 @@ function entry(id, name, category, level, target, options = {}) {
     entryPoint: options.entryPoint ?? null,
     validation: "unreviewed",
     notes: options.notes ?? "已补逐项阅读笔记；程序实现和作品局部的艺术效果对照分别记录。",
-    ...firstBatchIds.has(id) ? { sampleReview: firstBatchReview } : {},
+    ...firstBatchIds.has(id2) ? { sampleReview: firstBatchReview } : {},
     reading
   });
 }
@@ -5715,8 +5881,8 @@ var TECHNIQUE_CATALOG = Object.freeze([
   entry("eight-zhuo", "啄（短撇）", "calligraphy", "calligraphic-stroke", "研究短撇的迅捷落出及其压力压缩。", { aliases: ["永字八法·啄"] }),
   entry("eight-zhe", "磔（捺）", "calligraphy", "calligraphic-stroke", "研究捺画的渐按、转向与铺毫出锋。", { aliases: ["永字八法·磔"] })
 ]);
-function getTechnique(id) {
-  return TECHNIQUE_CATALOG.find((value) => value.id === id);
+function getTechnique(id2) {
+  return TECHNIQUE_CATALOG.find((value) => value.id === id2);
 }
 function findTechniques(options = {}) {
   if (options.query !== void 0 && typeof options.query !== "string") throw new TypeError("query must be a string");
@@ -5882,10 +6048,10 @@ var supportedOptions2 = /* @__PURE__ */ new Set([
 ]);
 var supportedPlacement = /* @__PURE__ */ new Set(["x", "y", "pressure", "id", "shape", "size", "angle", "controls", "start"]);
 var supportedControl = /* @__PURE__ */ new Set(["at", "pressure", "side", "angle", "dryness", "inkLoad"]);
-function objectFields(value, fields7, name) {
+function objectFields(value, fields10, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
   for (const key of Object.keys(value)) {
-    if (!fields7.has(key)) throw new RangeError(`Unsupported ${name} field: ${key}`);
+    if (!fields10.has(key)) throw new RangeError(`Unsupported ${name} field: ${key}`);
   }
 }
 function finite7(value, name) {
@@ -5969,10 +6135,10 @@ function copyPlacements(positions) {
     return Object.freeze(copy);
   }));
 }
-function hashId(id) {
-  let hash8 = 2166136261;
-  for (let i = 0; i < id.length; i++) hash8 = Math.imul(hash8 ^ id.charCodeAt(i), 16777619);
-  return hash8 >>> 0;
+function hashId(id2) {
+  let hash11 = 2166136261;
+  for (let i = 0; i < id2.length; i++) hash11 = Math.imul(hash11 ^ id2.charCodeAt(i), 16777619);
+  return hash11 >>> 0;
 }
 var proportions = {
   // A broad, short contact needs a shallow tip bend: tighter turns make its
@@ -5987,7 +6153,7 @@ function createContact(position, options, index) {
   const geometry = proportions[pointShape], angle = geometry.heading + options.angle + (position.angle ?? 0);
   finite7(angle, "Combined dot angle");
   const cos = Math.cos(angle), sin = Math.sin(angle), pressure = position.pressure ?? 1;
-  const path2 = [
+  const path4 = [
     { along: 0, across: 0, pressure: 0 },
     { along: 0.28, across: geometry.bend, pressure: 1 },
     { along: 0.7, across: geometry.bend * 0.45, pressure: 0.78 },
@@ -5997,13 +6163,13 @@ function createContact(position, options, index) {
     return { x: position.x + x * cos - y * sin, y: position.y + x * sin + y * cos, pressure: point2.pressure * pressure };
   });
   const { shape: _shape, size: _size, angle: _angle, idPrefix, interval, ...shared } = options;
-  const id = position.id ?? `${idPrefix}-${index + 1}`;
+  const id2 = position.id ?? `${idPrefix}-${index + 1}`;
   const start = position.start ?? options.start + index * interval;
-  return createBrushDocument(path2, {
+  return createBrushDocument(path4, {
     ...shared,
-    id,
+    id: id2,
     width: size * geometry.width,
-    seed: (options.seed ^ hashId(id)) >>> 0,
+    seed: (options.seed ^ hashId(id2)) >>> 0,
     gestureModel: "local-v1",
     smoothing: "catmull-rom",
     start,
@@ -6014,9 +6180,9 @@ function createDotDocument(positions, options = {}) {
   const canonical = canonicalOptions(options), owned = copyPlacements(positions);
   const ids = /* @__PURE__ */ new Set();
   for (const [index, position] of owned.entries()) {
-    const id = position.id ?? `${canonical.idPrefix}-${index + 1}`;
-    if (ids.has(id)) throw new RangeError(`Duplicate dot id: ${id}`);
-    ids.add(id);
+    const id2 = position.id ?? `${canonical.idPrefix}-${index + 1}`;
+    if (ids.has(id2)) throw new RangeError(`Duplicate dot id: ${id2}`);
+    ids.add(id2);
   }
   const documents = Object.freeze(owned.map((position, index) => createContact(position, canonical, index)));
   const recipe = Object.freeze({ version: 1, generator: GENERATOR2, positions: owned, options: canonical });
@@ -6071,7 +6237,7 @@ var strokeOptionFields = /* @__PURE__ */ new Set([
   "controls",
   "gestureModel"
 ]);
-var processOptionFields = /* @__PURE__ */ new Set(["width", "height", "seed", "background", "ink"]);
+var processOptionFields = /* @__PURE__ */ new Set(["width", "height", "seed", "background", "ink", "wetModel"]);
 var pointFields = /* @__PURE__ */ new Set(["x", "y", "pressure"]);
 var vectorFields = /* @__PURE__ */ new Set(["x", "y"]);
 var controlFields = /* @__PURE__ */ new Set(["at", "pressure", "side", "angle", "dryness", "inkLoad"]);
@@ -6150,12 +6316,14 @@ function noise5(seed, along, across) {
 }
 function canonicalOptions2(options) {
   fields(options, processOptionFields, "ink process option");
+  if (options.wetModel !== void 0 && options.wetModel !== "settling-v1") throw new RangeError("Unsupported ink wet model");
   return Object.freeze({
     width: positive4(options.width, "width"),
     height: positive4(options.height, "height"),
     seed: seedValue4(options.seed ?? 1),
     background: colour(options.background ?? "#f5f2e9", "background"),
-    ink: colour(options.ink ?? "#20251f", "ink")
+    ink: colour(options.ink ?? "#20251f", "ink"),
+    ...options.wetModel === void 0 ? {} : { wetModel: options.wetModel }
   });
 }
 function validateStrokeSource(source) {
@@ -6213,13 +6381,13 @@ function createInkProcessDocument(layers, options) {
     const strokes = [], marks = [];
     for (const [index, stroke] of source.strokes.entries()) {
       validateStrokeSource(stroke);
-      const localId = stroke.options?.id ?? `stroke-${index + 1}`, id = `${state.id}/${identifier(localId, "stroke.id")}`;
-      if (markIds.has(id)) throw new RangeError(`Duplicate ink stroke id: ${id}`);
-      markIds.add(id);
+      const localId = stroke.options?.id ?? `stroke-${index + 1}`, id2 = `${state.id}/${identifier(localId, "stroke.id")}`;
+      if (markIds.has(id2)) throw new RangeError(`Duplicate ink stroke id: ${id2}`);
+      markIds.add(id2);
       const document = createBrushDocument(stroke.points, {
         ...stroke.options,
-        id,
-        seed: stroke.options?.seed ?? (canonical.seed ^ hashText2(id)) >>> 0,
+        id: id2,
+        seed: stroke.options?.seed ?? (canonical.seed ^ hashText2(id2)) >>> 0,
         ink: canonical.ink,
         start: 0,
         duration: 0
@@ -6270,8 +6438,15 @@ function validateProcess(process) {
   const immutable = deeplyFrozen(process);
   if (immutable && validated.has(process)) return true;
   if (!process || process.version !== 1) throw new RangeError("Unsupported ink process version");
-  fields(process, /* @__PURE__ */ new Set(["version", "width", "height", "seed", "background", "ink", "layers"]), "ink process");
-  canonicalOptions2({ width: process.width, height: process.height, seed: process.seed, background: process.background, ink: process.ink });
+  fields(process, /* @__PURE__ */ new Set(["version", "width", "height", "seed", "background", "ink", "wetModel", "layers"]), "ink process");
+  canonicalOptions2({
+    width: process.width,
+    height: process.height,
+    seed: process.seed,
+    background: process.background,
+    ink: process.ink,
+    ...process.wetModel === void 0 ? {} : { wetModel: process.wetModel }
+  });
   seedValue4(process.seed);
   colour(process.background, "background");
   colour(process.ink, "ink");
@@ -6319,10 +6494,10 @@ function validateProcess(process) {
   if (immutable) validated.add(process);
   return immutable;
 }
-function inside(x, y, polygon3) {
+function inside(x, y, polygon4) {
   let contained = false;
-  for (let i = 0, j = polygon3.length - 1; i < polygon3.length; j = i++) {
-    const a = polygon3[i], b = polygon3[j];
+  for (let i = 0, j = polygon4.length - 1; i < polygon4.length; j = i++) {
+    const a = polygon4[i], b = polygon4[j];
     if (a.y > y !== b.y > y && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) contained = !contained;
   }
   return contained;
@@ -6335,7 +6510,7 @@ function rasterStroke(mark2, columns, rows, cellSize, paperSeed, edgeSoftness = 
   marginAt.fill(-Infinity);
   const alongAt = new Float64Array(result.length), acrossAt = new Float64Array(result.length);
   const drynessAt = new Float32Array(result.length), loadAt = new Float32Array(result.length);
-  const widthAt = new Float64Array(result.length), sideAt = new Float32Array(result.length);
+  const widthAt2 = new Float64Array(result.length), sideAt = new Float32Array(result.length);
   const samples = sampleBrushContact(mark2);
   const segment = (a, b) => {
     const dx = b.centerX - a.centerX, dy = b.centerY - a.centerY, lengthSquared = dx * dx + dy * dy;
@@ -6352,20 +6527,20 @@ function rasterStroke(mark2, columns, rows, cellSize, paperSeed, edgeSoftness = 
       const t = lengthSquared > 1e-16 ? clamp5(((px - a.centerX) * dx + (py - a.centerY) * dy) / lengthSquared) : 0;
       const halfWidth2 = a.halfWidth + (b.halfWidth - a.halfWidth) * t;
       if (halfWidth2 <= 0) continue;
-      const cx = a.centerX + dx * t, cy = a.centerY + dy * t, distance = Math.hypot(px - cx, py - cy);
-      const edge = clamp5((halfWidth2 - distance) / cellSize + 0.5);
+      const cx = a.centerX + dx * t, cy = a.centerY + dy * t, distance3 = Math.hypot(px - cx, py - cy);
+      const edge = clamp5((halfWidth2 - distance3) / cellSize + 0.5);
       if (edge === 0) continue;
       const index = y * columns + x;
       if (edge > result[index]) result[index] = edge;
-      marginAt[index] = Math.max(marginAt[index], halfWidth2 - distance);
-      if (distance < nearest[index]) {
-        nearest[index] = distance;
+      marginAt[index] = Math.max(marginAt[index], halfWidth2 - distance3);
+      if (distance3 < nearest[index]) {
+        nearest[index] = distance3;
         alongAt[index] = a.distance + (b.distance - a.distance) * t;
         const nx = a.nx + (b.nx - a.nx) * t, ny = a.ny + (b.ny - a.ny) * t;
         acrossAt[index] = ((px - cx) * nx + (py - cy) * ny) / Math.max(1, mark2.width);
         drynessAt[index] = a.dryness + (b.dryness - a.dryness) * t;
         loadAt[index] = a.inkLoad + (b.inkLoad - a.inkLoad) * t;
-        widthAt[index] = halfWidth2;
+        widthAt2[index] = halfWidth2;
         sideAt[index] = a.side + (b.side - a.side) * t;
       }
     }
@@ -6383,13 +6558,13 @@ function rasterStroke(mark2, columns, rows, cellSize, paperSeed, edgeSoftness = 
     const px = (i % columns + 0.5) * cellSize, py = (Math.floor(i / columns) + 0.5) * cellSize;
     const paper = noise5(paperSeed ^ 928523121, px * 0.29 + py * 0.09, py * 0.34);
     const roughSide = clamp5(0.5 + across * sideAt[i] * 2.5);
-    const erosion = Math.min(widthAt[i] * 0.23, 0.35 + mark2.width * 0.028) * (0.1 + paper * 0.42 + shared * 0.48) * (0.7 + roughSide * Math.abs(sideAt[i]) * 1.8);
+    const erosion = Math.min(widthAt2[i] * 0.23, 0.35 + mark2.width * 0.028) * (0.1 + paper * 0.42 + shared * 0.48) * (0.7 + roughSide * Math.abs(sideAt[i]) * 1.8);
     const edge = Math.min(result[i], clamp5((marginAt[i] - erosion) / cellSize + 0.5));
     const body = 0.72 + 0.28 * noise5(paperSeed ^ 328562723, px * 0.17, py * 0.23);
     result[i] = edge * load * mark2.opacity * body * (solid + (1 - solid) * broken);
-    if (interior && result[i] > 0) interior[i] = Math.max(interior[i], clamp5((marginAt[i] - erosion) / Math.max(cellSize, widthAt[i])));
+    if (interior && result[i] > 0) interior[i] = Math.max(interior[i], clamp5((marginAt[i] - erosion) / Math.max(cellSize, widthAt2[i])));
     if (edgeSoftness > 0) {
-      const reach = Math.max(cellSize, widthAt[i]) * edgeSoftness * (0.84 + paper * 0.32);
+      const reach = Math.max(cellSize, widthAt2[i]) * edgeSoftness * (0.84 + paper * 0.32);
       const fade = clamp5((marginAt[i] - erosion) / reach);
       result[i] = result[i] * fade * fade * (3 - 2 * fade);
     }
@@ -6428,7 +6603,7 @@ function prepareMasks(process, columns, rows, cellSize, immutable) {
     return coverage;
   });
   const needsWetMaps = process.layers.some((layer, index) => layer.mode === "wet-mix" && layer.water > 0 && process.layers.slice(0, index).some((earlier) => earlier.water > 0 && earlier.dryAfter > layer.at - earlier.at));
-  const paper = needsWetMaps ? paperField(process.seed, columns, rows, cellSize) : { uptake: new Float32Array(0), horizontal: new Float32Array(0), vertical: new Float32Array(0) };
+  const paper = needsWetMaps || process.wetModel ? paperField(process.seed, columns, rows, cellSize, process.wetModel) : { uptake: new Float32Array(0), horizontal: new Float32Array(0), vertical: new Float32Array(0) };
   const radius = Math.max(1, Math.min(8, Math.ceil(7 / cellSize)));
   const wetLayers = needsWetMaps ? layers.map((layer) => spread(layer, columns, rows, radius, paper)) : [];
   const masks = { columns, rows, layers, wetLayers, paper };
@@ -6443,13 +6618,17 @@ function prepareMasks(process, columns, rows, cellSize, immutable) {
   }
   return masks;
 }
-function paperField(seed, columns, rows, cellSize) {
+function paperField(seed, columns, rows, cellSize, model) {
   const uptake = new Float32Array(columns * rows), horizontal = new Float32Array(uptake.length), vertical = new Float32Array(uptake.length);
   for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
     const px = (x + 0.5) * cellSize, py = (y + 0.5) * cellSize, i = y * columns + x;
     const coarse = noise5(seed ^ 1831565813, px / 11, py / 11);
     const grain = noise5(seed ^ 73244475, px / 3.2 + py / 17, py / 4.7);
     uptake[i] = clamp5((coarse * 0.65 + grain * 0.35 - 0.18) / 0.65);
+    if (model) {
+      const field = getFractalNoise2D(px / 31 + 7.17, py / 27 + 11.31, seed ^ 1922716147, 4);
+      uptake[i] = clamp5(0.45 + field * 0.64 + (grain - 0.5) * 0.25);
+    }
     const angle = (noise5(seed ^ 295559667, px / 43, py / 43) - 0.5) * Math.PI;
     horizontal[i] = 0.22 + 0.78 * Math.cos(angle) ** 2;
     vertical[i] = 0.22 + 0.78 * Math.sin(angle) ** 2;
@@ -6460,8 +6639,8 @@ function spread(mask, columns, rows, radius, paper) {
   const result = new Float32Array(mask.length);
   const stencil = [];
   for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
-    const distance = Math.hypot(dx, dy);
-    if (distance < radius + 0.25) stencil.push({ dx, dy, weight: clamp5((radius + 0.25 - distance) / Math.max(1, radius * 0.65)) });
+    const distance3 = Math.hypot(dx, dy);
+    if (distance3 < radius + 0.25) stencil.push({ dx, dy, weight: clamp5((radius + 0.25 - distance3) / Math.max(1, radius * 0.65)) });
   }
   for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
     const i = y * columns + x;
@@ -6566,6 +6745,168 @@ function depositAtFront(density, mobility, front, columns, rows, cellSize, paper
     for (let i = 0; i < density.length; i++) density[i] = density[i] + change[i];
   }
 }
+function carryToWetFront(pigment, mobility, front, columns, rows, cellSize, paper, seed) {
+  const targets = new Int32Array(pigment.length);
+  targets.fill(-1);
+  const release = new Float32Array(pigment.length);
+  const gradientReach = Math.max(1, Math.min(8, Math.round(5 / cellSize)));
+  const reach = Math.max(2, Math.min(24, Math.round(14 / cellSize)));
+  const at2 = (x, y) => front[Math.max(0, Math.min(rows - 1, y)) * columns + Math.max(0, Math.min(columns - 1, x))];
+  for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
+    const i = y * columns + x, wet = front[i];
+    if (wet <= 0 || mobility[i] <= 0) continue;
+    const px = (x + 0.5) * cellSize, py = (y + 0.5) * cellSize;
+    const field = noise5(seed ^ 2170462527, px / 21 + 4.7, py / 25 + 7.3) - 0.5;
+    let dx = at2(x - gradientReach, y) - at2(x + gradientReach, y);
+    let dy = at2(x, y - gradientReach) - at2(x, y + gradientReach);
+    dx += field * 0.18;
+    dy += (noise5(seed ^ 1132114217, px / 27 + 13.1, py / 19 + 19.7) - 0.5) * 0.18;
+    dx *= paper.horizontal[i];
+    dy *= paper.vertical[i];
+    const magnitude = Math.hypot(dx, dy);
+    if (magnitude < 1e-8) continue;
+    dx /= magnitude;
+    dy /= magnitude;
+    let target = -1;
+    for (let step = 1; step <= reach; step++) {
+      const tx = Math.round(x + dx * step), ty = Math.round(y + dy * step);
+      if (tx < 0 || tx >= columns || ty < 0 || ty >= rows) break;
+      const next = ty * columns + tx;
+      if (mobility[next] <= 0 || front[next] <= 0) break;
+      target = next;
+      if (front[next] < wet * (0.3 + paper.uptake[next] * 0.25)) break;
+    }
+    if (target !== -1 && target !== i) {
+      targets[i] = target;
+      const segment = clamp5((0.26 + field * 1.4 + (paper.uptake[target] - 0.5) * 0.4) / 0.45);
+      release[i] = 0.68 * Math.sqrt(clamp5(front[i])) * (0.65 + paper.uptake[target] * 0.35) * segment;
+    }
+  }
+  const change = new Float64Array(pigment.length);
+  for (let step = 0; step < 2; step++) {
+    change.fill(0);
+    for (let i = 0; i < pigment.length; i++) {
+      const target = targets[i];
+      if (target < 0) continue;
+      const amount = pigment[i] * release[i];
+      change[i] = change[i] - amount;
+      change[target] = change[target] + amount;
+    }
+    for (let i = 0; i < pigment.length; i++) pigment[i] = pigment[i] + change[i];
+  }
+}
+function rasterizeSettling(process, masks, activeLayers, cellSize) {
+  const { columns, rows, paper } = masks, size = columns * rows;
+  const mobile = [], settled = [];
+  let interactions = 0, previousAt = 0;
+  const frontAt = (front, x, y) => front[Math.max(0, Math.min(rows - 1, y)) * columns + Math.max(0, Math.min(columns - 1, x))];
+  for (let index = 0; index < activeLayers; index++) {
+    const layer = process.layers[index];
+    for (let contributor = 0; contributor < index; contributor++) {
+      const source = process.layers[contributor];
+      const age = source.dryAfter > 0 ? clamp5((layer.at - source.at) / source.dryAfter) : 1;
+      const oldAge = source.dryAfter > 0 ? clamp5((previousAt - source.at) / source.dryAfter) : 1;
+      for (let i = 0; i < size; i++) {
+        const exponent = 1.1 + paper.uptake[i] * 1.6;
+        const ratio = oldAge < 1 ? Math.pow((1 - age) / (1 - oldAge), exponent) : 0;
+        const amount = mobile[contributor][i] * (1 - ratio);
+        mobile[contributor][i] = mobile[contributor][i] - amount;
+        settled[contributor][i] = settled[contributor][i] + amount;
+      }
+    }
+    previousAt = layer.at;
+    const moving = new Float32Array(size), bound = new Float32Array(size);
+    for (let i = 0; i < size; i++) {
+      const amount = masks.layers[index][i] * layer.concentration * 2.6;
+      const release = layer.dryAfter > 0 ? layer.water * (0.76 - paper.uptake[i] * 0.22) : 0;
+      moving[i] = amount * release;
+      bound[i] = amount - moving[i];
+    }
+    mobile.push(moving);
+    settled.push(bound);
+    if (layer.mode !== "wet-mix" || layer.water === 0) continue;
+    const previousWater = new Float32Array(size), contributors = [index];
+    for (let earlier = 0; earlier < index; earlier++) {
+      const source = process.layers[earlier];
+      if (source.water === 0 || source.dryAfter === 0 || layer.at - source.at >= source.dryAfter) continue;
+      const remaining = source.water * (1 - (layer.at - source.at) / source.dryAfter);
+      const wet = masks.wetLayers[earlier];
+      for (let i = 0; i < size; i++) previousWater[i] = Math.max(previousWater[i], wet[i] * remaining);
+      contributors.push(earlier);
+    }
+    if (contributors.length === 1) continue;
+    const incoming = masks.wetLayers[index], mobility = new Float32Array(size), front = new Float32Array(size);
+    let affected = false;
+    for (let i = 0; i < size; i++) {
+      const x = (i % columns + 0.5) * cellSize, y = (Math.floor(i / columns) + 0.5) * cellSize;
+      const field = getFractalNoise2D(x / 29 + 17.3, y / 23 + 9.7, process.seed ^ hashText2(layer.id), 4);
+      const irregular = clamp5(0.58 + field * 0.65);
+      mobility[i] = Math.min(previousWater[i], incoming[i] * layer.water) * irregular;
+      front[i] = Math.min(previousWater[i], incoming[i] * layer.water);
+      if (mobility[i] > 0) affected = true;
+    }
+    if (!affected) continue;
+    const steps = Math.max(8, Math.min(64, Math.round(64 / cellSize)));
+    for (const contributor of contributors) {
+      if (process.layers[contributor].concentration === 0) continue;
+      const pigment = mobile[contributor];
+      carryToWetFront(pigment, mobility, front, columns, rows, cellSize, paper, process.seed ^ hashText2(layer.id));
+      exchange(pigment, mobility, columns, rows, steps, paper);
+      depositAtFront(
+        pigment,
+        mobility,
+        front,
+        columns,
+        rows,
+        cellSize,
+        paper,
+        process.seed ^ hashText2(layer.id),
+        layer.marks
+      );
+      for (let y = 0; y < rows; y++) for (let x = 0; x < columns; x++) {
+        const i = y * columns + x, center = front[i];
+        if (center <= 0 || mobility[i] <= 0) continue;
+        const neighbour = Math.max(
+          frontAt(front, x - 2, y),
+          frontAt(front, x + 2, y),
+          frontAt(front, x, y - 2),
+          frontAt(front, x, y + 2)
+        );
+        const edge = clamp5((neighbour - center) / Math.max(0.01, neighbour));
+        const amount = pigment[i] * edge * (0.08 + paper.uptake[i] * 0.32);
+        pigment[i] = pigment[i] - amount;
+        settled[contributor][i] = settled[contributor][i] + amount;
+      }
+    }
+    interactions++;
+  }
+  const mobileDensity = new Float32Array(size), settledDensity = new Float32Array(size);
+  const density = new Float32Array(size), wetness = new Float32Array(size);
+  for (let index = 0; index < activeLayers; index++) {
+    const source = process.layers[index];
+    const remaining = source.dryAfter > 0 ? source.water * (1 - clamp5((previousAt - source.at) / source.dryAfter)) : 0;
+    const wet = masks.wetLayers[index] ?? masks.layers[index];
+    for (let i = 0; i < size; i++) {
+      mobileDensity[i] = mobileDensity[i] + mobile[index][i];
+      settledDensity[i] = settledDensity[i] + settled[index][i];
+      wetness[i] = Math.max(wetness[i], clamp5(wet[i] * remaining));
+    }
+  }
+  for (let i = 0; i < size; i++) density[i] = mobileDensity[i] + settledDensity[i];
+  return {
+    width: process.width,
+    height: process.height,
+    columns,
+    rows,
+    cellSize,
+    density,
+    activeLayers,
+    interactions,
+    mobileDensity,
+    settledDensity,
+    wetness
+  };
+}
 function rasterizeInkProcess(process, options = {}) {
   fields(options, /* @__PURE__ */ new Set(["time", "cellSize"]), "ink raster option");
   if (options.time !== void 0) finite8(options.time, "time");
@@ -6574,6 +6915,7 @@ function rasterizeInkProcess(process, options = {}) {
   if (!Number.isSafeInteger(columns * rows) || columns * rows > MAX_CELLS) throw new RangeError("Ink raster supports at most 262144 cells; increase cellSize");
   const masks = prepareMasks(process, columns, rows, cellSize, immutable), density = new Float32Array(columns * rows);
   const activeLayers = process.layers.filter((layer) => options.time === void 0 || layer.at <= options.time).length;
+  if (process.wetModel === "settling-v1") return rasterizeSettling(process, masks, activeLayers, cellSize);
   const contributions = [];
   let interactions = 0;
   for (let index = 0; index < activeLayers; index++) {
@@ -6697,7 +7039,7 @@ var GENERATOR4 = "water-event-process-v1";
 var commonFields = ["kind", "id", "water", "at", "dryAfter", "mode", "strokes", "edgeSoftness", "edgeDeposit", "edgeWidth"];
 var inkFields = /* @__PURE__ */ new Set([...commonFields, "concentration"]);
 var waterFields = /* @__PURE__ */ new Set([...commonFields, "droplets"]);
-var optionFields = /* @__PURE__ */ new Set(["width", "height", "seed", "background", "ink"]);
+var optionFields = /* @__PURE__ */ new Set(["width", "height", "seed", "background", "ink", "wetModel"]);
 var dropletFields = /* @__PURE__ */ new Set(["id", "x", "y", "radius"]);
 function fields2(value, allowed, name) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
@@ -6872,9 +7214,9 @@ function colour2(value, name) {
   return value.toLowerCase();
 }
 function hashText3(value) {
-  let hash8 = 2166136261;
-  for (let i = 0; i < value.length; i++) hash8 = Math.imul(hash8 ^ value.charCodeAt(i), 16777619);
-  return hash8 >>> 0;
+  let hash11 = 2166136261;
+  for (let i = 0; i < value.length; i++) hash11 = Math.imul(hash11 ^ value.charCodeAt(i), 16777619);
+  return hash11 >>> 0;
 }
 function validateProgram(options) {
   fields3(options, programFields, "cun option");
@@ -7172,9 +7514,9 @@ function colour3(value, name) {
   return value.toLowerCase();
 }
 function hashText4(value) {
-  let hash8 = 2166136261;
-  for (let i = 0; i < value.length; i++) hash8 = Math.imul(hash8 ^ value.charCodeAt(i), 16777619);
-  return hash8 >>> 0;
+  let hash11 = 2166136261;
+  for (let i = 0; i < value.length; i++) hash11 = Math.imul(hash11 ^ value.charCodeAt(i), 16777619);
+  return hash11 >>> 0;
 }
 function validateProgram2(options) {
   fields4(options, programFields2, "vegetation option");
@@ -7207,8 +7549,8 @@ function validateStroke(source) {
     for (const control of source.options.controls) fields4(control, controlFields3, "vegetation control");
   }
 }
-function createSplitVegetationUnit(id, source, bundles) {
-  text4(id, "vegetation unit id");
+function createSplitVegetationUnit(id2, source, bundles) {
+  text4(id2, "vegetation unit id");
   validateStroke(source);
   if (!Array.isArray(bundles) || bundles.length < 2 || bundles.length > 32) throw new RangeError("Split contact supports 2..32 bundles");
   const ids = /* @__PURE__ */ new Set();
@@ -7266,7 +7608,7 @@ function createSplitVegetationUnit(id, source, bundles) {
       options: Object.freeze({ ...sparse, width: bundle.width })
     });
   });
-  return Object.freeze({ id, strokes: Object.freeze(strokes) });
+  return Object.freeze({ id: id2, strokes: Object.freeze(strokes) });
 }
 function contactPreset2(technique, structure) {
   if (structure) return {
@@ -7349,7 +7691,7 @@ function createVegetationDocument(units, options) {
     const structure = source.role === "structure", preset = structure ? { width: 2.4, dryness: 0.5, opacity: 0.65 } : defaults2[options.technique];
     const strokes = [];
     for (const stroke of source.strokes) {
-      const id = `${source.id.length}:${source.id}/${stroke.id.length}:${stroke.id}`;
+      const id2 = `${source.id.length}:${source.id}/${stroke.id.length}:${stroke.id}`;
       const overrides = Object.fromEntries(Object.entries(stroke.options ?? {}).filter(([, value]) => value !== void 0));
       const brush = createBrushDocument(stroke.points, {
         ...contactPreset2(options.technique, structure),
@@ -7358,8 +7700,8 @@ function createVegetationDocument(units, options) {
         opacity: options.opacity ?? preset.opacity,
         strength: options.strength ?? 1,
         ...overrides,
-        id,
-        seed: (scene.seed ^ hashText4(id)) >>> 0,
+        id: id2,
+        seed: (scene.seed ^ hashText4(id2)) >>> 0,
         ink: colour3(options.ink ?? "#20251f", "ink"),
         gestureModel: "local-v1"
       });
@@ -7500,12 +7842,12 @@ function validateParents(groups) {
   const finished = /* @__PURE__ */ new Set();
   for (const group of groups) {
     const visiting = /* @__PURE__ */ new Set();
-    let id = group.id;
-    while (id !== void 0 && !finished.has(id)) {
-      if (!lookup.has(id)) throw new RangeError(`Unknown parent group: ${id}`);
-      if (visiting.has(id)) throw new RangeError("Group parents must be acyclic");
-      visiting.add(id);
-      id = lookup.get(id);
+    let id2 = group.id;
+    while (id2 !== void 0 && !finished.has(id2)) {
+      if (!lookup.has(id2)) throw new RangeError(`Unknown parent group: ${id2}`);
+      if (visiting.has(id2)) throw new RangeError("Group parents must be acyclic");
+      visiting.add(id2);
+      id2 = lookup.get(id2);
     }
     for (const item of visiting) finished.add(item);
   }
@@ -7563,7 +7905,7 @@ function createStrokeGroupDocument(groups, options) {
         );
       }
       const overrides = Object.fromEntries(Object.entries(stroke.options ?? {}).filter(([, value]) => value !== void 0));
-      const id = `${group.id.length}:${group.id}/${stroke.id.length}:${stroke.id}`;
+      const id2 = `${group.id.length}:${group.id}/${stroke.id.length}:${stroke.id}`;
       const brush = createBrushDocument(stroke.points, {
         width: options.strokeWidth ?? 3,
         dryness: options.dryness ?? 0.35,
@@ -7571,8 +7913,8 @@ function createStrokeGroupDocument(groups, options) {
         ink: colour4(options.ink ?? "#252820"),
         gestureModel: "local-v1",
         ...overrides,
-        id,
-        seed: (seed ^ hash6(id)) >>> 0
+        id: id2,
+        seed: (seed ^ hash6(id2)) >>> 0
       });
       const sparse = Object.fromEntries(Object.keys(overrides).map((key) => [
         key,
@@ -7688,8 +8030,8 @@ function settings(options, kind) {
     ink: colour5(options.ink ?? "#252b24")
   };
 }
-function mark(id, points, width, options = {}) {
-  return { id, points, options: { width, opacity: 0.78, dryness: 0.5, smoothing: "catmull-rom", gestureModel: "local-v1", duration: 0, ...options } };
+function mark(id2, points, width, options = {}) {
+  return { id: id2, points, options: { width, opacity: 0.78, dryness: 0.5, smoothing: "catmull-rom", gestureModel: "local-v1", duration: 0, ...options } };
 }
 function finish(kind, groups, attachments, seed) {
   if (groups.reduce((sum, g) => sum + g.strokes.length, 0) > 512) throw new RangeError("A subject macro cannot exceed 512 strokes");
@@ -7703,12 +8045,12 @@ function finish(kind, groups, attachments, seed) {
 }
 function station(points, at2) {
   const lengths = points.slice(1).map((b, i) => Math.hypot(b.x - points[i].x, b.y - points[i].y));
-  const total = lengths.reduce((a, b) => a + b, 0), distance = total * at2;
+  const total = lengths.reduce((a, b) => a + b, 0), distance3 = total * at2;
   let before = 0;
   for (let i = 0; i < lengths.length; i++) {
     const length = lengths[i];
-    if (length > 0 && (before + length >= distance || i === lengths.length - 1)) {
-      const a = points[i], b = points[i + 1], t = Math.max(0, Math.min(1, (distance - before) / length));
+    if (length > 0 && (before + length >= distance3 || i === lengths.length - 1)) {
+      const a = points[i], b = points[i + 1], t = Math.max(0, Math.min(1, (distance3 - before) / length));
       return { point: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, pressure: (a.pressure ?? 1) * (1 - t) + (b.pressure ?? 1) * t }, tangent: { x: (b.x - a.x) / length, y: (b.y - a.y) / length } };
     }
     before += length;
@@ -7721,10 +8063,10 @@ function branchStation(points, at2) {
     let best = 0, error = Infinity;
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i], b = points[i + 1], length = Math.hypot(b.x - a.x, b.y - a.y);
-      const distance = Math.abs(Math.hypot(result.point.x - a.x, result.point.y - a.y) + Math.hypot(b.x - result.point.x, b.y - result.point.y) - length);
-      if (distance < error) {
+      const distance3 = Math.abs(Math.hypot(result.point.x - a.x, result.point.y - a.y) + Math.hypot(b.x - result.point.x, b.y - result.point.y) - length);
+      if (distance3 < error) {
         best = i;
-        error = distance;
+        error = distance3;
       }
     }
     points.splice(best + 1, 0, result.point);
@@ -7748,12 +8090,12 @@ function createTreeMacro(options = {}) {
       lookup.set(branch.id, branch);
     }
     const resolved = /* @__PURE__ */ new Map(), visiting = /* @__PURE__ */ new Set();
-    const resolve = (id) => {
-      if (resolved.has(id)) return resolved.get(id);
-      if (visiting.has(id)) throw new RangeError("Branch parents must be acyclic");
-      const source = lookup.get(id);
+    const resolve = (id2) => {
+      if (resolved.has(id2)) return resolved.get(id2);
+      if (visiting.has(id2)) throw new RangeError("Branch parents must be acyclic");
+      const source = lookup.get(id2);
       if (!source) throw new RangeError("Unknown parent branch");
-      visiting.add(id);
+      visiting.add(id2);
       let points = path(source.points), parent;
       if (source.parentId !== void 0) {
         parent = resolve(text6(source.parentId));
@@ -7764,40 +8106,40 @@ function createTreeMacro(options = {}) {
       const branchWidth = positive7(source.width ?? (parent ? parent.width * 0.56 : width), "branch width");
       if (parent && branchWidth >= parent.width) throw new RangeError("Child branch width must be smaller than its parent");
       points = points.map((p, i) => ({ ...p, pressure: i === points.length - 1 ? 0 : p.pressure ?? 0.88 - i / points.length * 0.18 }));
-      const branch = { id, points, width: branchWidth, ...source.parentId === void 0 ? {} : { parentId: source.parentId, attachAt: source.attachAt ?? 0.78 } };
-      resolved.set(id, branch);
-      visiting.delete(id);
+      const branch = { id: id2, points, width: branchWidth, ...source.parentId === void 0 ? {} : { parentId: source.parentId, attachAt: source.attachAt ?? 0.78 } };
+      resolved.set(id2, branch);
+      visiting.delete(id2);
       return branch;
     };
     for (const source of options.branches) resolve(source.id);
     branches.push(...resolved.values());
   } else {
-    const grow = (id, p, a, length, w, level, parent, at2) => {
-      const random = createRandom(s.seed ^ hash7(id)), bend = (random() - 0.5) * 0.24;
+    const grow = (id2, p, a, length, w, level, parent, at2) => {
+      const random = createRandom(s.seed ^ hash7(id2)), bend = (random() - 0.5) * 0.24;
       const points = [{ ...p, pressure: 0.9 }, ...[0.32, 0.7, 1].map((t, i) => ({ x: p.x + Math.cos(a + bend * t) * length * t, y: p.y + Math.sin(a + bend * t) * length * t, pressure: [0.96, 0.63, 0][i] }))];
-      const branch = { id, points, width: w, ...parent ? { parentId: parent.id, attachAt: at2 } : {} };
+      const branch = { id: id2, points, width: w, ...parent ? { parentId: parent.id, attachAt: at2 } : {} };
       branches.push(branch);
-      if (level < depth) for (const [index, side] of [-1, 1].entries()) {
+      if (level < depth) for (const [index, side2] of [-1, 1].entries()) {
         const at3 = 0.64 + random() * 0.18, anchor = branchStation(points, at3).point;
-        grow(`${id}.${index}`, anchor, a + side * (Math.PI / 12 + random() * Math.PI / 12), length * (0.57 + random() * 0.14), w * (0.48 + random() * 0.13), level + 1, branch, at3);
+        grow(`${id2}.${index}`, anchor, a + side2 * (Math.PI / 12 + random() * Math.PI / 12), length * (0.57 + random() * 0.14), w * (0.48 + random() * 0.13), level + 1, branch, at3);
       }
     };
     grow("root", start, angle, size, width, 0);
   }
   const groups = [], attachments = [];
   for (const branch of branches) {
-    const id = `${s.id.length}:${s.id}/branch/${branch.id}`, random = createRandom(s.seed ^ hash7(id));
+    const id2 = `${s.id.length}:${s.id}/branch/${branch.id}`, random = createRandom(s.seed ^ hash7(id2));
     const strokes = [mark("body", branch.points, branch.width, { ink: s.ink, opacity: style === "dry" ? 0.42 : 0.55, dryness: style === "dry" ? 0.5 : 0.22 })];
-    const grain = jitterPath(branch.points.map((p, i) => ({ ...p, pressure: i === branch.points.length - 1 ? 0 : (p.pressure ?? 1) * (0.28 + random() * 0.37) })), branch.width * 0.05, { seed: s.seed ^ hash7(`${id}/grain`), wavelength: Math.max(1, branch.width) });
+    const grain = jitterPath(branch.points.map((p, i) => ({ ...p, pressure: i === branch.points.length - 1 ? 0 : (p.pressure ?? 1) * (0.28 + random() * 0.37) })), branch.width * 0.05, { seed: s.seed ^ hash7(`${id2}/grain`), wavelength: Math.max(1, branch.width) });
     strokes.push(mark("grain", grain, branch.width * 0.38, { ink: s.ink, opacity: 0.7, dryness: 0.82, axis: "side" }));
     if (branch.parentId && random() > 0.42) {
       const p = branch.points[0], t = station(branch.points, 0.1).tangent, reach = branch.width * 0.8;
       strokes.push(mark("joint", [{ x: p.x - t.x * reach * 0.2, y: p.y - t.y * reach * 0.2, pressure: 0.25 }, { ...p, pressure: 0.82 }, { x: p.x + t.x * reach, y: p.y + t.y * reach, pressure: 0 }], branch.width * 1.25, { ink: s.ink, opacity: 0.49, dryness: 0.15 }));
     }
-    groups.push({ id, role: "structure", ...branch.parentId ? { parentId: `${s.id.length}:${s.id}/branch/${branch.parentId}` } : {}, strokes });
+    groups.push({ id: id2, role: "structure", ...branch.parentId ? { parentId: `${s.id.length}:${s.id}/branch/${branch.parentId}` } : {}, strokes });
     attachments.push(
-      { id: `${branch.id}:root`, groupId: id, point: branch.points[0], tangent: station(branch.points, 0).tangent },
-      { id: `${branch.id}:tip`, groupId: id, point: branch.points.at(-1), tangent: station(branch.points, 1).tangent }
+      { id: `${branch.id}:root`, groupId: id2, point: branch.points[0], tangent: station(branch.points, 0).tangent },
+      { id: `${branch.id}:tip`, groupId: id2, point: branch.points.at(-1), tangent: station(branch.points, 1).tangent }
     );
   }
   return finish("tree", groups, attachments, s.seed);
@@ -7829,8 +8171,8 @@ function createRockMacro(options = {}) {
     if (!pointInPolygon(p, region)) continue;
     const direction = options.flow ? point(options.flow({ ...p })) : { x: 0.24 + (p.x - left) / Math.max(w, 1) * 0.24, y: 1 }, length = Math.hypot(direction.x, direction.y);
     if (length <= 0) throw new RangeError("Rock flow must be nonzero");
-    const tx = direction.x / length, ty = direction.y / length, reach = scale * (0.09 + random() * 0.18), side = (random() - 0.5) * scale * 0.07;
-    texture.push(mark(`facet/${texture.length}`, [{ ...p, pressure: 0.65 }, { x: p.x + tx * reach * 0.55 - ty * side, y: p.y + ty * reach * 0.55 + tx * side, pressure: 0.8 }, { x: p.x + tx * reach, y: p.y + ty * reach, pressure: 0 }], scale * (0.025 + random() * 0.035), { ink: s.ink, opacity: 0.3 + random() * 0.36, dryness: 0.61 + random() * 0.25, axis: "side", smoothing: "linear", clip: region }));
+    const tx = direction.x / length, ty = direction.y / length, reach = scale * (0.09 + random() * 0.18), side2 = (random() - 0.5) * scale * 0.07;
+    texture.push(mark(`facet/${texture.length}`, [{ ...p, pressure: 0.65 }, { x: p.x + tx * reach * 0.55 - ty * side2, y: p.y + ty * reach * 0.55 + tx * side2, pressure: 0.8 }, { x: p.x + tx * reach, y: p.y + ty * reach, pressure: 0 }], scale * (0.025 + random() * 0.035), { ink: s.ink, opacity: 0.3 + random() * 0.36, dryness: 0.61 + random() * 0.25, axis: "side", smoothing: "linear", clip: region }));
   }
   if (texture.length) groups.push({ id: `${s.id.length}:${s.id}/texture`, role: "mark", parentId: `${s.id.length}:${s.id}/bones`, strokes: texture });
   const anchors = options.mossAnchors?.map(point) ?? outline.filter((p) => p.y <= top + h * 0.35);
@@ -7865,7 +8207,7 @@ function createBirdMacro(options = {}) {
   if (options.parts) fields6(options.parts, birdParts, "bird part");
   const flip = facing === "left" ? 1 : -1, c = Math.cos(angle), sn = Math.sin(angle);
   const transform = ([x, y, p = 1]) => ({ x: origin.x + (x * flip * c - y * sn) * size, y: origin.y + (x * flip * sn + y * c) * size, pressure: p });
-  const draw = (id, values, width, extra = {}) => mark(id, values.map(transform), width * size, { ink: s.ink, ...extra });
+  const draw = (id2, values, width, extra = {}) => mark(id2, values.map(transform), width * size, { ink: s.ink, ...extra });
   const h = pose === "looking-up" ? [-0.22, -0.64] : pose === "looking-down" ? [-0.39, -0.39] : [-0.31, -0.51], hx = h[0], hy = h[1];
   const beak = pose === "looking-up" ? [-0.12, -0.2] : pose === "looking-down" ? [-0.22, 0.16] : [-0.25, 0.045];
   const parts = { tail: [], back: [], wing: [], head: [], beak: [], feet: [], eye: [] };
@@ -7891,6 +8233,730 @@ function createBirdMacro(options = {}) {
   }
   const feet = groups.find((g) => g.id === `${s.id.length}:${s.id}/feet`) ?? groups[0];
   return finish("bird", groups, feet ? [{ id: "perch", groupId: feet.id, point: origin, tangent: { x: c, y: sn } }] : [], s.seed);
+}
+
+// src/bark-document.ts
+var GENERATOR7 = "ink-bark-groups-v1";
+var branchFields = ["id", "points", "width", "leftEdge", "rightEdge", "shadowSide", "knots", "junctions"];
+var knotFields = ["id", "at", "side", "offset", "size", "count", "kind"];
+var documentFields = ["width", "height", "seed", "background", "ink", "strokeWidth", "dryness", "opacity"];
+var optionFields2 = [...documentFields, "idPrefix", "contourWidth", "textureStrength"];
+var clamp6 = (value) => Math.max(0, Math.min(1, value));
+function fields7(value, allowed, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
+  for (const key of Object.keys(value)) if (!allowed.includes(key) || value[key] === null) throw new RangeError(`Unsupported ${name} field: ${key}`);
+}
+function finite13(value, name) {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(`${name} must be finite`);
+  return value;
+}
+function range2(value, min, max, name) {
+  if (finite13(value, name) < min || value > max) throw new RangeError(`${name} must be in ${min}..${max}`);
+  return value;
+}
+function positive8(value, name) {
+  if (finite13(value, name) <= 0) throw new RangeError(`${name} must be positive`);
+  return value;
+}
+function identifier2(value) {
+  if (typeof value !== "string" || !value.trim()) throw new TypeError("Bark IDs must be nonempty strings");
+  return value;
+}
+function side(value) {
+  if (value !== -1 && value !== 1) throw new RangeError("Bark side must be -1 or 1");
+  return value;
+}
+function hash8(value) {
+  let key = 2166136261;
+  for (let i = 0; i < value.length; i++) key = Math.imul(key ^ value.charCodeAt(i), 16777619);
+  return key >>> 0;
+}
+function ownedPath(values) {
+  if (!Array.isArray(values) || values.length < 2 || values.length > 4096) throw new RangeError("Bark paths need 2..4096 points");
+  const copied = values.map((point2) => {
+    fields7(point2, ["x", "y", "pressure"], "bark point");
+    return Object.freeze({
+      x: finite13(point2.x, "x"),
+      y: finite13(point2.y, "y"),
+      ...point2.pressure === void 0 ? {} : { pressure: range2(point2.pressure, 0, 1, "pressure") }
+    });
+  });
+  const samples = sampleStrokePath(copied, { spacing: Number.MAX_VALUE });
+  if (samples.at(-1).distance <= 1e-8) throw new RangeError("Bark paths need nonzero length");
+  return Object.freeze(copied);
+}
+function ownedWidth(value) {
+  if (typeof value === "number") return positive8(value, "branch width");
+  if (!Array.isArray(value) || value.length < 1 || value.length > 64) throw new RangeError("Bark width needs a number or 1..64 controls");
+  let previous = -1;
+  return Object.freeze(value.map((control) => {
+    fields7(control, ["at", "width"], "bark width control");
+    const at2 = range2(control.at, 0, 1, "width.at");
+    if (at2 <= previous) throw new RangeError("Bark width controls must have increasing positions");
+    previous = at2;
+    return Object.freeze({ at: at2, width: positive8(control.width, "width.width") });
+  }));
+}
+function ownedBranches(values) {
+  if (!Array.isArray(values) || values.length < 1 || values.length > 16) throw new RangeError("Bark documents need 1..16 branches");
+  const branchIds = /* @__PURE__ */ new Set();
+  let knotCount = 0, strokeBudget = values.length * 2;
+  return Object.freeze(values.map((branch) => {
+    fields7(branch, branchFields, "bark branch");
+    const id2 = identifier2(branch.id);
+    if (branchIds.has(id2)) throw new RangeError("Duplicate bark branch ID");
+    branchIds.add(id2);
+    if (branch.shadowSide !== void 0) side(branch.shadowSide);
+    const knots = branch.knots ?? [], junctions = branch.junctions ?? [];
+    if (!Array.isArray(knots) || !Array.isArray(junctions) || junctions.length > 16) throw new RangeError("Bark knots and junctions must be bounded arrays");
+    knotCount += knots.length;
+    if (knotCount > 24) throw new RangeError("Bark documents support at most 24 knots");
+    const knotIds = /* @__PURE__ */ new Set(), junctionIds = /* @__PURE__ */ new Set();
+    const copiedKnots = knots.map((knot) => {
+      fields7(knot, knotFields, "bark knot");
+      const id3 = identifier2(knot.id);
+      if (knotIds.has(id3)) throw new RangeError("Duplicate bark knot ID");
+      knotIds.add(id3);
+      range2(knot.at, 0, 1, "knot.at");
+      if (knot.side !== void 0) side(knot.side);
+      if (knot.offset !== void 0) range2(knot.offset, -1, 1, "knot.offset");
+      if (knot.size !== void 0) range2(knot.size, 0.1, 2, "knot.size");
+      const count = range2(knot.count ?? 8, 2, 20, "knot.count");
+      if (!Number.isInteger(count)) throw new RangeError("Knot count must be an integer");
+      if (knot.kind !== void 0 && !["knot", "cavity"].includes(knot.kind)) throw new RangeError("Unknown bark knot kind");
+      strokeBudget += count + 3;
+      if (strokeBudget > 512) throw new RangeError("Bark document exceeds the 512 stroke budget");
+      return Object.freeze({ ...knot });
+    });
+    const copiedJunctions = junctions.map((junction) => {
+      fields7(junction, ["id", "at", "side", "span"], "bark junction");
+      const id3 = identifier2(junction.id);
+      if (junctionIds.has(id3)) throw new RangeError("Duplicate bark junction ID");
+      junctionIds.add(id3);
+      return Object.freeze({ id: id3, at: range2(junction.at, 0, 1, "junction.at"), side: side(junction.side), span: range2(junction.span, 0, 1, "junction.span") });
+    });
+    return Object.freeze({
+      id: id2,
+      points: ownedPath(branch.points),
+      width: ownedWidth(branch.width),
+      ...branch.leftEdge === void 0 ? {} : { leftEdge: ownedPath(branch.leftEdge) },
+      ...branch.rightEdge === void 0 ? {} : { rightEdge: ownedPath(branch.rightEdge) },
+      ...branch.shadowSide === void 0 ? {} : { shadowSide: branch.shadowSide },
+      ...branch.knots === void 0 ? {} : { knots: Object.freeze(copiedKnots) },
+      ...branch.junctions === void 0 ? {} : { junctions: Object.freeze(copiedJunctions) }
+    });
+  }));
+}
+function widthAt(branch, at2) {
+  if (typeof branch.width === "number") return branch.width;
+  const controls = branch.width;
+  for (let i = 1; i < controls.length; i++) {
+    const left = controls[i - 1], right = controls[i];
+    if (at2 <= right.at) {
+      const t = clamp6((at2 - left.at) / (right.at - left.at));
+      return left.width * (1 - t) + right.width * t;
+    }
+  }
+  return controls.at(-1).width;
+}
+function stations(points) {
+  const length = sampleStrokePath(points, { spacing: Number.MAX_VALUE }).at(-1).distance;
+  return sampleStrokePath(points, { spacing: length / 128 });
+}
+function pointAt(samples, at2) {
+  const distance3 = samples.at(-1).distance * at2;
+  let index = Math.min(samples.length - 2, Math.floor(at2 * (samples.length - 1)));
+  while (index > 0 && samples[index].distance > distance3) index--;
+  while (index < samples.length - 2 && samples[index + 1].distance < distance3) index++;
+  const left = samples[index], right = samples[index + 1];
+  const t = (distance3 - left.distance) / (right.distance - left.distance);
+  const nx = left.nx * (1 - t) + right.nx * t, ny = left.ny * (1 - t) + right.ny * t;
+  const magnitude = Math.hypot(nx, ny) || 1;
+  return {
+    x: left.x * (1 - t) + right.x * t,
+    y: left.y * (1 - t) + right.y * t,
+    pressure: left.pressure * (1 - t) + right.pressure * t,
+    distance: distance3,
+    nx: nx / magnitude,
+    ny: ny / magnitude
+  };
+}
+function edgePressure(points) {
+  const distances = [0];
+  for (let i = 1; i < points.length; i++) distances.push(distances[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y));
+  return (at2, fallback) => {
+    const target = at2 * distances.at(-1);
+    let low = 0, high = points.length - 1;
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if (distances[middle] <= target) low = middle;
+      else high = middle;
+    }
+    const span = distances[high] - distances[low];
+    const t = span ? (target - distances[low]) / span : 1;
+    return (points[low].pressure ?? fallback) * (1 - t) + (points[high].pressure ?? fallback) * t;
+  };
+}
+function createBarkDocument(branches, options) {
+  fields7(options, optionFields2, "bark option");
+  const { idPrefix = "bark", contourWidth = 0.06, textureStrength = 0.7, ...sceneOptions } = options;
+  identifier2(idPrefix);
+  range2(contourWidth, 5e-3, 0.3, "contourWidth");
+  range2(textureStrength, 0, 1, "textureStrength");
+  const checkedOptions = createStrokeGroupDocument([], sceneOptions).recipe.options;
+  const canonical = Object.freeze({ ...checkedOptions, idPrefix, contourWidth, textureStrength });
+  const owned = ownedBranches(branches), groups = [];
+  const ink = canonical.ink ?? "#30382d", seed = canonical.seed ?? 1;
+  function mark2(id2, points, width, style) {
+    return { id: id2, points, options: {
+      width,
+      duration: 0,
+      gestureModel: "local-v1",
+      smoothing: "catmull-rom",
+      ...style,
+      opacity: (style.opacity ?? 1) * (canonical.opacity ?? 1),
+      dryness: canonical.dryness ?? style.dryness ?? 0.5
+    } };
+  }
+  for (const branch of owned) {
+    const key = `${idPrefix.length}:${idPrefix}/${branch.id.length}:${branch.id}`;
+    const contourId = key + "/contours", samples = stations(branch.points);
+    const left = branch.leftEdge ? stations(branch.leftEdge) : void 0;
+    const right = branch.rightEdge ? stations(branch.rightEdge) : void 0;
+    const leftPressure = branch.leftEdge ? edgePressure(branch.leftEdge) : void 0;
+    const rightPressure = branch.rightEdge ? edgePressure(branch.rightEdge) : void 0;
+    const widthPositions = typeof branch.width === "number" ? [] : branch.width.map((control) => control.at);
+    const edgePositions = [.../* @__PURE__ */ new Set([...samples.map((_, i) => i / (samples.length - 1)), ...widthPositions])].sort((a, b) => a - b);
+    const maxWidth = typeof branch.width === "number" ? branch.width : Math.max(...branch.width.map((control) => control.width));
+    const edgeAt = (at2, direction) => {
+      const authored = direction === -1 ? left : right;
+      if (authored) {
+        const point2 = pointAt(authored, at2);
+        return { x: point2.x, y: point2.y };
+      }
+      const p = pointAt(samples, at2), radius = widthAt(branch, at2) * 0.5 * direction;
+      return { x: p.x + p.nx * radius, y: p.y + p.ny * radius };
+    };
+    const clip = [...edgePositions.map((at2) => edgeAt(at2, -1)), ...edgePositions.slice().reverse().map((at2) => edgeAt(at2, 1))];
+    const contours = [];
+    for (const direction of [-1, 1]) {
+      const random = createRandom(seed ^ hash8(key + "/edge/" + direction));
+      const noise6 = createNoise1D(seed ^ hash8(key + "/edge-pressure/" + direction));
+      const gaps = (branch.junctions ?? []).filter((j) => j.side === direction && j.span > 0).map((j) => ({ start: Math.max(0, j.at - j.span / 2), end: Math.min(1, j.at + j.span / 2) }));
+      for (let i = 0; i < 3; i++) {
+        const start = 0.08 + random() * 0.8;
+        gaps.push({ start, end: Math.min(1, start + 0.012 + random() * 0.024) });
+      }
+      const positions = [
+        ...edgePositions,
+        ...gaps.flatMap((g) => [g.start, (g.start + g.end) / 2, g.end])
+      ].sort((a, b) => a - b);
+      const points = [...new Set(positions)].map((at2) => {
+        const p = pointAt(samples, at2), edge = edgeAt(at2, direction);
+        const authoredPressure = direction === -1 ? leftPressure : rightPressure;
+        const load = authoredPressure?.(at2, p.pressure) ?? p.pressure;
+        const shift = branch.leftEdge || branch.rightEdge ? 0 : noise6(at2 * 23 + 4) * widthAt(branch, at2) * 0.012;
+        const pressure = gaps.some((g) => at2 >= g.start && at2 <= g.end) ? 0 : clamp6((0.7 + noise6(at2 * 15 + 1) * 0.23) * load * widthAt(branch, at2) / maxWidth);
+        return { x: edge.x + p.nx * shift, y: edge.y + p.ny * shift, pressure };
+      });
+      contours.push(mark2(
+        direction === -1 ? "minus-edge" : "plus-edge",
+        points,
+        canonical.strokeWidth ?? maxWidth * contourWidth,
+        { ink, axis: "center", opacity: direction === (branch.shadowSide ?? 1) ? 0.83 : 0.53, dryness: 0.47 }
+      ));
+    }
+    groups.push({ id: contourId, role: "structure", strokes: contours });
+    for (const knot of branch.knots ?? []) {
+      const id2 = key + `/knot/${knot.id.length}:${knot.id}`, random = createRandom(seed ^ hash8(id2));
+      const p = pointAt(samples, knot.at), width = widthAt(branch, knot.at), size = width * (knot.size ?? 0.65);
+      const direction = knot.side ?? branch.shadowSide ?? 1;
+      const offset = (knot.offset ?? direction * 0.35) * width * 0.5;
+      const origin = { x: p.x + p.nx * offset, y: p.y + p.ny * offset };
+      const local = (along, across, pressure) => ({
+        x: origin.x + p.ny * along + p.nx * across,
+        y: origin.y - p.nx * along + p.ny * across,
+        pressure
+      });
+      const marks = [];
+      const cavity = knot.kind === "cavity";
+      for (let i = 0; i < (knot.count ?? 8); i++) {
+        const primary = i % 4 === 0;
+        let along = (random() + random() - 1) * size * 0.65;
+        let across = (random() + random() - 1) * size * 0.24;
+        if (cavity) {
+          const angle = random() * Math.PI * 1.5 + Math.PI * 0.25;
+          along = Math.cos(angle) * size * (0.36 + random() * 0.1);
+          across = Math.sin(angle) * size * (0.23 + random() * 0.09) * direction;
+          if (primary) {
+            along = size * (0.2 + random() * 0.2);
+            across = direction * size * (0.18 + random() * 0.12);
+          }
+        } else if (i === 0) {
+          along = (random() - 0.5) * size * 0.08;
+          across = (random() - 0.5) * size * 0.08;
+        }
+        const reach = size * (0.09 + random() * 0.15) * (cavity && along < 0 ? -1 : 1);
+        const bend = size * (random() - 0.5) * 0.1;
+        const points = [
+          local(along, across, 0.18),
+          local(along + reach * 0.3, across + bend, primary ? 0.94 : 0.63),
+          local(along + reach * 0.7, across + bend * 0.7, 0.5),
+          local(along + reach, across, 0)
+        ];
+        const contact = size * (cavity ? primary ? 0.1 + random() * 0.08 : 0.045 + random() * 0.045 : primary ? 0.18 + random() * 0.11 : 0.075 + random() * 0.075);
+        marks.push(mark2("dab-" + i, points, contact, {
+          ink,
+          axis: "center",
+          clip,
+          opacity: textureStrength * (primary ? 0.85 : 0.35 + random() * 0.3),
+          dryness: 0.4 + random() * 0.28
+        }));
+      }
+      const rim = cavity ? [local(-size * 0.4, 0, 0.1), local(-size * 0.2, direction * size * 0.23, 0.8), local(size * 0.14, direction * size * 0.26, 0.6), local(size * 0.36, direction * size * 0.08, 0)] : [local(-size * 0.32, -size * 0.08, 0.2), local(-size * 0.1, direction * size * 0.15, 0.83), local(size * 0.25, direction * size * 0.1, 0)];
+      marks.push(mark2(
+        "crack",
+        rim,
+        cavity ? Math.min(width * 0.045, size * 0.08) : width * 0.045,
+        { ink, axis: "center", opacity: 0.8 * textureStrength, dryness: 0.5, clip }
+      ));
+      for (let i = 0; i < 2; i++) {
+        const along = (i ? 1 : -1) * size * (0.3 + random() * 0.15);
+        const across = direction * size * ((cavity ? 0.32 : 0.14) + random() * 0.08);
+        const contact = width * (0.05 + random() * 0.035);
+        marks.push(mark2(
+          "scuff-" + i,
+          [
+            local(along, across, 0.12),
+            local(along + size * 0.16, across * 0.9, 0.7),
+            local(along + size * 0.36, across * 0.65, 0)
+          ],
+          cavity ? Math.min(contact, size * 0.12) : contact,
+          { ink, axis: "side", opacity: textureStrength * 0.28, dryness: 0.72, clip }
+        ));
+      }
+      groups.push({ id: id2, role: "mark", parentId: contourId, strokes: marks });
+    }
+  }
+  const document = createStrokeGroupDocument(groups, checkedOptions);
+  const recipe = Object.freeze({ version: 1, generator: GENERATOR7, branches: owned, options: canonical });
+  return Object.freeze({ version: 1, recipe, groups: document.recipe.groups, result: document.result });
+}
+function assertRecipe8(recipe) {
+  fields7(recipe, ["version", "generator", "branches", "options"], "bark recipe");
+  if (recipe.version !== 1 || recipe.generator !== GENERATOR7) throw new RangeError("Unsupported bark recipe version or generator");
+}
+function compileBarkRecipe(recipe) {
+  assertRecipe8(recipe);
+  return createBarkDocument(recipe.branches, recipe.options).result;
+}
+function reviseBarkDocument(document, patch) {
+  fields7(document, ["version", "recipe", "groups", "result"], "bark document");
+  if (document.version !== 1) throw new RangeError("Unsupported bark document version");
+  assertRecipe8(document.recipe);
+  const original = createBarkDocument(document.recipe.branches, document.recipe.options);
+  fields7(patch, ["branches", "options"], "bark patch");
+  return createBarkDocument(patch.branches ?? original.recipe.branches, { ...original.recipe.options, ...patch.options });
+}
+
+// src/point-texture.ts
+var GENERATOR8 = "ink-point-texture-v1";
+var optionFields3 = ["width", "height", "seed", "background", "ink", "dryness", "opacity", "idPrefix"];
+var techniqueNames = ["rain", "bean", "nail", "mi", "moss"];
+function fields8(value, allowed, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
+  for (const [key, item] of Object.entries(value)) if (!allowed.includes(key) || item === null) throw new RangeError(`Unsupported ${name} field: ${key}`);
+}
+function finite14(value, name) {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(`${name} must be finite`);
+  return value;
+}
+function range3(value, min, max, name) {
+  if (finite14(value, name) < min || value > max) throw new RangeError(`${name} must be in ${min}..${max}`);
+  return value;
+}
+function positive9(value, name) {
+  if (finite14(value, name) <= 0) throw new RangeError(`${name} must be positive`);
+  return value;
+}
+function id(value) {
+  if (typeof value !== "string" || !value.trim()) throw new TypeError("Point texture IDs must be nonempty");
+  return value;
+}
+function hash9(text7) {
+  let n = 2166136261;
+  for (let i = 0; i < text7.length; i++) n = Math.imul(n ^ text7.charCodeAt(i), 16777619);
+  return n >>> 0;
+}
+function path2(input, pressure, minimum = 2) {
+  if (!Array.isArray(input) || input.length < minimum || input.length > 1024) throw new RangeError(`Point texture paths need ${minimum}..1024 vertices`);
+  return Object.freeze(input.map((point2) => {
+    fields8(point2, pressure ? ["x", "y", "pressure"] : ["x", "y"], "point texture vertex");
+    return Object.freeze({
+      x: finite14(point2.x, "x"),
+      y: finite14(point2.y, "y"),
+      ...point2.pressure === void 0 ? {} : { pressure: range3(point2.pressure, 0, 1, "pressure") }
+    });
+  }));
+}
+function ownFeatures(input) {
+  if (!Array.isArray(input) || input.length > 16) throw new RangeError("Point textures support at most 16 features");
+  const featureIds = /* @__PURE__ */ new Set();
+  let sites = 0, strokes = 0;
+  return Object.freeze(input.map((feature) => {
+    fields8(feature, ["id", "technique", "guide", "sites", "side", "direction", "clip", "reserves"], "point texture feature");
+    id(feature.id);
+    if (featureIds.has(feature.id)) throw new RangeError("Duplicate point texture feature ID");
+    featureIds.add(feature.id);
+    if (!techniqueNames.includes(feature.technique)) throw new RangeError("Unknown point texture technique");
+    if (feature.side !== void 0 && feature.side !== -1 && feature.side !== 1) throw new RangeError("side must be -1 or 1");
+    const guide = path2(feature.guide, true);
+    if (sampleStrokePath(guide, { spacing: Number.MAX_VALUE }).at(-1).distance <= 1e-8) throw new RangeError("Point texture guide needs nonzero length");
+    if (!Array.isArray(feature.sites)) throw new TypeError("Point texture sites must be an array");
+    sites += feature.sites.length;
+    if (sites > 48) throw new RangeError("Point textures support at most 48 sites");
+    const siteIds = /* @__PURE__ */ new Set();
+    const ownedSites = Object.freeze(feature.sites.map((site) => {
+      fields8(site, ["id", "at", "count", "size", "spread", "offset", "opacity"], "point texture site");
+      id(site.id);
+      if (siteIds.has(site.id)) throw new RangeError("Duplicate point texture site ID");
+      siteIds.add(site.id);
+      range3(site.at, 0, 1, "site.at");
+      range3(site.count, 1, 20, "site.count");
+      if (!Number.isInteger(site.count)) throw new RangeError("site.count must be an integer");
+      positive9(site.size, "site.size");
+      range3(site.spread, 0, 1e6, "site.spread");
+      if (site.offset !== void 0) finite14(site.offset, "site.offset");
+      if (site.opacity !== void 0) range3(site.opacity, 0, 1, "site.opacity");
+      strokes += site.count * (feature.technique === "mi" ? 3 : 1);
+      if (strokes > 512) throw new RangeError("Point textures exceed 512 strokes");
+      return Object.freeze({ ...site });
+    }));
+    let direction;
+    if (feature.direction !== void 0) {
+      fields8(feature.direction, ["x", "y"], "point texture direction");
+      direction = Object.freeze({ x: finite14(feature.direction.x, "direction.x"), y: finite14(feature.direction.y, "direction.y") });
+      const magnitude = Math.hypot(direction.x, direction.y);
+      if (!Number.isFinite(magnitude) || magnitude <= 1e-8) throw new RangeError("direction must have finite nonzero magnitude");
+    }
+    if (feature.reserves !== void 0 && (!Array.isArray(feature.reserves) || feature.reserves.length > 8)) throw new RangeError("At most 8 paper reserves per feature");
+    return Object.freeze({
+      id: feature.id,
+      technique: feature.technique,
+      guide,
+      sites: ownedSites,
+      ...feature.side === void 0 ? {} : { side: feature.side },
+      ...direction ? { direction } : {},
+      ...feature.clip === void 0 ? {} : { clip: path2(feature.clip, false, 3) },
+      ...feature.reserves === void 0 ? {} : { reserves: Object.freeze(feature.reserves.map((p) => path2(p, false, 3))) }
+    });
+  }));
+}
+function station2(samples, at2) {
+  const target = samples.at(-1).distance * Math.max(0, Math.min(1, at2));
+  let i = 0;
+  while (i < samples.length - 2 && samples[i + 1].distance < target) i++;
+  const a = samples[i], b = samples[i + 1], t = (target - a.distance) / (b.distance - a.distance);
+  const nx = a.nx * (1 - t) + b.nx * t, ny = a.ny * (1 - t) + b.ny * t, m = Math.hypot(nx, ny) || 1;
+  return { ...a, x: a.x * (1 - t) + b.x * t, y: a.y * (1 - t) + b.y * t, pressure: a.pressure * (1 - t) + b.pressure * t, nx: nx / m, ny: ny / m };
+}
+function inside2(point2, polygon4) {
+  let hit = false;
+  for (let i = 0, j = polygon4.length - 1; i < polygon4.length; j = i++) {
+    const a = polygon4[i], b = polygon4[j];
+    if (a.y > point2.y !== b.y > point2.y && point2.x < (b.x - a.x) * (point2.y - a.y) / (b.y - a.y) + a.x) hit = !hit;
+  }
+  return hit;
+}
+function distance(point2, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, d = dx * dx + dy * dy;
+  const t = d === 0 ? 0 : Math.max(0, Math.min(1, ((point2.x - a.x) * dx + (point2.y - a.y) * dy) / d));
+  return Math.hypot(point2.x - a.x - dx * t, point2.y - a.y - dy * t);
+}
+function blocked(point2, radius, reserves) {
+  return (reserves ?? []).some((polygon4) => inside2(point2, polygon4) || polygon4.some((a, i) => distance(point2, a, polygon4[(i + 1) % polygon4.length]) < radius));
+}
+function createPointTextureDocument(features, options) {
+  fields8(options, optionFields3, "point texture option");
+  const { idPrefix = "point-texture", ...common } = options;
+  id(idPrefix);
+  const sceneOptions = createStrokeGroupDocument([], common).recipe.options;
+  const owned = ownFeatures(features), groups = [];
+  for (const feature of owned) {
+    const length = sampleStrokePath(feature.guide, { spacing: Number.MAX_VALUE }).at(-1).distance;
+    const samples = sampleStrokePath(feature.guide, { spacing: length / 128 });
+    for (const site of feature.sites) {
+      const key = `${idPrefix.length}:${idPrefix}/${feature.id.length}:${feature.id}/${site.id.length}:${site.id}`;
+      const strokes = [], occupied = [];
+      for (let i = 0; i < site.count; i++) {
+        const random = createRandom((sceneOptions.seed ?? 1) ^ hash9(key + "/" + i));
+        const size = site.size * (i === 0 ? 1.12 : 0.65 + random() * 0.45);
+        const side2 = feature.side ?? 1;
+        let p, origin, best = -1;
+        for (let attempt = 0; attempt < (i === 0 ? 1 : 20); attempt++) {
+          const along = i === 0 ? 0 : (random() + random() - 1) * site.spread;
+          const candidate = station2(samples, site.at + along / length);
+          const depth = (random() + random() - 1) * site.spread * 0.58;
+          const normal = (site.offset ?? (feature.technique === "moss" ? size * 0.35 * side2 : 0)) + (i === 0 ? 0 : feature.technique === "moss" ? Math.abs(depth) * side2 * 0.45 : depth);
+          const point2 = { x: candidate.x + candidate.nx * normal, y: candidate.y + candidate.ny * normal };
+          if (feature.clip && !inside2(point2, feature.clip) || blocked(point2, size * 3, feature.reserves)) continue;
+          const separation = occupied.length ? Math.min(...occupied.map((other) => Math.hypot(other.x - point2.x, other.y - point2.y))) : Infinity;
+          if (separation > best) {
+            best = separation;
+            origin = point2;
+            p = candidate;
+          }
+          if (separation > size * (feature.technique === "mi" ? 0.75 : 0.85)) break;
+        }
+        if (!origin || !p) continue;
+        occupied.push(origin);
+        const axis = feature.direction ?? (feature.technique === "moss" ? { x: p.nx * side2, y: p.ny * side2 } : { x: p.ny, y: -p.nx });
+        const angle = (random() - 0.5) * 0.38, mag = Math.hypot(axis.x, axis.y);
+        const tx = (axis.x * Math.cos(angle) - axis.y * Math.sin(angle)) / mag, ty = (axis.x * Math.sin(angle) + axis.y * Math.cos(angle)) / mag;
+        const local = (x, y, pressure) => ({ x: origin.x + tx * x - ty * y, y: origin.y + ty * x + tx * y, pressure: pressure * p.pressure });
+        const technique = feature.technique, wet = technique === "mi";
+        const parts = wet ? 3 : 1;
+        for (let part = 0; part < parts; part++) {
+          const width = size * (technique === "rain" ? 0.57 : technique === "bean" ? 0.86 : technique === "nail" ? 0.7 : technique === "moss" ? 0.92 : 0.88) * (part ? 0.67 + random() * 0.22 : 1);
+          const reach = size * (technique === "rain" ? 1.15 : technique === "bean" ? 0.74 : technique === "nail" ? 1.85 : technique === "moss" ? 0.42 : 1.72);
+          const shift = part === 0 ? 0 : (part === 1 ? -0.22 : 0.28) * size;
+          const across = part === 0 ? 0 : (part === 1 ? 0.16 : -0.16) * size;
+          const points = wet ? [local(shift, across, 0.78), local(shift + reach * 0.48, across + size * 0.025, 1), local(shift + reach, across, 0.82)] : technique === "moss" ? [local(0, 0, 0.58), local(reach * 0.43, size * 0.05, 1), local(reach, size * 0.02, 0.56)] : technique === "nail" ? [local(0, 0, 0.97), local(reach * 0.15, size * 0.12, 0.86), local(reach * 0.55, size * 0.16, 0.48), local(reach, size * 0.2, 0)] : [local(0, 0, 0.15), local(reach * 0.25, size * 0.06, 0.79), local(reach * 0.62, -size * 0.025, 0.98), local(reach, size * 0.03, 0.06)];
+          const opacity = (sceneOptions.opacity ?? 1) * (site.opacity ?? 0.8) * (i === 0 ? 1 : 0.48 + random() * 0.38) * (part ? 0.58 : 1);
+          strokes.push({ id: `dot-${i}/part-${part}`, points, options: {
+            width,
+            ink: sceneOptions.ink ?? "#283027",
+            opacity,
+            dryness: sceneOptions.dryness ?? (wet ? 0.08 : technique === "moss" ? 0.61 : technique === "nail" ? 0.64 : 0.42),
+            axis: technique === "nail" ? "side" : "center",
+            smoothing: technique === "nail" ? "linear" : "catmull-rom",
+            duration: 0,
+            gestureModel: "local-v1",
+            finish: "preserve",
+            ...feature.clip ? { clip: feature.clip } : {}
+          } });
+        }
+      }
+      if (strokes.length) groups.push({ id: key, role: "mark", strokes });
+    }
+  }
+  const compiled = createStrokeGroupDocument(groups, sceneOptions);
+  const recipe = Object.freeze({
+    version: 1,
+    generator: GENERATOR8,
+    features: owned,
+    options: Object.freeze({ ...sceneOptions, idPrefix })
+  });
+  return Object.freeze({ version: 1, recipe, groups: compiled.recipe.groups, result: compiled.result });
+}
+function compilePointTextureRecipe(recipe) {
+  fields8(recipe, ["version", "generator", "features", "options"], "point texture recipe");
+  if (recipe.version !== 1 || recipe.generator !== GENERATOR8) throw new RangeError("Unsupported point texture recipe");
+  return createPointTextureDocument(recipe.features, recipe.options).result;
+}
+function revisePointTextureDocument(document, patch) {
+  fields8(document, ["version", "recipe", "groups", "result"], "point texture document");
+  if (document.version !== 1) throw new RangeError("Unsupported point texture document");
+  compilePointTextureRecipe(document.recipe);
+  fields8(patch, ["features", "options"], "point texture patch");
+  return createPointTextureDocument(patch.features ?? document.recipe.features, { ...document.recipe.options, ...patch.options });
+}
+
+// src/surface-cun.ts
+var techniques = ["pima", "jiesuo", "niumao", "axe", "zhedai"];
+function fields9(value, keys, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
+  for (const [key, item] of Object.entries(value)) if (!keys.includes(key) || item === null) throw new RangeError(`Unsupported ${name} field: ${key}`);
+}
+function finite15(value, name) {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(`${name} must be finite`);
+  return value;
+}
+function positive10(value, name) {
+  if (finite15(value, name) <= 0) throw new RangeError(`${name} must be positive`);
+  return value;
+}
+function identity(value) {
+  if (typeof value !== "string" || !value.trim()) throw new TypeError("Surface and site IDs must be nonempty");
+  return value;
+}
+function hash10(value) {
+  let h = 2166136261;
+  for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+function polygon3(points) {
+  if (!Array.isArray(points) || points.length < 3 || points.length > 256) throw new RangeError("A surface polygon needs 3..256 vertices");
+  return Object.freeze(points.map((p) => {
+    fields9(p, ["x", "y"], "surface vertex");
+    return Object.freeze({ x: finite15(p.x, "x"), y: finite15(p.y, "y") });
+  }));
+}
+function path3(points) {
+  if (!Array.isArray(points) || points.length < 2 || points.length > 512) throw new RangeError("A surface guide needs 2..512 points");
+  const owned = points.map((p) => {
+    fields9(p, ["x", "y", "pressure"], "surface guide point");
+    if (p.pressure !== void 0 && (finite15(p.pressure, "pressure") < 0 || p.pressure > 1)) throw new RangeError("Guide pressure must be in 0..1");
+    return Object.freeze({ x: finite15(p.x, "x"), y: finite15(p.y, "y"), ...p.pressure === void 0 ? {} : { pressure: p.pressure } });
+  });
+  if (sampleStrokePath(owned, { spacing: Number.MAX_VALUE }).at(-1).distance <= 1e-6) throw new RangeError("Surface guides need length");
+  return Object.freeze(owned);
+}
+function inside3(point2, vertices) {
+  let hit = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const a = vertices[i], b = vertices[j];
+    if (a.y > point2.y !== b.y > point2.y && point2.x < (b.x - a.x) * (point2.y - a.y) / (b.y - a.y) + a.x) hit = !hit;
+  }
+  return hit;
+}
+function distance2(point2, vertices) {
+  let nearest = Infinity;
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i], b = vertices[(i + 1) % vertices.length];
+    const dx = b.x - a.x, dy = b.y - a.y, d = dx * dx + dy * dy;
+    const t = d > 0 ? Math.max(0, Math.min(1, ((point2.x - a.x) * dx + (point2.y - a.y) * dy) / d)) : 0;
+    nearest = Math.min(nearest, Math.hypot(point2.x - a.x - t * dx, point2.y - a.y - t * dy));
+  }
+  return nearest;
+}
+function sampleAt(samples, at2) {
+  const atDistance = Math.max(0, Math.min(1, at2)) * samples.at(-1).distance;
+  let index = 0;
+  while (index < samples.length - 2 && samples[index + 1].distance < atDistance) index++;
+  const a = samples[index], b = samples[index + 1];
+  const t = (atDistance - a.distance) / (b.distance - a.distance || 1);
+  const nx = a.nx + (b.nx - a.nx) * t, ny = a.ny + (b.ny - a.ny) * t, norm = Math.hypot(nx, ny) || 1;
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    nx: nx / norm,
+    ny: ny / norm,
+    distance: atDistance,
+    pressure: a.pressure + (b.pressure - a.pressure) * t
+  };
+}
+function ownedSurfaces(values) {
+  if (!Array.isArray(values) || values.length < 1 || values.length > 16) throw new RangeError("Surface cun needs 1..16 surfaces");
+  let count = 0;
+  const ids = /* @__PURE__ */ new Set();
+  return Object.freeze(values.map((source) => {
+    fields9(source, ["id", "region", "flow", "fracture", "reserves", "sites"], "cun surface");
+    const id2 = identity(source.id);
+    if (ids.has(id2)) throw new RangeError("Duplicate cun surface ID");
+    ids.add(id2);
+    if (!Array.isArray(source.sites) || source.sites.length < 1 || (count += source.sites.length) > 512) throw new RangeError("Surface cun supports 1..512 total sites");
+    const siteIds = /* @__PURE__ */ new Set();
+    const sites = source.sites.map((site) => {
+      fields9(site, ["id", "at", "offset", "length", "width", "tone"], "surface cun site");
+      const id3 = identity(site.id);
+      if (siteIds.has(id3)) throw new RangeError("Duplicate surface site ID");
+      siteIds.add(id3);
+      if (finite15(site.at, "site.at") < 0 || site.at >= 1) throw new RangeError("site.at must be in 0..1, excluding 1");
+      finite15(site.offset, "site.offset");
+      positive10(site.length, "site.length");
+      if (site.width !== void 0) positive10(site.width, "site.width");
+      if (site.tone !== void 0 && !["wash", "body", "accent"].includes(site.tone)) throw new RangeError("Unknown surface tone");
+      return Object.freeze({ ...site });
+    });
+    if (source.reserves !== void 0 && (!Array.isArray(source.reserves) || source.reserves.length > 16)) throw new RangeError("Surface reserves support at most 16 polygons");
+    return Object.freeze({
+      id: id2,
+      region: polygon3(source.region),
+      flow: path3(source.flow),
+      sites: Object.freeze(sites),
+      ...source.fracture === void 0 ? {} : { fracture: path3(source.fracture) },
+      ...source.reserves === void 0 ? {} : { reserves: Object.freeze(source.reserves.map(polygon3)) }
+    });
+  }));
+}
+function createSurfaceCunDocument(surfaces, options) {
+  fields9(options, ["technique", "idPrefix", "width", "height", "seed", "background", "ink", "strokeWidth", "dryness", "opacity"], "surface cun option");
+  if (!techniques.includes(options.technique)) throw new RangeError("Unsupported surface cun technique");
+  const { technique, idPrefix = "surface-cun", ...sceneOptions } = options;
+  identity(idPrefix);
+  const checked = createStrokeGroupDocument([], sceneOptions).recipe.options;
+  const owned = ownedSurfaces(surfaces), groups = [];
+  const canonical = Object.freeze({ ...checked, technique, idPrefix });
+  for (const surface of owned) {
+    const groupId = `${idPrefix.length}:${idPrefix}/${surface.id.length}:${surface.id}`;
+    const guide = technique === "axe" && surface.fracture ? surface.fracture : surface.flow;
+    const length = sampleStrokePath(guide, { spacing: Number.MAX_VALUE }).at(-1).distance;
+    const samples = sampleStrokePath(guide, { spacing: Math.max(length / 256, 0.01) });
+    const strokes = surface.sites.map((site) => {
+      const key = `${groupId}/${site.id.length}:${site.id}`;
+      const noise6 = createNoise1D((checked.seed ?? 1) ^ hash10(key));
+      const baseWidth = site.width ?? checked.strokeWidth ?? { pima: 3.9, jiesuo: 3.3, niumao: 1.7, axe: 15, zhedai: 7.8 }[technique];
+      const span = Math.min(site.length, length * (1 - site.at));
+      const count = Math.max(8, Math.min(128, Math.ceil(span / 2.4)));
+      const positions = technique === "zhedai" ? [0, 0.33, 0.38, 0.49, 0.78, 0.83, 1] : Array.from({ length: count + 1 }, (_, i) => i / count);
+      const points = positions.map((t) => {
+        const p = sampleAt(samples, site.at + span * t / length);
+        const wave = technique === "jiesuo" ? 0.74 * noise6(t * 4.3 + 13.41) + 0.26 * noise6(t * 9.7 + 63.2) : noise6(t * 1.7 + 13.41);
+        let cross = site.offset + wave * span * (technique === "jiesuo" ? 0.11 : technique === "niumao" ? 0.055 : 0.025);
+        if (technique === "pima" || technique === "jiesuo" || technique === "niumao") cross += noise6(t * 22.7 + 93.4) * Math.min(0.38, baseWidth * 0.12);
+        if (technique === "zhedai") cross = site.offset + span * (t < 0.38 ? 0 : t < 0.49 ? (t - 0.38) / 0.11 * 0.2 : 0.2);
+        if (technique === "axe") cross += span * 0.18 * t;
+        const position = { x: p.x + p.nx * cross, y: p.y + p.ny * cross };
+        const reserve = (surface.reserves ?? []).some((region) => inside3(position, region) || distance2(position, region) < baseWidth * 1.2);
+        const profile = 0.22 + 0.7 * Math.pow(Math.max(0, 4 * t * (1 - t)), 0.65);
+        const pressure = t === 1 || reserve || !inside3(position, surface.region) ? 0 : p.pressure * profile * (0.86 + noise6(t * 7.1 + 43.2) * 0.16);
+        return { ...position, pressure };
+      });
+      const tone = site.tone ?? "body";
+      const opacity = { wash: 0.24, body: 0.53, accent: 0.88 }[tone] * (checked.opacity ?? 1);
+      const dryness = checked.dryness ?? (tone === "wash" ? 0.77 : technique === "axe" ? 0.65 : 0.55);
+      return { id: site.id, points, options: {
+        width: baseWidth,
+        opacity,
+        dryness,
+        clip: surface.region,
+        start: 0,
+        duration: 0,
+        ...technique === "zhedai" ? { smoothing: "linear", turn: "preserve" } : {}
+      } };
+    });
+    const cun = createCunDocument(strokes, {
+      width: checked.width,
+      height: checked.height,
+      technique,
+      seed: checked.seed ?? 1,
+      background: checked.background ?? "#f5f2e9",
+      ink: checked.ink ?? "#252820"
+    });
+    groups.push({ id: groupId, role: "mark", strokes: cun.result.marks.filter((mark2) => mark2.kind === "stroke").map((mark2) => ({
+      id: mark2.id,
+      points: mark2.points,
+      options: {
+        width: mark2.width,
+        opacity: mark2.opacity,
+        dryness: mark2.dryness,
+        ink: mark2.ink,
+        smoothing: mark2.smoothing ?? "linear",
+        axis: "center",
+        gestureModel: "local-v1",
+        start: 0,
+        duration: 0,
+        ...mark2.brush ? { controls: mark2.brush.controls } : {},
+        ...mark2.clip ? { clip: mark2.clip } : {}
+      }
+    })) });
+  }
+  const result = createStrokeGroupDocument(groups, checked);
+  const recipe = Object.freeze({ version: 1, generator: "ink-surface-cun-v1", surfaces: owned, options: canonical });
+  return Object.freeze({ version: 1, recipe, groups: result.recipe.groups, result: result.result });
+}
+function compileSurfaceCunRecipe(recipe) {
+  fields9(recipe, ["version", "generator", "surfaces", "options"], "surface cun recipe");
+  if (recipe.version !== 1 || recipe.generator !== "ink-surface-cun-v1") throw new RangeError("Unsupported surface cun recipe");
+  return createSurfaceCunDocument(recipe.surfaces, recipe.options).result;
+}
+function reviseSurfaceCunDocument(document, patch) {
+  fields9(document, ["version", "recipe", "groups", "result"], "surface cun document");
+  if (document.version !== 1) throw new RangeError("Unsupported surface cun document");
+  fields9(patch, ["surfaces", "options"], "surface cun patch");
+  compileSurfaceCunRecipe(document.recipe);
+  return createSurfaceCunDocument(patch.surfaces ?? document.recipe.surfaces, { ...document.recipe.options, ...patch.options });
 }
 
 // src/technique-studies.ts
@@ -7926,24 +8992,38 @@ var TECHNIQUE_STUDY_BATCHES = Object.freeze([
   { "number": 29, "title": "八法的钩提撇", "techniqueIds": ["eight-ti", "eight-ce-lift", "eight-lue"], "example": "examples/remaining-review.html?batch=29" },
   { "number": 30, "title": "短撇、捺与结构勾勒", "techniqueIds": ["eight-zhuo", "eight-zhe", "line-outline"], "example": "examples/remaining-review.html?batch=30" }
 ].map((batch) => Object.freeze({ ...batch, techniqueIds: Object.freeze(batch.techniqueIds) })));
-function getTechniqueStudies(id) {
-  return Object.freeze(TECHNIQUE_STUDY_BATCHES.filter((batch) => batch.techniqueIds.includes(id)));
+function getTechniqueStudies(id2) {
+  return Object.freeze(TECHNIQUE_STUDY_BATCHES.filter((batch) => batch.techniqueIds.includes(id2)));
+}
+var TECHNIQUE_REVISIONS = Object.freeze([
+  { id: "ink-20261120", title: "积墨与用水回修", techniqueIds: ["ink-layered", "ink-broken", "water-break-ink", "ink-break-water", "water-collision"], family: "ink" },
+  { id: "points-20261120", title: "点皴与岩脊组织回修", techniqueIds: ["cun-yudian", "cun-douban", "cun-dingtou", "cun-midian", "vegetation-moss"], family: "points" },
+  { id: "lines-20261120", title: "顺坡与断面皴笔回修", techniqueIds: ["cun-pima", "cun-jiesuo", "cun-niumao", "cun-axe", "cun-zhedai"], family: "lines" },
+  { id: "split-20261120", title: "散锋与破笔回修", techniqueIds: ["brush-split", "leaf-broken", "cun-baoshi"], family: "split" }
+].map(({ family, ...item }) => Object.freeze({ ...item, techniqueIds: Object.freeze(item.techniqueIds), example: `examples/existing-technique-revision.html?family=${family}` })));
+function getTechniqueRevisions(id2) {
+  return Object.freeze(TECHNIQUE_REVISIONS.filter((study) => study.techniqueIds.includes(id2)));
 }
 export {
   TECHNIQUE_CATALOG,
   TECHNIQUE_CATEGORIES,
   TECHNIQUE_READINGS,
   TECHNIQUE_READING_SOURCES,
+  TECHNIQUE_REVISIONS,
   TECHNIQUE_SOURCES,
   TECHNIQUE_STUDY_BATCHES,
   accumulateEdge,
+  compileBarkRecipe,
   compileBrushRecipe,
   compileCunRecipe,
   compileDotRecipe,
   compileInkProcessRecipe,
+  compilePointTextureRecipe,
   compileStrokeGroupRecipe,
+  compileSurfaceCunRecipe,
   compileVegetationRecipe,
   compileWaterProcessRecipe,
+  createBarkDocument,
   createBirdMacro,
   createBrushDocument,
   createBrushStroke,
@@ -7953,10 +9033,12 @@ export {
   createInkProcessDocument,
   createInkScene,
   createNoise1D,
+  createPointTextureDocument,
   createRandom,
   createRockMacro,
   createSplitVegetationUnit,
   createStrokeGroupDocument,
+  createSurfaceCunDocument,
   createTreeMacro,
   createVegetationDocument,
   createWaterProcessDocument,
@@ -7966,6 +9048,7 @@ export {
   getNoise2D,
   getTechnique,
   getTechniqueReading,
+  getTechniqueRevisions,
   getTechniqueStudies,
   jitterPath,
   pointInPolygon,
@@ -7974,11 +9057,14 @@ export {
   renderCanvas,
   renderInkProcess,
   resamplePath,
+  reviseBarkDocument,
   reviseBrushDocument,
   reviseCunDocument,
   reviseDotDocument,
   reviseInkProcessDocument,
+  revisePointTextureDocument,
   reviseStrokeGroupDocument,
+  reviseSurfaceCunDocument,
   reviseVegetationDocument,
   reviseWaterProcessDocument,
   sampleBrushContact,

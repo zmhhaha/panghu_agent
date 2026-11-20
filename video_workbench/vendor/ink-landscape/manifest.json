@@ -1,7 +1,7 @@
 {
   "schema": "video.ink-landscape-vendor.v1",
   "source_repository": "https://github.com/zmhhaha/ink-landscape",
-  "source_revision": "bb7338a5c57d4151c3d8635a8549057bb0383ca0",
+  "source_revision": "b6c96a5e94124bfad8113aaa136ede2298151b5f",
   "version": "0.1.0",
   "license": "MIT",
   "build": {
@@ -12,7 +12,7 @@
     "platform": "browser"
   },
   "assets": {
-    "ink-landscape.mjs": "03ff8324ebee4e33ab1991399fe43ae7751f189bfa0116c30db29d64fd5f7469",
+    "ink-landscape.mjs": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
     "ink-landscape.LICENSE.txt": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108"
   },
   "skill_files": {
@@ -21,5 +21,37 @@
     "references/runtime-and-validation.md": "a0c1648e3296cc91562607317df2554398c4f42f3e3ff909ee682b880c46a702",
     "references/subjects-and-source.md": "eaa503a2b05734ed59460d03dd4fe30f551e018d1d9053caae701c0c3a275881",
     "SKILL.md": "d36c70ca8a08c15e498f5f7a460d907fcbb74a760119bdddd2c5d918c02adf83"
+  },
+  "publication_files": {
+    "docs/learning/README.md": "de8869c9298ec9c27df2846ec5f5c33573edc1b67333f14ad811459808ca5fef",
+    "docs/learning/brush-calligraphy.md": "9ba4dd3a06b0e6b29e64614a0539b7c27754f2906abd4ea4d952c1f54f33c9dc",
+    "docs/learning/ink-water.md": "9f414bf46aa785b4d5ab01fc4c42760dd4e640285a0a1e6841e66435ec65530b",
+    "docs/learning/texture-vegetation.md": "aa0f86b2a364b31fa8e168c09eeed3fbe71e06692770d1cc9463092d1326b556",
+    "docs/learning/linework.md": "c1c1a71e7ac1d25200cca92477c29fca92a09c01e230bab48e3ea946c379bbe5",
+    "docs/learning/jieziyuan.md": "6223456d9595c7e93bdd3aba2d24f8d8ffa1bdcdac9e2bc3a14ef5fb4011c424",
+    "docs/brushwork.md": "70590f247ceb10194bdb4f377f22d6666e45ae22b01125e07652e73cc8fea4aa",
+    "docs/foundation-brush.md": "7903f912386180c820adea15127b5a1f42b4fe14151628ed958cc646d1658312",
+    "docs/stroke-group-document.md": "280f66bffeabff4c9677eb657b0aee8694a68fbb60fbb2edd0d86e89bff643bf",
+    "docs/cun-document.md": "16e6ed5d246ba18c7845a5e3c8232c0d7fc7e1f43e51e92b4324c2a3aee8e458",
+    "docs/ink-process.md": "9fa95d07045fd0ff20175cf842a5bdd98273ed41372a7f0d5ae88cadf61c1f09",
+    "docs/water-process.md": "d594d3693f30c52cc26db472ddac1addebc7a812a47abfb89fe5b0a0c0c4b2ee",
+    "docs/vegetation-document.md": "3a603fdb3874116ca1a13f5492b319f898eae56c317b4d855217bf0e9dfdd92e",
+    "docs/subject-macros.md": "ec653c44d53b57c58c3dcfbb3330cdc5f993e728fefbffeeb4aa204d6fd60fa8",
+    "docs/bark-document.md": "32d831ee9d276770960dbe37436322b3b429f4e2230d1cf23c7f194b367a55bc",
+    "docs/rock-planes.md": "7dcf706193eaf443e5b65ba9f1d58f2b579320782896deb6c395a277129379a3",
+    "docs/natural-authoring.md": "1c975de0157d55710f35acf85f5442d936334a39c895bff86b1eb517838bc657",
+    "docs/perturbation.md": "2e864747dcad32ca11112198434454dd8b8befc3253ee8626106671850977381",
+    "docs/existing-technique-revision.md": "fbe93083291e76bc2b6c15b97cf631b07c354fcf26e142e3acbbfbe7f9e10345",
+    "docs/point-texture-revision.md": "12785dccba7f6d5e4ca113cfcf433912ebde30b11358c36ce976cd72e5eb6c8e",
+    "docs/line-texture-revision.md": "247a062b63b8e4d8b8bf27e9e1be9d1228e9fd638fa2f1409d17587e01e04be4",
+    "docs/split-texture-revision.md": "068fc598ae0287e2c7593f423c9703ec67425ebc68e008d5da3057e59a120fff",
+    "docs/remaining-technique-batches.md": "3639598a4cfa6c17da39dbba5971f07012e7d5d8764cfd85d017b492c87ce641"
+  },
+  "publication_scope": {
+    "source_revision": "b6c96a5e94124bfad8113aaa136ede2298151b5f",
+    "reading": "100-item reading notes and their source/confidence boundaries; not mastery or artistic approval",
+    "jieziyuan": "Selected public pages, especially images 1-8; not a complete reading of the book",
+    "runtime": "Exact API and implementation documentation from this revision; no mutable repository lookup",
+    "release": "Source preparation only; publication and dependency admission are separate explicit operations"
   }
 }

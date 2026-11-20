@@ -1,7 +1,7 @@
 """Image-owned ink drawing code and unpublished documentation sources.
 
-This module grants neither a new engine nor a knowledge publication. Only
-learning renderers consume its exact local assets; frozen tasks keep the
+This module grants neither a new engine nor a knowledge publication.
+Renderers separately admit its exact local assets; frozen tasks keep the
 descriptor actually supplied to them.
 """
 from copy import deepcopy
@@ -13,11 +13,11 @@ from agent_service.contracts import ServiceError
 
 
 ROOT = Path(__file__).parent / 'vendor/ink-landscape'
-MANIFEST_SHA256 = 'a38391a07298b0259457f1d43bf901fe93de737da6ba7eeed0d4f5268dffb5dc'
-SOURCE_REVISION = 'bb7338a5c57d4151c3d8635a8549057bb0383ca0'
+MANIFEST_SHA256 = '6b90080c779dd729b38b317e2652e0b2b3d26e413455585f9cede14b7050685e'
+SOURCE_REVISION = 'b6c96a5e94124bfad8113aaa136ede2298151b5f'
 VERSION = '0.1.0'
 ASSETS = {
-    'ink-landscape.mjs': '03ff8324ebee4e33ab1991399fe43ae7751f189bfa0116c30db29d64fd5f7469',
+    'ink-landscape.mjs': 'c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6',
     'ink-landscape.LICENSE.txt': 'b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108',
 }
 
@@ -61,6 +61,25 @@ def read_skill_files(directory=None):
     frozen = manifest(root)
     return {name: _read(root, 'skill/' + name, sha, 128 * 1024).decode('utf-8')
             for name, sha in frozen['skill_files'].items()}
+
+
+def read_publication_files(directory=None):
+    """Exact image-owned reading/API sources, only for manual publication.
+
+    These files are not silently supplied to disabled learning tasks and do
+    not modify historical releases. The portable Skill keeps its own inputs.
+    """
+    root = Path(directory) if directory is not None else ROOT
+    frozen = manifest(root)
+    files = read_skill_files(root)
+    documents = frozen.get('publication_files')
+    if (type(documents) is not dict or not documents or len(documents) > 64
+            or any(type(name) is not str or not name.startswith('docs/')
+                or not name.endswith('.md') or name in files for name in documents)):
+        raise ServiceError('ink_landscape_library_manifest_invalid', 422)
+    files.update({name: _read(root, 'publication/' + name, sha, 128 * 1024).decode('utf-8')
+                  for name, sha in documents.items()})
+    return files
 
 
 def validate_descriptor(value, assets):

@@ -82,6 +82,47 @@ def test_modified_vendored_bytes_are_rejected(tmp_path, name):
         ink.read_skill_files(root) if name.startswith('skill/') else ink.read_assets(root)
 
 
+@pytest.mark.parametrize('name', ['docs/learning/brush-calligraphy.md',
+    'docs/learning/jieziyuan.md', 'docs/bark-document.md'])
+def test_modified_publication_text_is_rejected(tmp_path, name):
+    root = tmp_path / 'vendor'
+    shutil.copytree(ink.ROOT, root)
+    path = root / 'publication' / name
+    path.write_bytes(path.read_bytes() + b'\nchanged')
+    with pytest.raises(ServiceError, match='ink_landscape_library_bytes_invalid'):
+        ink.read_publication_files(root)
+
+
+def test_publication_has_all_actual_readings_and_new_revision_api_documents():
+    from video_workbench.vendor_ink_landscape import PUBLICATION_DOCUMENTS
+    files = ink.read_publication_files()
+    assert files == {**ink.read_skill_files(), **{
+        path: (ink.ROOT / 'publication' / path).read_text(encoding='utf-8')
+        for path in PUBLICATION_DOCUMENTS}}
+    books = ['brush-calligraphy', 'ink-water', 'texture-vegetation', 'linework']
+    texts = [files['docs/learning/' + name + '.md'] for name in books]
+    reading_ids = [identity for text in texts for identity in re.findall(r'<a id="([^"]+)"></a>', text)]
+    assert len(reading_ids) == len(set(reading_ids)) == 100
+    assert sum(text.count('阅读状态：') for text in texts) == 100
+    code = '''
+const ink = await import(process.argv[1]);
+console.log(JSON.stringify({ids:ink.TECHNIQUE_READINGS.map(row=>row.id),
+ sources:ink.TECHNIQUE_READING_SOURCES.length,
+ newApis:['createBarkDocument','createSurfaceCunDocument','createPointTextureDocument']
+   .map(name=>typeof ink[name])}));
+'''
+    result = subprocess.run(['node', '--input-type=module', '-e', code,
+        (ink.ROOT / 'ink-landscape.mjs').as_uri()],
+        capture_output=True, text=True, check=True, timeout=30)
+    actual = json.loads(result.stdout)
+    assert set(reading_ids) == set(actual['ids']) and actual['sources'] == 80
+    assert actual['newApis'] == ['function'] * 3
+    assert {'docs/bark-document.md', 'docs/line-texture-revision.md',
+        'docs/point-texture-revision.md', 'docs/existing-technique-revision.md'} <= set(files)
+    assert '不是全书通读' in files['docs/learning/jieziyuan.md']
+    assert ink.manifest()['publication_scope']['source_revision'] == ink.SOURCE_REVISION
+
+
 def test_skill_files_and_dependency_descriptor_bind_actual_assets():
     from agent_service.animation_skills_contract import build_skill_package
     assets, files = ink.read_assets(), ink.read_skill_files()
