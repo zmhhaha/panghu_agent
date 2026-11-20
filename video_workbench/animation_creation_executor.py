@@ -41,13 +41,21 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   manim_resource_admission_file=None, film_manim_admission_file=None,
                   enable_collaborative_authoring=False, collaboration_agent_token_file=None,
                   picture_agent_token_file=None, video_learning_agent_token_file=None,
-                  remote_reference_cookie_file=None, remote_reference_dns='system'):
+                  remote_reference_cookie_file=None, remote_reference_dns='system',
+                  wikiskill_recovery_manifest_file=None, wikiskill_recovery_manifest_sha256=None,
+                  wikiskill_recovery_owner=None):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
         raise ValueError('animation_method_protocol_invalid')
     if method_project_runtime not in {'native-seek', 'hyperframes-core-bridge'}:
         raise ValueError('animation_method_project_runtime_invalid')
+    recovery = (wikiskill_recovery_manifest_file, wikiskill_recovery_manifest_sha256, wikiskill_recovery_owner)
+    if any(value is not None for value in recovery) and (
+            not all(value is not None for value in recovery) or method_agent_token_file is None):
+        raise ValueError('wikiskill_recovery_config_incomplete')
+    if any(value is not None for value in recovery) and method_protocol != 'skills':
+        raise ValueError('wikiskill_recovery_skills_required')
     if enable_collaborative_authoring or collaboration_agent_token_file is not None:
         if enable_collaborative_authoring is not True or collaboration_agent_token_file is None or method_agent_token_file is None:
             raise ValueError('animation_collaboration_config_incomplete')
@@ -246,6 +254,11 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             # never inject or replace an existing published release.
             methods.wikiskill.capture = with_free_composition_records(
                 with_ink_landscape_records(methods.wikiskill.capture))
+            if wikiskill_recovery_manifest_file is not None:
+                from .failed_compilation_draft_source import with_failed_compilation_draft
+                methods.wikiskill.capture = with_failed_compilation_draft(methods.wikiskill.capture,
+                    trusted_root=root, manifest_file=wikiskill_recovery_manifest_file,
+                    manifest_sha256=wikiskill_recovery_manifest_sha256, owner=wikiskill_recovery_owner)
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources,
             picture_service=pictures, video_learning_service=videos,
@@ -300,6 +313,10 @@ def main(argv=None):
         help='Exact stopped resource plus method-v5 whole-project technical admission.')
     parser.add_argument('--film-manim-admission-file', type=Path,
         help='Independent formal-film resource generation and whole-film consumption admission.')
+    parser.add_argument('--wikiskill-recovery-manifest-file', type=Path,
+        help='Opt-in private failed-draft data beneath root/knowledge-recovery; never a published Skill.')
+    parser.add_argument('--wikiskill-recovery-manifest-sha256')
+    parser.add_argument('--wikiskill-recovery-owner')
     parser.add_argument('--enable-isolated-rendering', action='store_true')
     parser.add_argument('--listen', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8767)
