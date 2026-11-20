@@ -145,11 +145,15 @@ class ModelProxySettings:
 
 
 def profile_model_call_limit(profile, configured):
-    """Tighten new method/production roles without changing older budgets.
+    """Bound method/production roles without changing older budgets.
 
     The profile comes from the authenticated stored job, never request JSON or
     grant metadata supplied by a caller. A stricter operator cap still wins.
     """
+    if profile == 'video.animation-film-module.v1':
+        # Skill discovery/reads and writing the module each need a model turn;
+        # the write's tool result also needs a final assistant turn.
+        return min(configured, 16)
     if profile == 'video.animation-collaboration.v1':
         return min(configured, 10)
     if profile in {'video.joint-plan.v2',
@@ -158,7 +162,7 @@ def profile_model_call_limit(profile, configured):
                    'video.animation-method-author.v1', 'video.animation-method-review.v1',
                    'video.animation-method-author.v2', 'video.animation-method-review.v2',
                    'video.animation-production.v1', 'video.animation-production.v2',
-                   'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1',
+                   'video.animation-production.v3', 'video.joint-plan.v1',
                    'video.resource-plan.v1',
                    'video.animation-manim-recipe.v1'}:
         return min(configured, 8)

@@ -113,6 +113,9 @@ def test_formal_api_guidance_requires_admitted_assets_and_module_lifecycle():
     assert 'APP-FROZEN-DRAWING-LIBRARIES\n' in result['scene']['instruction']
     assert 'export mount(root,context)' in result['scene']['instruction']
     assert 'do not use window.__animationExperiment' in result['scene']['instruction']
+    assert 'Each group requires at least one stroke' in result['scene']['instruction']
+    assert 'resets the Canvas transform' in result['scene']['instruction']
+    assert 'read_inputs({}) has no mode/path parameters' in result['scene']['instruction']
     task['assets'].pop('assets/ink-landscape.LICENSE.txt')
     with pytest.raises(ServiceError, match='assets_missing'): formal.attach_drawing_libraries(task, caps)
 

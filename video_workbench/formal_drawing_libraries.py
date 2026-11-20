@@ -54,6 +54,40 @@ def enable_in_capabilities(capabilities):
     return validate_runtime_capabilities(value)
 
 
+def compact_module_runtime_guidance(capabilities):
+    """Server-owned essentials when a complete predecessor needs the space.
+
+    Assets and the existing profile remain authoritative. Optional library
+    tutorials can be omitted; original user direction and resource instructions
+    cannot. The store only uses this without added resource instructions.
+    """
+    guidance = (
+        'Intent/style: scene/film_context.film. Source plus exit states: target <=12000 characters. '
+        'Cache static layers in mount; renderAt uses global_frame; dispose buffers. '
+        'Max 500 native contexts/realm. Declare used admitted assets/licenses. '
+        'read_inputs({}) has no mode/path or asset access; skill_read reads published files only. '
+        'Use documented APIs; renderer verifies execution. '
+    )
+    from .animejs_library import descriptor
+    if capabilities.get('authoring_libraries') == {'animejs': descriptor()}:
+        guidance += (
+            'Optional Anime: import createFrameTimeline from /project/assets/anime_timeline.mjs. '
+            'In mount use fps=24,startFrame=context.start_frame,'
+            'durationFrames=context.end_frame-context.start_frame. Forward renderAt(context); '
+            'do not reset tween-owned state or autoplay; dispose the timeline. Declare all three '
+            'assets: anime_timeline.mjs,anime.esm.min.js,animejs.LICENSE.txt. '
+        )
+    if capabilities.get('drawing_libraries'):
+        guidance += (
+            'Ink: import /project/assets/ink-landscape.mjs. '
+            'createStrokeGroupDocument returns recipe/result; nonempty groups only. '
+            'renderCanvas(ctx,doc.result,{clear:false,paperTexture:0}) '
+            'resets transforms to canvas/document ratios: use document-space points or local '
+            'caches plus drawImage. #RRGGBB document colors. '
+        )
+    return guidance
+
+
 def attach_drawing_libraries(core, capabilities):
     """Supply API custody and module lifecycle, never an artistic composition."""
     from agent_service.profiles.video_animation_film_module_contract import validate_core_task
@@ -74,15 +108,26 @@ def attach_drawing_libraries(core, capabilities):
         'renderAt(context), dispose(); do not use window.__animationExperiment. Initialize bounded '
         'editable data in mount and draw deterministic state from the absolute context frame/time '
         'in renderAt. Preserve explicit seeds, paths and recipes. Dispose owned buffers. '
+        'Keep source and outgoing states compact and readable (target <=12000 characters combined), '
+        'so the next author receives the complete original source and states within its input budget. '
+        'read_inputs({}) has no mode/path parameters and cannot read renderer assets. '
+        '/project/assets/ink-landscape.mjs is a renderer import URL, not an input-reader path. '
+        'skill_read can read only exact published package files. Use their documented exports; '
+        'actual asset export/API execution is verified later by the renderer, not by this author role. '
         'createStrokeGroupDocument(groups,options) returns a document with recipe/result. '
         'Groups accept id,role?,parentId?,strokes; role is structure or mark. Strokes accept '
         'id,points,options?; points use x,y,pressure?. Per-stroke width/ink/opacity/dryness and '
         'other supported brush fields belong inside options, not at the group/stroke top level. '
+        'Each group requires at least one stroke; omit a document/group for a wash-only layer '
+        'instead of submitting an empty strokes array. '
         'Document options are width,height,seed?,background?,ink?,strokeWidth?,dryness?,opacity?. '
         'Use six-digit #RRGGBB document colors; paperTexture is a numeric 0..1. '
         'renderCanvas(realContext,document.result,{clear:false,paperTexture:0}) draws marks '
         'without filling document paper; clear the transparent target yourself before a fresh '
-        'deterministic draw. Default clear:true paints document paper. Document creation alone '
+        'deterministic draw. It resets the Canvas transform to the canvas/document dimension '
+        'ratios even with clear:false; caller translate/rotate/scale do not place its marks. '
+        'Author points in document coordinates, or render an object in a local cache and '
+        'place that cache with native drawImage transforms. Default clear:true paints document paper. Document creation alone '
         'does not draw. Each stroke-group document supports at most 512 groups and 512 total '
         'strokes, each with 2..4096 points. Split documents/buffers when needed without replacing '
         'the artwork with a technical demo. renderInkProcess accepts only time?/cellSize? and '

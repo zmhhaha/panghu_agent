@@ -59,17 +59,28 @@ rejects(() => ink.createStrokeGroupDocument([{id:'g',strokes:[{id:'s',points}]}]
   {...options,background:'transparent'}), 'Group colours must be #RRGGBB');
 rejects(() => ink.renderCanvas(null,sampleDocument.result,{paperTexture:false}),
   'paperTexture must be finite');
+rejects(() => ink.createStrokeGroupDocument([{id:'far-left-ridge',strokes:[]}],
+  {width:1600,height:900}), 'A stroke group requires strokes');
+// A zero-opacity mark isolates the real API's transform setup without a
+// drawing backend. This records semantics only, not rendered pixel evidence.
+const transparent=ink.createStrokeGroupDocument([{id:'reed',strokes:[{id:'stem',
+  points:[{x:0,y:0},{x:1,y:-20}]}]}],{width:1600,height:900,opacity:0});
+const transforms=[];
+const context={canvas:{width:1000,height:240},save(){},restore(){},
+  setTransform(...values){transforms.push(values);}};
+ink.renderCanvas(context,transparent.result,{clear:false,paperTexture:0});
 const strokes = Array.from({length:512},(_,i)=>({id:String(i),points}));
 const bounded = ink.createStrokeGroupDocument([{id:'g',strokes}],options);
 rejects(() => ink.createStrokeGroupDocument([{id:'g',strokes:[...strokes,{id:'overflow',points}]}],
   options), 'at most 512 strokes');
 console.log(JSON.stringify({exampleMarks:sampleDocument.result.marks.length,
-  boundedMarks:bounded.result.marks.length}));
+  boundedMarks:bounded.result.marks.length,transforms}));
 '''
     result = subprocess.run(['node', '--input-type=module', '-e', code,
         (ink.ROOT / 'ink-landscape.mjs').as_uri()],
         capture_output=True, text=True, check=True, timeout=30)
-    assert json.loads(result.stdout) == {'exampleMarks': 1, 'boundedMarks': 512}
+    assert json.loads(result.stdout) == {'exampleMarks': 1, 'boundedMarks': 512,
+        'transforms': [[1, 0, 0, 1, 0, 0], [1000 / 1600, 0, 0, 240 / 900, 0, 0]]}
 
 
 @pytest.mark.parametrize('name', list(ink.ASSETS) + ['manifest.json', 'skill/SKILL.md'])

@@ -622,6 +622,65 @@ def test_completed_replay_does_not_consume_the_distinct_request_budget(execution
     assert len(run.calls) == 1
 
 
+def test_film_module_allows_sixteen_calls_then_rejects_without_changing_history(execution):
+    run = execution(profile='video.animation-film-module.v1', max_calls_per_attempt=40)
+    bodies = [dict(run.body, input='Offline module turn ' + str(index)) for index in range(15)]
+    write_history = [
+        {'role': 'user', 'content': 'Offline module task'},
+        {'type': 'function_call', 'call_id': 'call_write', 'name': 'write',
+         'arguments': '{"path":"output.json","content":"offline module"}'},
+        {'type': 'function_call_output', 'call_id': 'call_write', 'output': 'Wrote output.json'},
+    ]
+    bodies.append(dict(run.body, input=write_history))
+    original_bodies = deepcopy(bodies)
+
+    def recorded_state():
+        with run.store.engine.connect() as db:
+            return {table.name: [dict(row) for row in db.execute(select(table)).mappings()]
+                    for table in (jobs, attempts, worker_allocations, requests, image_inputs)}
+
+    control_before = recorded_state()
+    with TestClient(create_model_proxy_app(run.proxy)) as client:
+        headers = {'Authorization': 'Bearer ' + run.token}
+        for body in bodies:
+            response = client.post('/v1/responses', headers=headers, json=body)
+            assert response.status_code == 200
+        assert len(run.calls) == 16
+        assert json.loads(run.calls[-1].content)['input'] == write_history
+        before_replay = recorded_state()
+        records = before_replay[requests.name]
+        assert len(records) == 16 and all(row['state'] == 'complete' for row in records)
+
+        # Paid responses remain replayable at the cap, including the request
+        # after a write result. A new body must fail before durable admission.
+        for body in (bodies[0], bodies[-1]):
+            assert client.post('/v1/responses', headers=headers, json=body).status_code == 200
+        rejected = client.post('/v1/responses', headers=headers,
+            json=dict(run.body, input='Offline seventeenth module turn'))
+        assert rejected.status_code == 429
+        assert rejected.json() == {'error': {'code': 'model_budget_exhausted'}}
+
+    assert len(run.calls) == 16
+    assert bodies == original_bodies
+    assert recorded_state() == before_replay
+    for table in (jobs, attempts, worker_allocations):
+        assert before_replay[table.name] == control_before[table.name]
+
+
+@pytest.mark.parametrize('configured', range(1, 9))
+def test_film_module_honors_stricter_operator_caps_and_free_replay(execution, configured):
+    run = execution(profile='video.animation-film-module.v1', max_calls_per_attempt=configured)
+    for index in range(configured):
+        run.proxy.respond(run.token, dict(run.body, input='Request ' + str(index)))
+    replay = dict(run.body, input='Request 0')
+    assert run.proxy.respond(run.token, replay)[0] == 200
+    error('model_budget_exhausted', lambda: run.proxy.respond(
+        run.token, dict(run.body, input='Request ' + str(configured))), 429)
+    assert len(run.calls) == configured
+    with run.store.engine.connect() as db:
+        assert len(db.execute(select(requests)).all()) == configured
+
+
 @pytest.mark.parametrize('profile', ['video.animation-method-author.v1', 'video.animation-method-review.v1',
                                    'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
                                    'video.reference-learning-author.v1', 'video.reference-learning-review.v1',

@@ -538,7 +538,7 @@ class FilmCreationStore:
                 runtime_identity=caps['runtime_identity'], allowed_engines=caps['allowed_engines'],
                 assets={name: hashlib.sha256(raw).hexdigest() for name, raw in
                     self._assets_for_operations(db, owner, resource_dependencies).items()}, style=film['style'],
-                predecessor_package=predecessor_package, base_module=base_module)
+                base_module=base_module)
             from .film_authoring_resources import attach_authoring_libraries
             core = attach_authoring_libraries(core, caps)
             from .formal_drawing_libraries import attach_drawing_libraries
@@ -549,6 +549,13 @@ class FilmCreationStore:
                 core = attach_film_resource(core, resource['descriptor'], resource['assets'],
                     placement=resource['reference']['placement'],
                     resource_version_id=resource['reference']['resource_version_id'])
+            if predecessor_package is not None:
+                from .film_appearance_context import attach_predecessor_appearance
+                from .formal_drawing_libraries import compact_module_runtime_guidance
+                core = attach_predecessor_appearance(core, predecessor_package,
+                    user_instruction=request['instruction'],
+                    compact_generated_guidance=compact_module_runtime_guidance(caps)
+                        if not prepared and base_reference is None else None)
             if base_reference is not None:
                 require(len(canonical_bytes(core)) <= MAX_TASK_BYTES,
                     'film_creation_base_module_input_too_large', 413)
