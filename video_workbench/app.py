@@ -306,6 +306,7 @@ class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
     reuse_audio_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
+    reuse_completed_prefix_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
     resource_authoring: dict[str, dict] | None = Field(default=None, min_length=1, max_length=8)
     resource_plan: dict | None = Field(default=None)
 

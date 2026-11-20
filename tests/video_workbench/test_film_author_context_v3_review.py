@@ -117,6 +117,9 @@ def test_full_reference_above_instruction_limit_moves_without_source_or_state_ch
     assert len(enhanced['scene']['instruction']) <= 16000
     assert contract.validate_core_task(enhanced) == enhanced
     assert task == original_task and previous == original_package
+    assert 'permanently outside current and future planned views' in enhanced['scene']['instruction']
+    # The guidance concerns new output; the complete original handoff is unchanged.
+    assert canonical_bytes(reference) == canonical_bytes(appearance.predecessor_appearance_reference(task, previous))
 
 
 @pytest.mark.parametrize('change', ['source', 'source_and_hash', 'exit_state', 'exit_state_type', 'input_hash',
@@ -161,6 +164,7 @@ def test_reference_null_and_old_context_fields_and_instruction_limits_remain_str
         contract.validate_core_task(typed)
     for legacy in (core(), explicit_core()):
         assert contract.validate_core_task(legacy) == legacy
+        assert 'permanently outside current and future planned views' not in legacy['scene']['instruction']
         legacy['film_context']['predecessor_appearance'] = None
         with pytest.raises(ServiceError):
             contract.validate_core_task(legacy)
