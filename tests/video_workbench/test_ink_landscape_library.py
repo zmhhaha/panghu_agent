@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -29,6 +30,46 @@ console.log(JSON.stringify({marks:doc.result.marks.length,groups:recipe.groups.l
     value = json.loads(result.stdout)
     assert value['marks'] > 10 and value['groups'] > 1
     assert value['renderCanvas'] == value['inkProcess'] == 'function'
+
+
+def test_runtime_contract_example_and_rejected_transfer_fields_match_pinned_api():
+    # Execute the supplied schema example against the actual fixed module. This
+    # catches documentation drift without asserting that it is an artwork.
+    example, = re.findall(r'```javascript\n(.*?)\n```', ink.runtime_guidance(), re.S)
+    code = '''
+const ink = await import(process.argv[1]);
+''' + example + '''
+const recipe = JSON.parse(JSON.stringify(sampleDocument.recipe));
+if (JSON.stringify(ink.compileStrokeGroupRecipe(recipe)) !== JSON.stringify(sampleDocument.result))
+  throw Error('Example recipe did not rebuild');
+const points = [{x:0,y:0},{x:1,y:1}];
+const options = {width:2,height:2};
+function rejects(action, message) {
+  try { action(); } catch (error) {
+    if (error.message.includes(message)) return;
+    throw error;
+  }
+  throw Error('Invalid API call unexpectedly accepted: ' + message);
+}
+rejects(() => ink.createStrokeGroupDocument([{id:'g',ink:'#242622',
+  strokes:[{id:'s',points}]}],options), 'Unsupported stroke group field: ink');
+rejects(() => ink.createStrokeGroupDocument([{id:'g',
+  strokes:[{id:'s',points,path:points}]}],options), 'Unsupported group stroke field: path');
+rejects(() => ink.createStrokeGroupDocument([{id:'g',strokes:[{id:'s',points}]}],
+  {...options,background:'transparent'}), 'Group colours must be #RRGGBB');
+rejects(() => ink.renderCanvas(null,sampleDocument.result,{paperTexture:false}),
+  'paperTexture must be finite');
+const strokes = Array.from({length:512},(_,i)=>({id:String(i),points}));
+const bounded = ink.createStrokeGroupDocument([{id:'g',strokes}],options);
+rejects(() => ink.createStrokeGroupDocument([{id:'g',strokes:[...strokes,{id:'overflow',points}]}],
+  options), 'at most 512 strokes');
+console.log(JSON.stringify({exampleMarks:sampleDocument.result.marks.length,
+  boundedMarks:bounded.result.marks.length}));
+'''
+    result = subprocess.run(['node', '--input-type=module', '-e', code,
+        (ink.ROOT / 'ink-landscape.mjs').as_uri()],
+        capture_output=True, text=True, check=True, timeout=30)
+    assert json.loads(result.stdout) == {'exampleMarks': 1, 'boundedMarks': 512}
 
 
 @pytest.mark.parametrize('name', list(ink.ASSETS) + ['manifest.json', 'skill/SKILL.md'])

@@ -178,6 +178,35 @@ def test_reproduction_and_transfer_preserve_mp4_source_and_actual_visual_inputs(
     assert submissions == (len(author.submissions), len(reviewer.submissions), len(renderer.calls))
 
 
+@pytest.mark.parametrize('use_wikiskill', [False, True])
+def test_video_transfer_keeps_runtime_api_without_original_goal_or_knowledge(
+        system, real_mp4, tmp_path, monkeypatch, use_wikiskill):
+    from video_workbench.ink_landscape_library import descriptor, runtime_guidance
+    from test_ink_landscape_knowledge import _adapter, _published
+
+    service, author, reviewer, renderer = system
+    library = descriptor()
+    capabilities = dict(renderer.capabilities(), assets=library['assets'],
+        drawing_libraries={'ink-landscape': library})
+    monkeypatch.setattr(renderer, 'capabilities', lambda: deepcopy(capabilities))
+    knowledge_reads = []
+    service.library_adapter = _adapter(tmp_path, _published(), knowledge_reads)
+    original_goal = 'Learn the visible motion; this goal contains no library API documentation.'
+    project, _ = start(service, real_mp4, goal=original_goal, use_wikiskill=use_wikiskill)
+    completed = finish(service, project)
+    assert completed['state'] == 'completed'
+    documents = [document for document, _ in author.uploads + reviewer.uploads]
+    transfer = next(document for document, _ in author.uploads if document['work_kind'] == 'transfer')
+    assert transfer['goal'] != original_goal and original_goal not in transfer['goal']
+    assert transfer['base_source'] is None and transfer['observation']['frames'] == []
+    for document in documents:
+        assert document['constraints']['drawing_library_api'] == runtime_guidance()
+        assert document['constraints']['drawing_libraries'] == {'ink-landscape': library}
+        assert document['knowledge_binding']['use_wikiskill'] is use_wikiskill
+        assert (document['knowledge_snapshot'] is not None) is use_wikiskill
+    assert bool(knowledge_reads) is use_wikiskill
+
+
 @pytest.mark.parametrize('overrides', [dict(start_seconds=-1), dict(end_seconds=3),
     dict(end_seconds=.5), dict(end_seconds=1.1), dict(width=1920), dict(learn_audio='yes')])
 def test_clip_and_runtime_bounds_fail_before_paid_tasks(system, real_mp4, overrides):

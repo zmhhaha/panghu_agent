@@ -201,6 +201,35 @@ def test_reproduction_then_independent_transfer_is_one_project_with_sources(syst
     assert completed['experiments'][0]['transfer_status'] == 'reviewed'
 
 
+@pytest.mark.parametrize('use_wikiskill', [False, True])
+def test_picture_transfer_keeps_runtime_api_without_original_goal_or_knowledge(
+        system, tmp_path, monkeypatch, use_wikiskill):
+    from video_workbench.ink_landscape_library import descriptor, runtime_guidance
+    from test_ink_landscape_knowledge import _adapter, _published
+
+    service, author, reviewer, renderer = system
+    library = descriptor()
+    capabilities = dict(renderer.capabilities(), assets=library['assets'],
+        drawing_libraries={'ink-landscape': library})
+    monkeypatch.setattr(renderer, 'capabilities', lambda: deepcopy(capabilities))
+    knowledge_reads = []
+    service.library_adapter = _adapter(tmp_path, _published(), knowledge_reads)
+    original_goal = 'Learn the visible contour; this goal contains no library API documentation.'
+    project, _ = start(service, goal=original_goal, use_wikiskill=use_wikiskill)
+    completed = finish(service, project)
+    assert completed['state'] == 'completed'
+    documents = [document for document, _ in author.uploads + reviewer.uploads]
+    transfer = next(document for document, _ in author.uploads if document['work_kind'] == 'transfer')
+    assert transfer['goal'] != original_goal and original_goal not in transfer['goal']
+    assert transfer['base_source'] is None and transfer['observation']['frames'] == []
+    for document in documents:
+        assert document['constraints']['drawing_library_api'] == runtime_guidance()
+        assert document['constraints']['drawing_libraries'] == {'ink-landscape': library}
+        assert document['knowledge_binding']['use_wikiskill'] is use_wikiskill
+        assert (document['knowledge_snapshot'] is not None) is use_wikiskill
+    assert bool(knowledge_reads) is use_wikiskill
+
+
 def test_owner_isolation_idempotency_and_read_only_catalog(system):
     service, author, _, _ = system
     project, body = start(service)
