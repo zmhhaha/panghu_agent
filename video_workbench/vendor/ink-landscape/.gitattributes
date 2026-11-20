@@ -1,2 +1,4 @@
 # Frozen assets are hashed as bytes on both Windows and Linux.
 * -text
+# Preserve the audited original source bytes, including its CRLF line endings.
+experience/scene.js whitespace=cr-at-eol
