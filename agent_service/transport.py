@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .contracts import MAX_ARTIFACT_BYTES, ExecutionEnvelope, ProfilePolicy, ServiceError, WorkerResult
+from .contracts import MAX_ARTIFACT_BYTES, ExecutionControl, ExecutionEnvelope, ProfilePolicy, ServiceError, WorkerResult
 
 
 # One bounded inline payload for source+checkpoint or result, plus metadata.
@@ -83,6 +83,8 @@ class RemoteWorkerAdapter:
         self._client.close()
 
     def start(self, envelope: ExecutionEnvelope):
+        if isinstance(envelope, ExecutionControl):
+            raise ServiceError('worker_admission_identity_required', 409)
         return self._json('PUT', f'/v1/executions/{envelope.attempt_id}', envelope.model_dump())
 
     def inspect(self, envelope: ExecutionEnvelope):

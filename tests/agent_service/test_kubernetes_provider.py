@@ -18,7 +18,7 @@ import httpx
 import pytest
 
 from agent_service.api import ApiSettings, create_app
-from agent_service.contracts import (ExecutionEnvelope, InlineFile, ProfilePolicy, ServiceError,
+from agent_service.contracts import (ExecutionControl, ExecutionEnvelope, InlineFile, ProfilePolicy, ServiceError,
     Principal, ProfileRegistry, WorkerResult, canonical_bytes, sign_receipt, validate_workspace_task)
 from agent_service.dispatcher import Dispatcher
 from agent_service.kubernetes_provider import FINALIZER, PREFIX, KubernetesPool, KubernetesWorkerAdapter
@@ -298,6 +298,139 @@ def make_harness(tmp_path):
     yield make
     for value in opened:
         value.store.close()
+
+
+def test_admitted_control_survives_restart_without_reloading_inputs(make_harness, monkeypatch):
+    h = make_harness()
+    job = h.submit()
+    running = h.dispatcher.dispatch_once()
+    original = h.worker.executions[running['attempt_id']]['envelope']
+    h.rebuild_control(reopen=True)
+    control = h.store.worker_control(job['job_id'], running['attempt_id'], running['fence'])
+    assert isinstance(control, ExecutionControl)
+    assert control.request_sha256 == original.request_sha256
+    assert control.max_artifact_bytes == original.max_artifact_bytes
+    def forbidden(*args, **kwargs):
+        pytest.fail('An admitted control operation reloaded immutable input blobs')
+    monkeypatch.setattr(h.store, 'get_input', forbidden)
+    monkeypatch.setattr(h.store, '_worker_envelope', forbidden)
+    monkeypatch.setattr(h.dispatcher, '_envelope', forbidden)
+    h.clock.now += 30
+    assert h.dispatcher.reconcile()['state'] == 'running'
+    assert len(h.progress(job)) == 2
+    h.worker.complete(running['attempt_id'])
+    assert h.dispatcher.tick()['state'] == 'completed'
+    assert len(h.worker.puts()) == 1
+
+
+def test_cold_poll_switches_to_control_immediately_after_native_admission(make_harness, monkeypatch):
+    h = make_harness(cold=True)
+    job = h.submit()
+    starting = h.dispatcher.dispatch_once()
+    assert starting['state'] == 'starting'
+    assert h.store.worker_control(job['job_id'], starting['attempt_id'], starting['fence']) is None
+    h.kube.ready_pod(h.allocation(job)['pod_name'])
+    original = h.adapter.inspect
+    def late_admission(envelope):
+        assert isinstance(envelope, ExecutionEnvelope)
+        value = original(envelope)
+        h.clock.now += 50
+        return value
+    h.adapter.inspect = late_admission
+    renew = h.adapter.renew
+    seen = []
+    def immediate_control(envelope, expires):
+        assert isinstance(envelope, ExecutionControl)
+        seen.append(expires)
+        return renew(envelope, expires)
+    h.adapter.renew = immediate_control
+    assert h.dispatcher.poll(starting)['state'] == 'running'
+    assert seen == [1110]
+    assert len(h.worker.puts()) == 1
+
+
+@pytest.mark.parametrize('change', [
+    {'request_sha256': 'f' * 64}, {'attempt_id': str(uuid4())}, {'fence': 999},
+    {'engine': 'hermes'}, {'profile_revision': 'other'}, {'deadline_at': 9999.0},
+    {'max_artifact_bytes': 1}, {'has_inputs': True},
+])
+def test_control_handle_cannot_change_measured_authority(make_harness, change):
+    h = make_harness()
+    job = h.submit()
+    running = h.dispatcher.dispatch_once()
+    control = h.store.worker_control(job['job_id'], running['attempt_id'], running['fence'])
+    changed = control.model_copy(update=change)
+    with pytest.raises(ServiceError) as error:
+        h.adapter.renew(changed, 1100.0)
+    assert error.value.code == 'stale_attempt'
+    assert len(h.worker.puts()) == 1
+
+
+def test_control_cannot_be_used_for_another_native_admission(make_harness):
+    h = make_harness()
+    job = h.submit()
+    running = h.dispatcher.dispatch_once()
+    control = h.store.worker_control(job['job_id'], running['attempt_id'], running['fence'])
+    with pytest.raises(ServiceError, match='worker_admission_identity_required'):
+        h.adapter.start(control)
+    pod = h.pod(job)
+    remote = h.adapter._remote(control, pod)
+    try:
+        with pytest.raises(ServiceError, match='worker_admission_identity_required'):
+            remote.start(control)
+    finally:
+        remote.close()
+    assert len(h.worker.puts()) == 1
+
+
+def test_control_legacy_intent_falls_back_and_mutated_request_is_rejected(make_harness):
+    from sqlalchemy import select, update
+    from agent_service.store import attempts, jobs
+    h = make_harness()
+    job = h.submit()
+    running = h.dispatcher.dispatch_once()
+    with h.store._tx() as db:
+        intent = dict(db.execute(select(attempts.c.dispatch_intent).where(
+            attempts.c.id == running['attempt_id'])).scalar_one())
+        legacy = {key: value for key, value in intent.items() if key != 'request_hash'}
+        db.execute(update(attempts).where(attempts.c.id == running['attempt_id']).values(dispatch_intent=legacy))
+    assert h.store.worker_control(job['job_id'], running['attempt_id'], running['fence']) is None
+    assert isinstance(h.dispatcher._poll_envelope(running), ExecutionEnvelope)
+    with h.store._tx() as db:
+        db.execute(update(attempts).where(attempts.c.id == running['attempt_id']).values(dispatch_intent=intent))
+        request = dict(db.execute(select(jobs.c.request).where(jobs.c.id == job['job_id'])).scalar_one())
+        request['task'] = {'prompt': 'Changed after reservation'}
+        db.execute(update(jobs).where(jobs.c.id == job['job_id']).values(request=request))
+    with pytest.raises(ServiceError, match='stale_attempt'):
+        h.store.worker_control(job['job_id'], running['attempt_id'], running['fence'])
+
+
+@pytest.mark.parametrize('changed', [{'tenant': 'other'}, {'caller': 'other'}])
+def test_control_keeps_original_owner_binding(make_harness, changed):
+    from sqlalchemy import update
+    from agent_service.store import jobs
+    h = make_harness()
+    job = h.submit()
+    running = h.dispatcher.dispatch_once()
+    with h.store._tx() as db:
+        db.execute(update(jobs).where(jobs.c.id == job['job_id']).values(**changed))
+    with pytest.raises(ServiceError, match='stale_attempt'):
+        h.store.worker_control(job['job_id'], running['attempt_id'], running['fence'])
+
+
+@pytest.mark.parametrize('changed', [{'create_claimed': False}, {'pod_uid': None}])
+def test_control_cannot_recover_unbound_physical_allocation(make_harness, changed):
+    from sqlalchemy import update
+    from agent_service.store import worker_allocations
+    h = make_harness()
+    job = h.submit()
+    running = h.dispatcher.dispatch_once()
+    with h.store._tx() as db:
+        db.execute(update(worker_allocations).where(
+            worker_allocations.c.attempt_id == running['attempt_id']).values(**changed))
+    with pytest.raises(ServiceError, match='stale_attempt'):
+        h.store.worker_control(job['job_id'], running['attempt_id'], running['fence'])
+    assert len(h.worker.puts()) == 1
 
 
 @pytest.mark.parametrize('selector', [

@@ -17,7 +17,7 @@ import re
 import time
 from uuid import UUID
 
-from .contracts import (ProfilePolicy, ServiceError, WorkerResult,
+from .contracts import (ExecutionControl, ProfilePolicy, ServiceError, WorkerResult,
                         canonical_bytes, digest, sign_receipt, verify_receipt)
 from .transport import RemoteWorkerAdapter, WorkerEndpoint
 
@@ -172,8 +172,10 @@ class KubernetesWorkerAdapter:
             raise ServiceError('worker_host_config_invalid', 503) from None
 
     def _manifest(self, envelope):
+        has_inputs = (envelope.has_inputs if isinstance(envelope, ExecutionControl)
+                      else bool(envelope.inputs or envelope.checkpoint_inputs))
         if (not self.pool.policy.matches(envelope)
-                or (envelope.inputs or envelope.checkpoint_inputs) and not self.pool.read_only_mounts):
+                or has_inputs and not self.pool.read_only_mounts):
             raise ServiceError('execution_pins_mismatch', 422)
         attempt = str(UUID(envelope.attempt_id))
         if self.pool.uid_start is None or 2 * envelope.fence > self.pool.uid_count:
@@ -245,7 +247,7 @@ class KubernetesWorkerAdapter:
         try:
             value = self.store.get_worker_allocation(envelope.attempt_id)
         except ServiceError as exc:
-            if not reserve or exc.status != 404:
+            if isinstance(envelope, ExecutionControl) or not reserve or exc.status != 404:
                 raise
             value = self.store.reserve_worker(envelope, self.pool.pool_id, self.pool.namespace,
                                              pod['metadata']['name'], intent,
@@ -348,6 +350,9 @@ class KubernetesWorkerAdapter:
 
     def _advance(self, envelope, *, reserve=False):
         allocation, expected, secret = self._allocation(envelope, reserve=reserve)
+        if isinstance(envelope, ExecutionControl) and (not allocation['worker_start_claimed']
+                or not allocation['create_claimed'] or not allocation['pod_uid']):
+            raise ServiceError('worker_admission_identity_required', 409)
         if allocation['retired']:
             if allocation['stop_observed_at'] is not None:
                 return self._status(envelope, allocation['candidate_result']['state'])
@@ -382,6 +387,8 @@ class KubernetesWorkerAdapter:
         remote = self._remote(envelope, pod)
         try:
             if not allocation['worker_start_claimed']:
+                if isinstance(envelope, ExecutionControl):
+                    raise ServiceError('worker_admission_identity_required', 409)
                 if not remote.ready(self.pool.policy):
                     return self._status(envelope, 'preparing')
                 if self.store.claim_worker_start(envelope.attempt_id, envelope.request_sha256):
@@ -394,6 +401,8 @@ class KubernetesWorkerAdapter:
             remote.close()
 
     def start(self, envelope):
+        if isinstance(envelope, ExecutionControl):
+            raise ServiceError('worker_admission_identity_required', 409)
         if not self.pool.enabled:
             raise ServiceError('worker_pool_disabled', 503)
         return self._advance(envelope, reserve=True)
