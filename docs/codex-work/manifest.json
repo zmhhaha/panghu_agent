@@ -1,0 +1,974 @@
+{
+  "schema": "panghu-agent.codex-design-archive.v1",
+  "summary": {
+    "status": "panghu_agent_designs_integrated_on_mainline_base",
+    "source_records": 59,
+    "canonical_guides": 5,
+    "new_historical_documents": 54,
+    "existing_document_references": 0,
+    "relocated_links": 15,
+    "original_material_reference_count": 12,
+    "source_mutations": 0,
+    "source_deletions": 0,
+    "ink_landscape_content_imports": 0
+  },
+  "repository": "git@github.com:zmhhaha/panghu_agent.git",
+  "base_revision": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+  "canonical_specification": {
+    "baseUrl": "https://openspec.panghuer.top/mcp",
+    "projectId": "ec663f5a-53d3-4a0e-9037-933eb788d183"
+  },
+  "export_policy": {
+    "encoding": "UTF-8",
+    "line_endings": "LF",
+    "original_source_unchanged": true,
+    "existing_main_document_policy": "preserve_original_main_body_append_reviewed_source_supplement_with_provenance"
+  },
+  "documents": [
+    {
+      "source": "D:\\codex-work\\operations\\context500-20261117\\admissions\\README.md",
+      "source_relative": "operations/context500-20261117/admissions/README.md",
+      "source_sha256": "ae78a714264d5898e50ab06ed3839c7eb790262bb6eb4c8adb1545e42063f637",
+      "source_body_sha256": "ae78a714264d5898e50ab06ed3839c7eb790262bb6eb4c8adb1545e42063f637",
+      "normalized_body_sha256": "ae78a714264d5898e50ab06ed3839c7eb790262bb6eb4c8adb1545e42063f637",
+      "destination": "docs/codex-work/operations/context500-20261117/admissions/README.md",
+      "kind": "historical_document",
+      "title": "Context 500 admission evidence",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "f001d858d43caeda1d0ddb18dfac8d4fcaa02706d204ec835dfbaca64ae0b2d5"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-film-recovery-20261121\\README.md",
+      "source_relative": "operations/ink-film-recovery-20261121/README.md",
+      "source_sha256": "33a69526df36364dca1443971245f6793471aad0f1df338a40d91e478d33f8af",
+      "source_body_sha256": "33a69526df36364dca1443971245f6793471aad0f1df338a40d91e478d33f8af",
+      "normalized_body_sha256": "33a69526df36364dca1443971245f6793471aad0f1df338a40d91e478d33f8af",
+      "destination": "docs/codex-work/operations/ink-film-recovery-20261121/README.md",
+      "kind": "historical_document",
+      "title": "Film recovery: exact two-service image rollout",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "5fa460cba288846a0c64af9a12583eacd99d2aab7b95a88ba37014c0d3560a15"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-free-landscape-20261120\\result\\README.md",
+      "source_relative": "operations/ink-free-landscape-20261120/result/README.md",
+      "source_sha256": "707bd6198f545e8e9685bab700e04194c7b15a072c024107613af63d5fdc03a2",
+      "source_body_sha256": "707bd6198f545e8e9685bab700e04194c7b15a072c024107613af63d5fdc03a2",
+      "normalized_body_sha256": "833afddaeba0dd32bd4529c4c4e5ee686715c6b17c3d74fa53420048e4d0caa4",
+      "destination": "docs/codex-work/operations/ink-free-landscape-20261120/result/README.md",
+      "kind": "historical_document",
+      "title": "雨霁江渚",
+      "topic": "其他应用设计与上下文",
+      "repository_sha256": "bd630a3015d7da5ef638357a91103d0e505551658a64616391c34fab03af0e77"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\ARM_LONG_PROBE.md",
+      "source_relative": "operations/ink-long-video-20261120/ARM_LONG_PROBE.md",
+      "source_sha256": "d1d7eb40cef5b8a1881abb2641a47c14af6de71f7576bec6426a3c408759dc03",
+      "source_body_sha256": "d1d7eb40cef5b8a1881abb2641a47c14af6de71f7576bec6426a3c408759dc03",
+      "normalized_body_sha256": "d1d7eb40cef5b8a1881abb2641a47c14af6de71f7576bec6426a3c408759dc03",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/ARM_LONG_PROBE.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "b6bcf6105a5406bcb43cb45a91d59f7275587e141c6799faa7fa8e9d7b72f97c"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\FILM_MODULE_UPGRADE.md",
+      "source_relative": "operations/ink-long-video-20261120/FILM_MODULE_UPGRADE.md",
+      "source_sha256": "13221646bdaf0c83fd6fa03a05254f93faaec1ad7bb18e2b3f32a8819c99a494",
+      "source_body_sha256": "13221646bdaf0c83fd6fa03a05254f93faaec1ad7bb18e2b3f32a8819c99a494",
+      "normalized_body_sha256": "13221646bdaf0c83fd6fa03a05254f93faaec1ad7bb18e2b3f32a8819c99a494",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/FILM_MODULE_UPGRADE.md",
+      "kind": "historical_document",
+      "title": "Explicit-silent film-module role upgrade",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "f350f27704622c85b3d81523d1fcbe6da72a643afad4ffd8445930aeaf793274"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt2\\DOWNLOAD.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt2/DOWNLOAD.md",
+      "source_sha256": "92d06c1f36fa6af327f0a1e357e57c9e4842f57e369f0379562217c0007510f0",
+      "source_body_sha256": "92d06c1f36fa6af327f0a1e357e57c9e4842f57e369f0379562217c0007510f0",
+      "normalized_body_sha256": "92d06c1f36fa6af327f0a1e357e57c9e4842f57e369f0379562217c0007510f0",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt2/DOWNLOAD.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "19465a68ec92a3707623f084a16b39b73e536686399248731c437e2ce2b581f6"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt2\\README.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt2/README.md",
+      "source_sha256": "d7daaf22d814066913149d59775fc21a300e1c0b024463a4f5227832f8799059",
+      "source_body_sha256": "d7daaf22d814066913149d59775fc21a300e1c0b024463a4f5227832f8799059",
+      "normalized_body_sha256": "d7daaf22d814066913149d59775fc21a300e1c0b024463a4f5227832f8799059",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt2/README.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "ee34793822cd1ade185e0a00926ff3f6fbe021004fe9a66f785d3b9a293a963e"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt2\\VERIFICATION.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt2/VERIFICATION.md",
+      "source_sha256": "08d5783794154bf67b9d74161e603025159f330425884e2e4a1ab860171fa7b8",
+      "source_body_sha256": "08d5783794154bf67b9d74161e603025159f330425884e2e4a1ab860171fa7b8",
+      "normalized_body_sha256": "08d5783794154bf67b9d74161e603025159f330425884e2e4a1ab860171fa7b8",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt2/VERIFICATION.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "4cfaf93e1bddede3337e4ee3fc7f515ea47ecea10b11a61a8b5abb7d3b30dd8e"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt3\\OBSERVERS.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt3/OBSERVERS.md",
+      "source_sha256": "7f80464e0b097905dc23b2c5fa93011ec1bd08817ce0623f0b22eef537fa7f43",
+      "source_body_sha256": "7f80464e0b097905dc23b2c5fa93011ec1bd08817ce0623f0b22eef537fa7f43",
+      "normalized_body_sha256": "7f80464e0b097905dc23b2c5fa93011ec1bd08817ce0623f0b22eef537fa7f43",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt3/OBSERVERS.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "645f7589b959807660458f31de0c35cf5320eae93958b0c6333b7a827333b6ea"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt3\\README.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt3/README.md",
+      "source_sha256": "7bfba30d4a53df0c42bfb94f2e760c1f59fbe53235aa0bbb61b2a647bdc1bd86",
+      "source_body_sha256": "7bfba30d4a53df0c42bfb94f2e760c1f59fbe53235aa0bbb61b2a647bdc1bd86",
+      "normalized_body_sha256": "7bfba30d4a53df0c42bfb94f2e760c1f59fbe53235aa0bbb61b2a647bdc1bd86",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt3/README.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "9afd56d9e810e3b5907debcc795373a106ade495543512bf6ce3058131b62d87"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt4\\OBSERVERS.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt4/OBSERVERS.md",
+      "source_sha256": "49967bc00ce709d5bd26a8d90b01c7876f5372a40777a50f5fda71038fc6c419",
+      "source_body_sha256": "49967bc00ce709d5bd26a8d90b01c7876f5372a40777a50f5fda71038fc6c419",
+      "normalized_body_sha256": "49967bc00ce709d5bd26a8d90b01c7876f5372a40777a50f5fda71038fc6c419",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt4/OBSERVERS.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "56b7da3030515b2b32b06b1516b92c0b0f467bee7a74f1c373cb2fd10904741a"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt5\\OBSERVERS.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt5/OBSERVERS.md",
+      "source_sha256": "ede6fdb78d4f773159d4cc58c893f5fa19f3c70cb30a18e0da858214914c9411",
+      "source_body_sha256": "ede6fdb78d4f773159d4cc58c893f5fa19f3c70cb30a18e0da858214914c9411",
+      "normalized_body_sha256": "ede6fdb78d4f773159d4cc58c893f5fa19f3c70cb30a18e0da858214914c9411",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt5/OBSERVERS.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "f9ca2fd4736f21329a2c205eb1c146ca159a00bd60d701ad5d0c75e1407566f0"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt7\\README.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt7/README.md",
+      "source_sha256": "fffa115d076d4169d837f2a67ef8d981b258c6056f6b7d09de0192027a4e899a",
+      "source_body_sha256": "fffa115d076d4169d837f2a67ef8d981b258c6056f6b7d09de0192027a4e899a",
+      "normalized_body_sha256": "fffa115d076d4169d837f2a67ef8d981b258c6056f6b7d09de0192027a4e899a",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt7/README.md",
+      "kind": "historical_document",
+      "title": "Attempt 7: five-minute silent landscape film",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "5a23d9cee5b3282de75736b8330b9efdfe5f6b245cf5e13f1292558d0ada19cd"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt8\\DELIVERY.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt8/DELIVERY.md",
+      "source_sha256": "24f7ae1ea4ca066484e860af78dcd5756b104360e98825152700370d3b168bd9",
+      "source_body_sha256": "24f7ae1ea4ca066484e860af78dcd5756b104360e98825152700370d3b168bd9",
+      "normalized_body_sha256": "24f7ae1ea4ca066484e860af78dcd5756b104360e98825152700370d3b168bd9",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt8/DELIVERY.md",
+      "kind": "historical_document",
+      "title": "《雨霁江渚》五分钟静音试片",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "01ae83782d2889055657297b8a4e842016f0d391389f1194ef43f6820f83f57f"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\attempt8\\README.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/attempt8/README.md",
+      "source_sha256": "49576438a8c87e4f5b94271b820438b4f144e1a328450b2a8a52b0d466f42888",
+      "source_body_sha256": "49576438a8c87e4f5b94271b820438b4f144e1a328450b2a8a52b0d466f42888",
+      "normalized_body_sha256": "49576438a8c87e4f5b94271b820438b4f144e1a328450b2a8a52b0d466f42888",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt8/README.md",
+      "kind": "historical_document",
+      "title": "Attempt8 preparation",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "adae422fc4c1e5239de760276c86267be561c8a44a1ea33335e07790d4d4c3f6"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\formal\\COLLECT_FILM_SOURCES.md",
+      "source_relative": "operations/ink-long-video-20261120/formal/COLLECT_FILM_SOURCES.md",
+      "source_sha256": "3f252a26dd082299ef9abb4dd8707df5098594283c4a52dbbedf8d615b7e1b46",
+      "source_body_sha256": "3f252a26dd082299ef9abb4dd8707df5098594283c4a52dbbedf8d615b7e1b46",
+      "normalized_body_sha256": "3f252a26dd082299ef9abb4dd8707df5098594283c4a52dbbedf8d615b7e1b46",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/formal/COLLECT_FILM_SOURCES.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "f0bd8633e1eeaa7645d9eecf637a5ecb7399a9528bbcc56d1754877515729f99"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\LEASE_HOTPATH_REVIEW.md",
+      "source_relative": "operations/ink-long-video-20261120/LEASE_HOTPATH_REVIEW.md",
+      "source_sha256": "bb3291a9e81c88f5ab64617e38b5a04556ff51fc0c3d5248436ee6d6a6d747c6",
+      "source_body_sha256": "bb3291a9e81c88f5ab64617e38b5a04556ff51fc0c3d5248436ee6d6a6d747c6",
+      "normalized_body_sha256": "bb3291a9e81c88f5ab64617e38b5a04556ff51fc0c3d5248436ee6d6a6d747c6",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/LEASE_HOTPATH_REVIEW.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "2cf9563685e6dbc5e1392d78f2d182b14c43af6ad4b637fba13764622e91619d"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\MANIM_CONSUMER_UPGRADE.md",
+      "source_relative": "operations/ink-long-video-20261120/MANIM_CONSUMER_UPGRADE.md",
+      "source_sha256": "9f02b29974794487412a0a86b57defa05290f29c838990ddb2faa10e9da3ff9c",
+      "source_body_sha256": "9f02b29974794487412a0a86b57defa05290f29c838990ddb2faa10e9da3ff9c",
+      "normalized_body_sha256": "9f02b29974794487412a0a86b57defa05290f29c838990ddb2faa10e9da3ff9c",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/MANIM_CONSUMER_UPGRADE.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "128b873d519f622634cfe7f15107a64579c72e8a94c020b1783449742b7c6154"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\RECOVERY_OPTOUT.md",
+      "source_relative": "operations/ink-long-video-20261120/RECOVERY_OPTOUT.md",
+      "source_sha256": "10bc94c981dbddc12beab2618edd17cd2088fdd15f8c202dac0bcc0efe2d8a4e",
+      "source_body_sha256": "10bc94c981dbddc12beab2618edd17cd2088fdd15f8c202dac0bcc0efe2d8a4e",
+      "normalized_body_sha256": "10bc94c981dbddc12beab2618edd17cd2088fdd15f8c202dac0bcc0efe2d8a4e",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/RECOVERY_OPTOUT.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "6ecc0f8d697f4ffa2ebce9b990523938a32c90e18e15385a0b64ce143806ae45"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\render-canvas2d-recovery\\OPERATIONS.md",
+      "source_relative": "operations/ink-long-video-20261120/render-canvas2d-recovery/OPERATIONS.md",
+      "source_sha256": "cbc856accee187b1eeb427bb2036e669f85a23c241b2f7948e4249e79479abd2",
+      "source_body_sha256": "cbc856accee187b1eeb427bb2036e669f85a23c241b2f7948e4249e79479abd2",
+      "normalized_body_sha256": "cbc856accee187b1eeb427bb2036e669f85a23c241b2f7948e4249e79479abd2",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/render-canvas2d-recovery/OPERATIONS.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "5d27df8bdcf1c9d0b35dafb8e9e79710a145da88d5d9da61655a59cb23394c0a"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\render-canvas2d-recovery\\POLICY-OPERATIONS.md",
+      "source_relative": "operations/ink-long-video-20261120/render-canvas2d-recovery/POLICY-OPERATIONS.md",
+      "source_sha256": "7a38d88754da7db906e5e67c60344b423036b57d7847c47cef09d83f02f1c8f4",
+      "source_body_sha256": "7a38d88754da7db906e5e67c60344b423036b57d7847c47cef09d83f02f1c8f4",
+      "normalized_body_sha256": "7a38d88754da7db906e5e67c60344b423036b57d7847c47cef09d83f02f1c8f4",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/render-canvas2d-recovery/POLICY-OPERATIONS.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "db7e2d2622b0e97530da27791f3123b62008398ca969d374853e1e4e1d59b6be"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\render-canvas2d-recovery\\READONLY-POSTFLIGHT.md",
+      "source_relative": "operations/ink-long-video-20261120/render-canvas2d-recovery/READONLY-POSTFLIGHT.md",
+      "source_sha256": "a178319312bb5773ac6842bf16ae741360f54853a59621e59ca431f40d75dd3b",
+      "source_body_sha256": "a178319312bb5773ac6842bf16ae741360f54853a59621e59ca431f40d75dd3b",
+      "normalized_body_sha256": "a178319312bb5773ac6842bf16ae741360f54853a59621e59ca431f40d75dd3b",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/render-canvas2d-recovery/READONLY-POSTFLIGHT.md",
+      "kind": "historical_document",
+      "title": "Read-only postflight and live source dry-run",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "b33ef01081ab565f2081e0f31ea6f09346c837398f00f6da21bd9221a222caae"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\SPARSE_FILM_PREVIEW.md",
+      "source_relative": "operations/ink-long-video-20261120/SPARSE_FILM_PREVIEW.md",
+      "source_sha256": "e39344ecbd93516979ce91926e226923eb8eb9e99540c8383a44612083c61de0",
+      "source_body_sha256": "e39344ecbd93516979ce91926e226923eb8eb9e99540c8383a44612083c61de0",
+      "normalized_body_sha256": "e39344ecbd93516979ce91926e226923eb8eb9e99540c8383a44612083c61de0",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/SPARSE_FILM_PREVIEW.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "df71c5fddc1b1086fb3c153d7c28cd2a947e84238e97dc22135b485793a545f5"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\timeout-recovery\\BUILD-AND-ADMISSION-OPERATIONS.md",
+      "source_relative": "operations/ink-long-video-20261120/timeout-recovery/BUILD-AND-ADMISSION-OPERATIONS.md",
+      "source_sha256": "934ee166331f21d138635ea2be5ecd26e6e76ac0466043c1b1622fc912296e4d",
+      "source_body_sha256": "934ee166331f21d138635ea2be5ecd26e6e76ac0466043c1b1622fc912296e4d",
+      "normalized_body_sha256": "934ee166331f21d138635ea2be5ecd26e6e76ac0466043c1b1622fc912296e4d",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/timeout-recovery/BUILD-AND-ADMISSION-OPERATIONS.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "55ffe27b891276203c617a8242ef4ef751855065c85cb7653fbb23ffeb29d0d4"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\timeout-recovery\\ROLLOUT-ATTEMPT8-PREPARATION.md",
+      "source_relative": "operations/ink-long-video-20261120/timeout-recovery/ROLLOUT-ATTEMPT8-PREPARATION.md",
+      "source_sha256": "2076fd389c622a6906dd44f7c84d1d9fd60f5faaa7cfb1b4baec20589a7bcaa7",
+      "source_body_sha256": "2076fd389c622a6906dd44f7c84d1d9fd60f5faaa7cfb1b4baec20589a7bcaa7",
+      "normalized_body_sha256": "2076fd389c622a6906dd44f7c84d1d9fd60f5faaa7cfb1b4baec20589a7bcaa7",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/timeout-recovery/ROLLOUT-ATTEMPT8-PREPARATION.md",
+      "kind": "historical_document",
+      "title": "Trusted 10800-second wall-clock recovery: preparation only",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "08937912c1821347e85dabdf22c0b3c8f6698c6608024cca6d0838001f3aa1d0"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-long-video-20261120\\timeout-recovery\\TIMEOUT-POLICY-OPERATIONS.md",
+      "source_relative": "operations/ink-long-video-20261120/timeout-recovery/TIMEOUT-POLICY-OPERATIONS.md",
+      "source_sha256": "d0249cc3a56a356827e2015f19b045d4483329f1b7d11710f5f63428376f4c34",
+      "source_body_sha256": "d0249cc3a56a356827e2015f19b045d4483329f1b7d11710f5f63428376f4c34",
+      "normalized_body_sha256": "d0249cc3a56a356827e2015f19b045d4483329f1b7d11710f5f63428376f4c34",
+      "destination": "docs/codex-work/operations/ink-long-video-20261120/timeout-recovery/TIMEOUT-POLICY-OPERATIONS.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "2736438e7f5e9430f64fa39829b6e0dafebe3f52dd36a99e2de27f3fbef9f581"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-native-drain-20261121\\publication\\MONITOR-AND-AUDIT.md",
+      "source_relative": "operations/ink-native-drain-20261121/publication/MONITOR-AND-AUDIT.md",
+      "source_sha256": "584e445c61152c9f9f56a68249765b50b6cd0844038a388159458194c855c17b",
+      "source_body_sha256": "584e445c61152c9f9f56a68249765b50b6cd0844038a388159458194c855c17b",
+      "normalized_body_sha256": "584e445c61152c9f9f56a68249765b50b6cd0844038a388159458194c855c17b",
+      "destination": "docs/codex-work/operations/ink-native-drain-20261121/publication/MONITOR-AND-AUDIT.md",
+      "kind": "historical_document",
+      "title": "Sixth actual publication and read-only audit",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "5340a5e83c81453d01d9e25c2466b305a509e1d29ed64ac61cafe57b32effeb6"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-native-drain-20261121\\publication\\README.md",
+      "source_relative": "operations/ink-native-drain-20261121/publication/README.md",
+      "source_sha256": "bbae3a718875f04cb5b45184dcab01d4cb69a126a529f24e731064473a3eff54",
+      "source_body_sha256": "bbae3a718875f04cb5b45184dcab01d4cb69a126a529f24e731064473a3eff54",
+      "normalized_body_sha256": "bbae3a718875f04cb5b45184dcab01d4cb69a126a529f24e731064473a3eff54",
+      "destination": "docs/codex-work/operations/ink-native-drain-20261121/publication/README.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "c439620e88d67da1f8f0e2925a6e601ee46eb46455c8d9099b71a95fdbdda127"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-picture-quality-20261120\\feedback-second.md",
+      "source_relative": "operations/ink-picture-quality-20261120/feedback-second.md",
+      "source_sha256": "c3f87396c855409ef778bf07b4d69b03e65a5464fe4e7cd9d3b734228c9b88ff",
+      "source_body_sha256": "c3f87396c855409ef778bf07b4d69b03e65a5464fe4e7cd9d3b734228c9b88ff",
+      "normalized_body_sha256": "c3f87396c855409ef778bf07b4d69b03e65a5464fe4e7cd9d3b734228c9b88ff",
+      "destination": "docs/codex-work/operations/ink-picture-quality-20261120/feedback-second.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "e08816f810c4eb1cb70cbb93632798725710a026f219b80cafc1454e13ddd9c1"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-prefix-continuation-20261121\\README.md",
+      "source_relative": "operations/ink-prefix-continuation-20261121/README.md",
+      "source_sha256": "30bfd01be311fbf4db287156ce60d794cd2d6e4c3259627c2e392133c8042ebe",
+      "source_body_sha256": "30bfd01be311fbf4db287156ce60d794cd2d6e4c3259627c2e392133c8042ebe",
+      "normalized_body_sha256": "30bfd01be311fbf4db287156ce60d794cd2d6e4c3259627c2e392133c8042ebe",
+      "destination": "docs/codex-work/operations/ink-prefix-continuation-20261121/README.md",
+      "kind": "historical_document",
+      "title": "历史说明",
+      "topic": "长片、合同与恢复",
+      "repository_sha256": "dd2bcbdda88f09b0f17197daf128cac400f7e68d0a96f5a8eb1fd5d3faf3e72f"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-quality-perf-20261117\\benchmark\\report.md",
+      "source_relative": "operations/ink-quality-perf-20261117/benchmark/report.md",
+      "source_sha256": "cb6281ecb800c814bdf4fe5d96ccf503d1b2077b8553f5acb88f71487bec4fe8",
+      "source_body_sha256": "cb6281ecb800c814bdf4fe5d96ccf503d1b2077b8553f5acb88f71487bec4fe8",
+      "normalized_body_sha256": "cb6281ecb800c814bdf4fe5d96ccf503d1b2077b8553f5acb88f71487bec4fe8",
+      "destination": "docs/codex-work/operations/ink-quality-perf-20261117/benchmark/report.md",
+      "kind": "historical_document",
+      "title": "One ARM comparison of the two unchanged ink-animation works",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "a0bb59cd43169dc409c6cfc589818b677aa09601e5bf7c0f735fca4dafdbaa65"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-quality-perf-20261117\\release-diagnosis\\AUTHOR-IDLE-RELEASE.md",
+      "source_relative": "operations/ink-quality-perf-20261117/release-diagnosis/AUTHOR-IDLE-RELEASE.md",
+      "source_sha256": "cc43888b137f0ba261c98081e7fd1d8d850f5bdfc2590e2dda790b08cb27a169",
+      "source_body_sha256": "cc43888b137f0ba261c98081e7fd1d8d850f5bdfc2590e2dda790b08cb27a169",
+      "normalized_body_sha256": "2e6fda587180283b5cd8456b06237b04d9ec718e7109b19dfa28d73925aeb084",
+      "destination": "docs/codex-work/operations/ink-quality-perf-20261117/release-diagnosis/AUTHOR-IDLE-RELEASE.md",
+      "kind": "historical_document",
+      "title": "Author HTTP idle runtime release",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "cf26ba324a67cad68f9300fb302eca29f49b3d675c1bed9159d41da91184482c"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-quality-perf-20261117\\release-diagnosis\\retry-fix\\RETRY-EXECUTOR-RELEASE.md",
+      "source_relative": "operations/ink-quality-perf-20261117/release-diagnosis/retry-fix/RETRY-EXECUTOR-RELEASE.md",
+      "source_sha256": "1a26f719bd751ba3980b8b086baecb3b8302afb2501338368e384bef834ac047",
+      "source_body_sha256": "1a26f719bd751ba3980b8b086baecb3b8302afb2501338368e384bef834ac047",
+      "normalized_body_sha256": "98e3bf7de2ff2eeedcff9f61fdf2414ccaf436dc3023bf842bf0a6a091e78c25",
+      "destination": "docs/codex-work/operations/ink-quality-perf-20261117/release-diagnosis/retry-fix/RETRY-EXECUTOR-RELEASE.md",
+      "kind": "historical_document",
+      "title": "Retry materialization executor release",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "eb05d79599df3a89d85db36d6a3810d014a4dd351ae70bf47f578fac0b2a2776"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-semantic-shader-study-20261119\\independent-tech-review.md",
+      "source_relative": "operations/ink-semantic-shader-study-20261119/independent-tech-review.md",
+      "source_sha256": "64e582d80ad2d09f995a6fda626349532cc6b7b1055af83ca518951d4e910de4",
+      "source_body_sha256": "64e582d80ad2d09f995a6fda626349532cc6b7b1055af83ca518951d4e910de4",
+      "normalized_body_sha256": "64e582d80ad2d09f995a6fda626349532cc6b7b1055af83ca518951d4e910de4",
+      "destination": "docs/codex-work/operations/ink-semantic-shader-study-20261119/independent-tech-review.md",
+      "kind": "historical_document",
+      "title": "Independent technical review — semantic ink shader study",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "82b45d4936c31b06b4f98acfa6d3e1327b5af88af01f844a2c1d53517bf14260"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-semantic-shader-study-20261119\\r1-visual-review.md",
+      "source_relative": "operations/ink-semantic-shader-study-20261119/r1-visual-review.md",
+      "source_sha256": "755a0e301adb56596ad414bc5cbe763307a41495540c37076b3f1ec8a76cdbb5",
+      "source_body_sha256": "755a0e301adb56596ad414bc5cbe763307a41495540c37076b3f1ec8a76cdbb5",
+      "normalized_body_sha256": "755a0e301adb56596ad414bc5cbe763307a41495540c37076b3f1ec8a76cdbb5",
+      "destination": "docs/codex-work/operations/ink-semantic-shader-study-20261119/r1-visual-review.md",
+      "kind": "historical_document",
+      "title": "r1 独立视觉评审",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "731b81f9a08982fd9affd53133c7e279de94521a7aabb63161d1017ff83fecc1"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-semantic-shader-study-20261119\\r2-visual-review.md",
+      "source_relative": "operations/ink-semantic-shader-study-20261119/r2-visual-review.md",
+      "source_sha256": "fdd2c81a81182752eef70d4848d9a1dbd6b26148cd5819ba51a574a6663d22cd",
+      "source_body_sha256": "fdd2c81a81182752eef70d4848d9a1dbd6b26148cd5819ba51a574a6663d22cd",
+      "normalized_body_sha256": "fdd2c81a81182752eef70d4848d9a1dbd6b26148cd5819ba51a574a6663d22cd",
+      "destination": "docs/codex-work/operations/ink-semantic-shader-study-20261119/r2-visual-review.md",
+      "kind": "historical_document",
+      "title": "r2 最终独立视觉评审",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "56543a8d6c2ca9bc8732eea4675e10ed18fcd0bed25e666b3b1acc9580395c8c"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-wikiskill-integration-20261120\\technical-probe\\README.md",
+      "source_relative": "operations/ink-wikiskill-integration-20261120/technical-probe/README.md",
+      "source_sha256": "017c7f1c52126d22e37673599e67e75ba24bb8186f73fe9a6bb18d7f9d650505",
+      "source_body_sha256": "017c7f1c52126d22e37673599e67e75ba24bb8186f73fe9a6bb18d7f9d650505",
+      "normalized_body_sha256": "017c7f1c52126d22e37673599e67e75ba24bb8186f73fe9a6bb18d7f9d650505",
+      "destination": "docs/codex-work/operations/ink-wikiskill-integration-20261120/technical-probe/README.md",
+      "kind": "historical_document",
+      "title": "ink-landscape real runtime technical probe",
+      "topic": "运行准入与历史发布",
+      "repository_sha256": "38a1d050ffbabe219684cc226e626d379ad130ffadb8a29ab156bf7ff2f25dec"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\lab-capability-selection-20261116\\README.md",
+      "source_relative": "operations/lab-capability-selection-20261116/README.md",
+      "source_sha256": "5c2a79e80fcfa58030a7692b959f702130d768b7937a4ffc8d192ac99db20515",
+      "source_body_sha256": "5c2a79e80fcfa58030a7692b959f702130d768b7937a4ffc8d192ac99db20515",
+      "normalized_body_sha256": "689f29826b313c61320f0932dea81052e867ef81b4bda3b2a0c66fd34d9bb2c4",
+      "destination": "docs/codex-work/operations/lab-capability-selection-20261116/README.md",
+      "kind": "historical_document",
+      "title": "实验室能力选择发布记录",
+      "topic": "运行准入与历史发布",
+      "repository_sha256": "4f8d9e01ab5cb04d2c6b6ec6c2e26211139bbe07c1b3bd7a8ac2e68249821990"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\lotus-video-retry-20261119\\readonly-diagnostics-summary.md",
+      "source_relative": "operations/lotus-video-retry-20261119/readonly-diagnostics-summary.md",
+      "source_sha256": "289bb13af7ffcc86850e66f683cdf0a8cf2f609013f4d809d59852370828e4b0",
+      "source_body_sha256": "289bb13af7ffcc86850e66f683cdf0a8cf2f609013f4d809d59852370828e4b0",
+      "normalized_body_sha256": "289bb13af7ffcc86850e66f683cdf0a8cf2f609013f4d809d59852370828e4b0",
+      "destination": "docs/codex-work/operations/lotus-video-retry-20261119/readonly-diagnostics-summary.md",
+      "kind": "historical_document",
+      "title": "Authorized retry: read-only native diagnostics",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "2eacc17ab38d8e0a47b890d99267dce988c30be72f5d646fd82c793d3f43d92f"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\lotus-video-retry-20261119\\result.md",
+      "source_relative": "operations/lotus-video-retry-20261119/result.md",
+      "source_sha256": "46b560bdd53cc6ae0b42f3fdc614b71af6fc104a2eb96fae8d0a60bd6b2c7ab3",
+      "source_body_sha256": "46b560bdd53cc6ae0b42f3fdc614b71af6fc104a2eb96fae8d0a60bd6b2c7ab3",
+      "normalized_body_sha256": "46b560bdd53cc6ae0b42f3fdc614b71af6fc104a2eb96fae8d0a60bd6b2c7ab3",
+      "destination": "docs/codex-work/operations/lotus-video-retry-20261119/result.md",
+      "kind": "historical_document",
+      "title": "Authorized model_error retry result",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "68a9e4c026b98434abc714ebac022abe3a6a82443eaaea86576924b51de030f5"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\peak-original-extended-20261119\\README.md",
+      "source_relative": "operations/peak-original-extended-20261119/README.md",
+      "source_sha256": "19eca1742546936f82f06dc7e4416c14cb9c685fe48277c0b6ef0e13652b50b2",
+      "source_body_sha256": "19eca1742546936f82f06dc7e4416c14cb9c685fe48277c0b6ef0e13652b50b2",
+      "normalized_body_sha256": "19eca1742546936f82f06dc7e4416c14cb9c685fe48277c0b6ef0e13652b50b2",
+      "destination": "docs/codex-work/operations/peak-original-extended-20261119/README.md",
+      "kind": "historical_document",
+      "title": "原版峰林隔离对照导出",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "aa383ef821cb63ad98cb7da492033a34be7ebcb8acd69c7e9c100eb07b1a6ddb"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\peak-original-extended-20261119\\visual-comparison.md",
+      "source_relative": "operations/peak-original-extended-20261119/visual-comparison.md",
+      "source_sha256": "d32ead6b04a47e0edbdbd94a4890105afd7ad780bdca28f9c14d4d980cfba1a7",
+      "source_body_sha256": "d32ead6b04a47e0edbdbd94a4890105afd7ad780bdca28f9c14d4d980cfba1a7",
+      "normalized_body_sha256": "d32ead6b04a47e0edbdbd94a4890105afd7ad780bdca28f9c14d4d980cfba1a7",
+      "destination": "docs/codex-work/operations/peak-original-extended-20261119/visual-comparison.md",
+      "kind": "historical_document",
+      "title": "原版与修复版实际采样画面对照",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "60cb7a86270aff356fff1547e0a6fe1795af80f4ac657ef4bb09aea0e7a4374c"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\prompt-inspection-20261117\\lab-prompt-inspection-validation-20261117.md",
+      "source_relative": "operations/prompt-inspection-20261117/lab-prompt-inspection-validation-20261117.md",
+      "source_sha256": "9c1eae4bd74853f48e6767549597ad2e9445152e040b27afeaf01bafc0aa2739",
+      "source_body_sha256": "9c1eae4bd74853f48e6767549597ad2e9445152e040b27afeaf01bafc0aa2739",
+      "normalized_body_sha256": "8f24abad4c5a21935fd69f0e90fdd3d992992322e997c071473c44291f695de8",
+      "destination": "docs/codex-work/operations/prompt-inspection-20261117/lab-prompt-inspection-validation-20261117.md",
+      "kind": "historical_document",
+      "title": "动画实验需求与 Agent 输入查看验证",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "bb497420fc2f8919a1c6f8019b23534f37b75c4177950f5ad3210acbfe806793",
+      "original_destination": "video_workbench/docs/lab-prompt-inspection-validation-20261117.md",
+      "mainline_integration": "source_branch_existing_document_missing_on_main_archived_as_history"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\remote-reference-learning-20261119\\REACTIVATION.md",
+      "source_relative": "operations/remote-reference-learning-20261119/REACTIVATION.md",
+      "source_sha256": "a70605a175ff680ed9eb99fe1d0b2f51e6fd9480031f06617ea3494020eef251",
+      "source_body_sha256": "a70605a175ff680ed9eb99fe1d0b2f51e6fd9480031f06617ea3494020eef251",
+      "normalized_body_sha256": "a70605a175ff680ed9eb99fe1d0b2f51e6fd9480031f06617ea3494020eef251",
+      "destination": "docs/codex-work/operations/remote-reference-learning-20261119/REACTIVATION.md",
+      "kind": "historical_document",
+      "title": "Existing caller re-admission for remote-reference learning",
+      "topic": "运行准入与历史发布",
+      "repository_sha256": "92fc7de239226ee1113c1e45d6986fd121a9d579e1bb108d97fa54fb3999ecfc"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\shader-mali-adaptation-20261118\\ink-r3-audit.md",
+      "source_relative": "operations/shader-mali-adaptation-20261118/ink-r3-audit.md",
+      "source_sha256": "148b6c77efe92d4ec285ca207c1a71d01d77324b11aae09d8d1d12d4ae3e7461",
+      "source_body_sha256": "148b6c77efe92d4ec285ca207c1a71d01d77324b11aae09d8d1d12d4ae3e7461",
+      "normalized_body_sha256": "148b6c77efe92d4ec285ca207c1a71d01d77324b11aae09d8d1d12d4ae3e7461",
+      "destination": "docs/codex-work/operations/shader-mali-adaptation-20261118/ink-r3-audit.md",
+      "kind": "historical_document",
+      "title": "水墨 r3 独立复核",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "17b6460803478d8aa48176cbc25264b747a7ff067967952e8ba428c47190f17a"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\shader-mali-adaptation-20261118\\ink-r4-audit.md",
+      "source_relative": "operations/shader-mali-adaptation-20261118/ink-r4-audit.md",
+      "source_sha256": "229105a6dfb2519bccc2073958e08c3feb1387131a75904701e44624e286c507",
+      "source_body_sha256": "229105a6dfb2519bccc2073958e08c3feb1387131a75904701e44624e286c507",
+      "normalized_body_sha256": "229105a6dfb2519bccc2073958e08c3feb1387131a75904701e44624e286c507",
+      "destination": "docs/codex-work/operations/shader-mali-adaptation-20261118/ink-r4-audit.md",
+      "kind": "historical_document",
+      "title": "水墨 r4 独立复核",
+      "topic": "渲染、后端与性能",
+      "repository_sha256": "7e41f1e07dd424b907351811b54c9590aebe6b7077eb85d431f520f44bd99c98"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\video-learning-failure-20261119\\diagnosis.md",
+      "source_relative": "operations/video-learning-failure-20261119/diagnosis.md",
+      "source_sha256": "7a92686433863f91229107f71a3f693ece37d33039803b9c4c3298fde073c5db",
+      "source_body_sha256": "7a92686433863f91229107f71a3f693ece37d33039803b9c4c3298fde073c5db",
+      "normalized_body_sha256": "7a92686433863f91229107f71a3f693ece37d33039803b9c4c3298fde073c5db",
+      "destination": "docs/codex-work/operations/video-learning-failure-20261119/diagnosis.md",
+      "kind": "historical_document",
+      "title": "视频学习任务失败调查（2026-11-19）",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "dc43170ada74ac4917a4b5f5bf7fc937824596cf1363c8941eaccb060c2499c7"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\video-learning-render-repair-20261119\\deploy-plan.md",
+      "source_relative": "operations/video-learning-render-repair-20261119/deploy-plan.md",
+      "source_sha256": "e21dbadca6f81238bd47e41311a13cf10a8693a9f5a49c20c4af3faa65518779",
+      "source_body_sha256": "e21dbadca6f81238bd47e41311a13cf10a8693a9f5a49c20c4af3faa65518779",
+      "normalized_body_sha256": "e21dbadca6f81238bd47e41311a13cf10a8693a9f5a49c20c4af3faa65518779",
+      "destination": "docs/codex-work/operations/video-learning-render-repair-20261119/deploy-plan.md",
+      "kind": "historical_document",
+      "title": "Video learning render-repair deployment preparation",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "1cafc423e63cbe54b9f9d61d67513eff9610256c725586c6c06f35d133b2a3cc"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\video-learning-render-repair-20261119\\release-commands.md",
+      "source_relative": "operations/video-learning-render-repair-20261119/release-commands.md",
+      "source_sha256": "1c4ad269194b683a9e313add231c2cef118f11d63f87754404b7f96b2485986e",
+      "source_body_sha256": "1c4ad269194b683a9e313add231c2cef118f11d63f87754404b7f96b2485986e",
+      "normalized_body_sha256": "1c4ad269194b683a9e313add231c2cef118f11d63f87754404b7f96b2485986e",
+      "destination": "docs/codex-work/operations/video-learning-render-repair-20261119/release-commands.md",
+      "kind": "historical_document",
+      "title": "Commands after the real repair revision is committed and pushed",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "2753166c6333a81da4108059ac0f4ebbdf5b1e363c671afa243bdca842eafbc5"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\video-resource-priority-release-20261119\\README.md",
+      "source_relative": "operations/video-resource-priority-release-20261119/README.md",
+      "source_sha256": "aa4925b2bf9e5f5cec77ccf769965ca054cce426c43ae8a9a9cb859f2881269b",
+      "source_body_sha256": "aa4925b2bf9e5f5cec77ccf769965ca054cce426c43ae8a9a9cb859f2881269b",
+      "normalized_body_sha256": "aa4925b2bf9e5f5cec77ccf769965ca054cce426c43ae8a9a9cb859f2881269b",
+      "destination": "docs/codex-work/operations/video-resource-priority-release-20261119/README.md",
+      "kind": "historical_document",
+      "title": "资源优先策略 executor 发布",
+      "topic": "运行准入与历史发布",
+      "repository_sha256": "cb24bd39b8a398dd6e8ef5007a5506c772b7bde112e2bf7120aeffbe933f8165"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\wanwu-video-learning-20261118\\whole-film-study.md",
+      "source_relative": "operations/wanwu-video-learning-20261118/whole-film-study.md",
+      "source_sha256": "6d1008911ab7ab6e8b3917f153d57924f166a58d371a4adc241255db6601901c",
+      "source_body_sha256": "6d1008911ab7ab6e8b3917f153d57924f166a58d371a4adc241255db6601901c",
+      "normalized_body_sha256": "6d1008911ab7ab6e8b3917f153d57924f166a58d371a4adc241255db6601901c",
+      "destination": "docs/codex-work/operations/wanwu-video-learning-20261118/whole-film-study.md",
+      "kind": "historical_document",
+      "title": "《万物》全片学习候选分析",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "7a463a9ab2f32deda5e858e17059d6be287fcf5ab21ebbd562abb5872d5dce26"
+    },
+    {
+      "source": "D:\\codex-work\\archives\\video-service\\20261116\\c-rendered\\feedback-20261106\\animation-lab\\agent-creation-phase1\\creation-product-r1\\method-runtime-operations-plan.md",
+      "source_relative": "archives/video-service/20261116/c-rendered/feedback-20261106/animation-lab/agent-creation-phase1/creation-product-r1/method-runtime-operations-plan.md",
+      "source_sha256": "d46a49399351e2cf971318abb3c3f9a0d7f9c9413b5aa04452a26d4e434dc12d",
+      "source_body_sha256": "d46a49399351e2cf971318abb3c3f9a0d7f9c9413b5aa04452a26d4e434dc12d",
+      "normalized_body_sha256": "d46a49399351e2cf971318abb3c3f9a0d7f9c9413b5aa04452a26d4e434dc12d",
+      "destination": "docs/codex-work/history/20261116/method-runtime-operations-plan.md",
+      "kind": "historical_document",
+      "title": "最新执行进展：r4 方法运行时已激活（2026-11-11）",
+      "topic": "其他应用设计与上下文",
+      "repository_sha256": "9771d699fd3bf919a728eeddfd51b16f6ab1ec402a274fa79a76fa756c35b1d5"
+    },
+    {
+      "source": "D:\\codex-work\\archives\\video-service\\20261116\\c-rendered\\feedback-20261106\\release-plan.md",
+      "source_relative": "archives/video-service/20261116/c-rendered/feedback-20261106/release-plan.md",
+      "source_sha256": "a41ed83a4524785d1e7e3897b8453e19828c8455b0349169bea30f6f12d4dbf8",
+      "source_body_sha256": "a41ed83a4524785d1e7e3897b8453e19828c8455b0349169bea30f6f12d4dbf8",
+      "normalized_body_sha256": "a41ed83a4524785d1e7e3897b8453e19828c8455b0349169bea30f6f12d4dbf8",
+      "destination": "docs/codex-work/history/20261116/release-plan.md",
+      "kind": "historical_document",
+      "title": "11月6日反馈修复发布准备",
+      "topic": "运行准入与历史发布",
+      "repository_sha256": "455f71977fcb52fd840c2970ea75ae14ea7017716b3467682ce1243ee8ba7d72"
+    },
+    {
+      "source": "D:\\codex-work\\tmp\\video-service\\fresh-implementation-1117\\release\\README.md",
+      "source_relative": "tmp/video-service/fresh-implementation-1117/release/README.md",
+      "source_sha256": "abedd06d77ce1b3987a80eb005959fa7b4ce4b27395dd2f03f03428e8a03ffe0",
+      "source_body_sha256": "abedd06d77ce1b3987a80eb005959fa7b4ce4b27395dd2f03f03428e8a03ffe0",
+      "normalized_body_sha256": "abedd06d77ce1b3987a80eb005959fa7b4ce4b27395dd2f03f03428e8a03ffe0",
+      "destination": "docs/codex-work/history/20261117/fresh-rebuild-release.md",
+      "kind": "historical_document",
+      "title": "2026-11-17 从零重做 / WikiSkill 选择 发布准备",
+      "topic": "运行准入与历史发布",
+      "repository_sha256": "ac06a7bc67fab42bc346ffa5f3e25370e69ae176297fdd5202c83e687cd1b9dd"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-scene-depth-20261121\\source\\video_workbench\\docs\\general-creative-collaboration.md",
+      "source_relative": "operations/ink-scene-depth-20261121/source/video_workbench/docs/general-creative-collaboration.md",
+      "source_sha256": "9ee6cf91c578969d191c1b7425779327f5b83aadfada737c9d37e780aee10df2",
+      "source_body_sha256": "9ee6cf91c578969d191c1b7425779327f5b83aadfada737c9d37e780aee10df2",
+      "normalized_body_sha256": "f747e315fb439a48e34965297609b508b1f51b8820ce03c7048d9416767b0826",
+      "destination": "video_workbench/docs/general-creative-collaboration.md",
+      "kind": "canonical_design_guide",
+      "title": "通用协作与创作指导",
+      "topic": "其他应用设计与上下文",
+      "repository_sha256": "efd6a85c172710532d483d3818966920d479f49b8c89b35495730f1f4a03bfbb",
+      "mainline_integration": "main_body_preserved_with_reviewed_design_appendix"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-scene-depth-20261121\\source\\video_workbench\\docs\\picture-learning-library.md",
+      "source_relative": "operations/ink-scene-depth-20261121/source/video_workbench/docs/picture-learning-library.md",
+      "source_sha256": "2b5c18c9f67dc9c1891533498888394de04693f6cf6d2981da618d98f230967d",
+      "source_body_sha256": "2b5c18c9f67dc9c1891533498888394de04693f6cf6d2981da618d98f230967d",
+      "normalized_body_sha256": "8fd9a9693911ed05a0a63a1c45135c2c834a5fdee1c2f5366b7c967a370c0f7c",
+      "destination": "video_workbench/docs/picture-learning-library.md",
+      "kind": "canonical_design_guide",
+      "title": "图片学习库",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "35e8f9aad513e2ee95d5e0afe4dcd1394f7ea9005b609be9324f2e3cb0ab8702",
+      "mainline_integration": "source_branch_guide_with_mainline_provenance_and_link_relocation"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-scene-depth-20261121\\source\\video_workbench\\docs\\reference-learning-libraries-design.md",
+      "source_relative": "operations/ink-scene-depth-20261121/source/video_workbench/docs/reference-learning-libraries-design.md",
+      "source_sha256": "ebb41495386b2ab4f53da0f221bda2d778b211749096a67dbfcce5e13e4ede53",
+      "source_body_sha256": "ebb41495386b2ab4f53da0f221bda2d778b211749096a67dbfcce5e13e4ede53",
+      "normalized_body_sha256": "11881173284662c944a1923fbba474f1b771abac7d62fa9efe12db9629d0ae96",
+      "destination": "video_workbench/docs/reference-learning-libraries-design.md",
+      "kind": "canonical_design_guide",
+      "title": "需求创作、图片学习与视频学习：三库目标设计",
+      "topic": "其他应用设计与上下文",
+      "repository_sha256": "12393fe50190b4d9b898dd694a9cd9879634681873db549a00df8d205ee420de",
+      "mainline_integration": "source_branch_guide_with_mainline_provenance_and_link_relocation"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-scene-depth-20261121\\source\\video_workbench\\docs\\scene-space-layer-camera-design.md",
+      "source_relative": "operations/ink-scene-depth-20261121/source/video_workbench/docs/scene-space-layer-camera-design.md",
+      "source_sha256": "005ddfd04028dbbf2a67dfca6178a226a85b424fbda233787e6471ee151eb207",
+      "source_body_sha256": "005ddfd04028dbbf2a67dfca6178a226a85b424fbda233787e6471ee151eb207",
+      "normalized_body_sha256": "005ddfd04028dbbf2a67dfca6178a226a85b424fbda233787e6471ee151eb207",
+      "destination": "video_workbench/docs/scene-space-layer-camera-design.md",
+      "kind": "canonical_design_guide",
+      "title": "通用场景空间、分层与镜头设计，以及渐进式参考学习",
+      "topic": "其他应用设计与上下文",
+      "repository_sha256": "b2372844c19ab31ee4e013a433c371403a7dee960c739878c53b9b4fd6283b7b",
+      "mainline_integration": "source_branch_guide_with_mainline_provenance_and_link_relocation"
+    },
+    {
+      "source": "D:\\codex-work\\operations\\ink-scene-depth-20261121\\source\\video_workbench\\docs\\video-learning-library.md",
+      "source_relative": "operations/ink-scene-depth-20261121/source/video_workbench/docs/video-learning-library.md",
+      "source_sha256": "dc8a87d0adda24947bafac007ca30ff3268fe449efae64d98b7c3b12578a2efa",
+      "source_body_sha256": "dc8a87d0adda24947bafac007ca30ff3268fe449efae64d98b7c3b12578a2efa",
+      "normalized_body_sha256": "47d03a1be3a12a668b6acc81f31e884c2d96e863d581040fd599936ebdc3bab5",
+      "destination": "video_workbench/docs/video-learning-library.md",
+      "kind": "canonical_design_guide",
+      "title": "视频学习库",
+      "topic": "图片、视频学习与评审",
+      "repository_sha256": "b21b42d45d309e55de6af50749cfe12c5b0ba65f4ec79d00f7cae76eec411380",
+      "mainline_integration": "source_branch_guide_with_mainline_provenance_and_link_relocation"
+    }
+  ],
+  "link_rewrites": [
+    {
+      "document": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt8/DELIVERY.md",
+      "original": "D:/codex-work/operations/ink-long-video-20261120/formal/attempt8/actual-media/ink-landscape-300s.mp4",
+      "replacement": "../../../../SOURCE-REFERENCES.md#ref-e3e8c1e5f0befefa",
+      "kind": "original_material_not_imported"
+    },
+    {
+      "document": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt8/DELIVERY.md",
+      "original": "D:/codex-work/operations/ink-long-video-20261120/formal/attempt8/media-verification/verification.json",
+      "replacement": "../../../../SOURCE-REFERENCES.md#ref-f7d8e2c4d6327830",
+      "kind": "original_material_not_imported"
+    },
+    {
+      "document": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt8/DELIVERY.md",
+      "original": "D:/codex-work/operations/ink-long-video-20261120/formal/attempt8/root-actual-visual-review.json",
+      "replacement": "../../../../SOURCE-REFERENCES.md#ref-0b660c4290f86f4c",
+      "kind": "original_material_not_imported"
+    },
+    {
+      "document": "docs/codex-work/operations/ink-long-video-20261120/formal/attempt8/DELIVERY.md",
+      "original": "D:/codex-work/operations/ink-long-video-20261120/formal/attempt8/independent-media-verification-output-audit.json",
+      "replacement": "../../../../SOURCE-REFERENCES.md#ref-1427768a5ac9c17e",
+      "kind": "original_material_not_imported"
+    },
+    {
+      "document": "video_workbench/docs/picture-learning-library.md",
+      "original": "remote-reference-learning.md",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-87a85c03d54b5e23",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/remote-reference-learning.md",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/picture-learning-library.md",
+      "original": "../animation_lab_web/picture-api.openapi.json",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-d5db841ffa7d9e7d",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/animation_lab_web/picture-api.openapi.json",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/picture-learning-library.md",
+      "original": "learning-capabilities-and-wikiskill-validation-20261118.md",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-525f14a095d9bb8b",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/learning-capabilities-and-wikiskill-validation-20261118.md",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/reference-learning-libraries-design.md",
+      "original": "remote-reference-learning.md",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-87a85c03d54b5e23",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/remote-reference-learning.md",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/reference-learning-libraries-design.md",
+      "original": "evidence/video-learning-20261118.json",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-d52247d6b276d193",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/evidence/video-learning-20261118.json",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/reference-learning-libraries-design.md",
+      "original": "fresh-rebuild-and-skill-loading-design.md",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-a793e1b507cc218f",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/fresh-rebuild-and-skill-loading-design.md",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/reference-learning-libraries-design.md",
+      "original": "video-learning-validation-20261118.md",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-a8403c5d58ca9203",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/video-learning-validation-20261118.md",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/video-learning-library.md",
+      "original": "../animation_lab_web/video-api.openapi.json",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-db1728fd18462a16",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/animation_lab_web/video-api.openapi.json",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/video-learning-library.md",
+      "original": "remote-reference-learning.md",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-87a85c03d54b5e23",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/remote-reference-learning.md",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "video_workbench/docs/video-learning-library.md",
+      "original": "learning-capabilities-and-wikiskill-validation-20261118.md",
+      "replacement": "../../docs/codex-work/SOURCE-REFERENCES.md#ref-525f14a095d9bb8b",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/learning-capabilities-and-wikiskill-validation-20261118.md",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    },
+    {
+      "document": "docs/codex-work/operations/prompt-inspection-20261117/lab-prompt-inspection-validation-20261117.md",
+      "original": "evidence/lab-prompt-inspection-20261117.json",
+      "replacement": "../../SOURCE-REFERENCES.md#ref-35d86bec8b41ad54",
+      "kind": "source_branch_material_not_imported_to_main",
+      "source_target": "video_workbench/docs/evidence/lab-prompt-inspection-20261117.json",
+      "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2"
+    }
+  ],
+  "mainline_integration": {
+    "mainline_base": "4c322af063f442036961f776461d7616f5659e5c",
+    "source_documentation_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+    "source_documentation_branch": "codex/organize-video-design-docs",
+    "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+    "policy": "documentation_only_preserve_main_body_scope_source_branch_states_relocate_unavailable_references",
+    "application_commits_imported": 0,
+    "original_source_records_preserved": true,
+    "original_main_documents": {
+      "video_workbench/README.md": {
+        "main_base_sha256": "35d4ef3e6425fd9a8f8c3d448ba6e2a0e5fd4dbea8d81f8bd0722df17ed8a039",
+        "normalized_main_body_preserved": true,
+        "source_inserted_lines": 8
+      },
+      "video_workbench/docs/README.md": {
+        "main_base_sha256": "f3227c0ce4042824e1831830f0117fba9d580e5cd3e3e77892a28d2534213fb7",
+        "normalized_main_body_preserved": true,
+        "source_inserted_lines": 8
+      },
+      "video_workbench/docs/current-architecture.md": {
+        "main_base_sha256": "c6cd9fc9323e806ae98a45742358b6ec24707586069d9a577ad63c627b5d355f",
+        "normalized_main_body_preserved": true,
+        "source_inserted_lines": 8
+      },
+      "video_workbench/docs/general-creative-collaboration.md": {
+        "main_base_sha256": "efbb8aed5770d47f978b2b5aa3ba487acc148e28f67f262d1db0d0d780c605bb",
+        "normalized_main_body_preserved": true,
+        "source_inserted_lines": 9
+      }
+    },
+    "source_only_reference_targets": [
+      {
+        "id": "87a85c03d54b5e23",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/docs/remote-reference-learning.md",
+        "source_documents": [
+          "video_workbench/docs/picture-learning-library.md",
+          "video_workbench/docs/reference-learning-libraries-design.md",
+          "video_workbench/docs/video-learning-library.md"
+        ]
+      },
+      {
+        "id": "d5db841ffa7d9e7d",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/animation_lab_web/picture-api.openapi.json",
+        "source_documents": [
+          "video_workbench/docs/picture-learning-library.md"
+        ]
+      },
+      {
+        "id": "525f14a095d9bb8b",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/docs/learning-capabilities-and-wikiskill-validation-20261118.md",
+        "source_documents": [
+          "video_workbench/docs/picture-learning-library.md",
+          "video_workbench/docs/video-learning-library.md"
+        ]
+      },
+      {
+        "id": "d52247d6b276d193",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/docs/evidence/video-learning-20261118.json",
+        "source_documents": [
+          "video_workbench/docs/reference-learning-libraries-design.md"
+        ]
+      },
+      {
+        "id": "a793e1b507cc218f",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/docs/fresh-rebuild-and-skill-loading-design.md",
+        "source_documents": [
+          "video_workbench/docs/reference-learning-libraries-design.md"
+        ]
+      },
+      {
+        "id": "a8403c5d58ca9203",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/docs/video-learning-validation-20261118.md",
+        "source_documents": [
+          "video_workbench/docs/reference-learning-libraries-design.md"
+        ]
+      },
+      {
+        "id": "db1728fd18462a16",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/animation_lab_web/video-api.openapi.json",
+        "source_documents": [
+          "video_workbench/docs/video-learning-library.md"
+        ]
+      },
+      {
+        "id": "35d86bec8b41ad54",
+        "source_commit": "03369402067c5cc7fcd9571d3af7d9c81e4a39b2",
+        "source_branch": "codex/organize-video-design-docs",
+        "source_video_base": "faaa09affca3205ecfa46b2204f8d6aa2a017362",
+        "source_target": "video_workbench/docs/evidence/lab-prompt-inspection-20261117.json",
+        "source_documents": [
+          "docs/codex-work/operations/prompt-inspection-20261117/lab-prompt-inspection-validation-20261117.md"
+        ]
+      }
+    ]
+  }
+}

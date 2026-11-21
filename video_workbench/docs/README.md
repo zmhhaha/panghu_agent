@@ -51,3 +51,13 @@
 `agent-creation-phase1-validation.md`、`agent-creation-product-validation.md`、`animation-method-lab-validation.md`、`wikiskill-rollout-validation.md`、`method-lab-task-history-through-20261115.md` 保留早期协议、准入和失败证据。`reference-*.md` 是独立研究资料，不能作为发布 Skill 的外部运行依赖。`mainline-merge-20261104.md` 只记录当次合并。
 
 上级目录的 `CURRENT_STATUS.md`、`NEXT_STEPS.md`、`VALIDATION.md`、`HYPERFRAMES.md`、`AUDIO_PRODUCTION.md`、`EXPLANATION.md` 也按原阶段阅读；当前入口是本页及[当前架构](current-architecture.md)。旧记录中的“未上线”“尚未接入”“未合主线”和任务总数只代表记录当时。临时目录中的原始收据路径是历史来源，清理后以 Git 中保留的摘要、持久证据归档及本轮清理记录为准。
+
+## 2026-11-21 文档整理补充：按证据日期阅读
+
+> 本节来源：文档提交 `03369402067c5cc7fcd9571d3af7d9c81e4a39b2`（`codex/organize-video-design-docs`），其运行及交付事实对应视频分支 `faaa09affca3205ecfa46b2204f8d6aa2a017362` 的历史证据；不表示该分支新增实现已并入当前主线，也不表示当前部署状态。原主线正文按原记录日期保留。
+
+2026-11-21 已有 WikiSkill 第 2 版的实际发布与消费记录，以及《雨霁江渚》五分钟静音试片的技术交付记录：实际 300 秒、1280×720、24 fps、7200 帧，完整视频与音频解码及静音验证通过，见[交付说明](../../docs/codex-work/operations/ink-long-video-20261120/formal/attempt8/DELIVERY.md)。旧正文中 2026-11-18 及更早的“最近编译失败／尚无新发布”等结论，继续作为各自时点和范围的历史记录读取。
+
+该试片的艺术质量尚未获认可，完整连续五分钟的人工审美播放审查未完成；上述技术交付也不扩展为所有视频学习、声音或创作能力均已验收，更不表示此刻集群仍运行当时的镜像。
+
+[通用场景空间、分层与镜头及渐进学习](scene-space-layer-camera-design.md)已记录为待实施设计，尚未实现或部署。完整历史设计、运行准备与评审资料见[本仓库设计档案](../../docs/codex-work/README.md)，按来源、版本和验证范围查阅。
