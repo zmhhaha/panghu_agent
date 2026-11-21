@@ -88,6 +88,12 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
             remote_media_adapter=remote_media_adapter, clock=clock)
         self.media = media_adapter or VideoLearningMedia(self.root / 'media-preparation')
 
+    @staticmethod
+    def _budget(body, default=None):
+        # New video requests use the current video defaults, including
+        # continue/fresh. Technical retry copies the prior frozen budget.
+        return PictureLearningService._budget(body, dict(max_rounds=1, max_seconds=3600))
+
     def _reference_public(self, row):
         if remote_reference(row):
             return self._remote_reference_public(row)

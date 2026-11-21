@@ -314,8 +314,8 @@ export class VideoLibraryController {
     if (!this.enabled() || this.locked()) return false;
     this.clearAnalysis();
     const goal = text(fields.goal).trim() || '识别适合学习的画面技法、运动机制与节奏片段。';
-    const minutes = Number(fields.analysis_minutes ?? 10);
-    if (goal.length > 8000 || !Number.isInteger(minutes) || minutes < 1 || minutes > 30) throw Error('分析预算应为 1–30 分钟，目标不超过 8000 字');
+    const minutes = Number(fields.analysis_minutes ?? 60);
+    if (goal.length > 8000 || !Number.isInteger(minutes) || minutes < 1 || minutes > 60) throw Error('分析预算应为 1–60 分钟，目标不超过 8000 字');
     const body = {request_id: this.uuid(), goal, max_seconds: minutes * 60};
     if (fields.reference_id) return this.send(VIDEO_API + 'references/' + encodeURIComponent(videoId(fields.reference_id)) + '/analyses', body);
     if ((fields.reference_source ?? fields.source_type) === REMOTE_VIDEO_SOURCE || !fields.reference_source && fields.source_url) {

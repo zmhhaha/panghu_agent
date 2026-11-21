@@ -72,6 +72,29 @@ def test_complete_hyperframes_mp4_retains_original_timed_input_and_no_watch_clai
     assert execute.calls==1
 
 
+def test_video_capture_defaults_to_one_hour_without_inheriting_the_method_timeout(tmp_path):
+    runtime=shared.MethodAnimationRenderer(tmp_path/'existing',IMAGE,enabled=True,timeout=60,
+        hyperframes=True,legacy_bridge=True)
+    value=VideoLearningRenderer(tmp_path/'learning',runtime_renderer=runtime)
+    binding=value._snapshot('hour-default',source(),document(),[])
+    assert value.timeout==binding['timeout_seconds']==binding['configured_timeout_seconds']==3600
+    assert runtime.timeout==60
+    assert binding['document']==document()
+    assert binding['source']['files']==source()['files']
+    assert value.capabilities()['runtime_identity']['image_digest']==runtime.image_digest
+
+
+def test_video_capture_accepts_an_explicit_shorter_budget_but_rejects_an_unbounded_one(tmp_path):
+    runtime=shared.MethodAnimationRenderer(tmp_path/'existing',IMAGE,enabled=True,
+        hyperframes=True,legacy_bridge=True)
+    value=VideoLearningRenderer(tmp_path/'learning',runtime_renderer=runtime,timeout=120)
+    binding=value._snapshot('explicit-shorter',source(),document(),[])
+    assert binding['configured_timeout_seconds']==120
+    assert shared.MethodAnimationRenderer(tmp_path/'method',IMAGE).timeout==360
+    with pytest.raises(ServiceError,match='render_config_invalid'):
+        VideoLearningRenderer(tmp_path/'unbounded',runtime_renderer=runtime,timeout=3601)
+
+
 def test_lost_container_response_never_authorizes_second_render(renderer):
     value,execute=renderer
     execute.failure='unknown'
@@ -111,9 +134,11 @@ def test_retained_media_and_runtime_tampering_is_rejected(renderer,file):
         value.lookup('sealed')
 
 
-def test_independent_admission_reconstructs_full_hyperframes_capture(renderer):
+@pytest.mark.parametrize('capture_timeout',[60,3600])
+def test_independent_admission_reconstructs_full_hyperframes_capture(renderer,capture_timeout):
     from agent_service.deploy.reference_learning_acceptance import verify_renderer_capture
     value,_=renderer
+    value.timeout=capture_timeout
     value.render('admission',source(),document())
     result=dict(schema=protocol.RESULT_SCHEMA,input_sha256=digest(document()),mode='create',source=source(),
         review=None,transfer_task=None,method=None,sound_events=[],evidence_scope='sampled_frames_only')

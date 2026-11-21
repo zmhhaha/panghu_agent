@@ -137,7 +137,8 @@ def verify_renderer_capture(directory, document, result, *, renderer_image):
     """
     from types import SimpleNamespace
     from video_workbench.video_learning_renderer import VideoLearningRenderer
-    from video_workbench.animation_method_renderer import (HOST, ENGINE_RUNTIME, PROJECT_RUNTIME, ASSET_SHA256)
+    from video_workbench.animation_method_renderer import (HOST, ENGINE_RUNTIME, PROJECT_RUNTIME, ASSET_SHA256,
+                                                          MAX_TIMEOUT)
     method = _protocol(document=document)
     document = method.validate_input(document)
     result = method.validate_result(result, digest(document), document)
@@ -153,7 +154,7 @@ def verify_renderer_capture(directory, document, result, *, renderer_image):
     deadline_at = binding.get('deadline_at')
     require(type(effective_timeout) in (int, float) and math.isfinite(effective_timeout)
         and type(configured_timeout) in (int, float) and math.isfinite(configured_timeout)
-        and 30 <= effective_timeout <= configured_timeout <= 600
+        and 30 <= effective_timeout <= configured_timeout <= MAX_TIMEOUT
         and (deadline_at is not None or effective_timeout == configured_timeout),
         'reference_learning_admission_renderer_timeout_invalid')
     require(type(renderer_image) is str and re.fullmatch(
@@ -167,7 +168,7 @@ def verify_renderer_capture(directory, document, result, *, renderer_image):
         engine_runtime_sha256=sha(ENGINE_RUNTIME.read_bytes())))
     runtime=SimpleNamespace(image=renderer_image,assets_dir=None,enabled=False,timeout=configured_timeout,
         legacy_bridge=True,hyperframes=True,generated_resource_resolver=None,capabilities=lambda:caps)
-    renderer=VideoLearningRenderer(root,runtime_renderer=runtime)
+    renderer=VideoLearningRenderer(root,runtime_renderer=runtime,timeout=configured_timeout)
     expected = renderer._snapshot(binding['operation_id'], result['source'], document,
                                   result.get('sound_events', []), deadline_at=deadline_at)
     # The renderer freezes a smaller first-attempt timeout when a commission

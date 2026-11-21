@@ -22,8 +22,8 @@ class VideoLearningAnalysis:
         if existing:
             return self.get_analysis(owner, reference_id, existing)
         goal = _text(body.get('goal', 'Identify distinct visual techniques and candidate effect segments to learn.'), 8000)
-        seconds = body.get('max_seconds', 600)
-        require(type(seconds) is int and 60 <= seconds <= 1800,
+        seconds = body.get('max_seconds', 3600)
+        require(type(seconds) is int and 60 <= seconds <= 3600,
                 'video_learning_analysis_budget_invalid')
         now, identity = self.clock(), 'analysis-' + new_id()
         frozen = dict(reference=deepcopy(reference), goal=goal, max_seconds=seconds,

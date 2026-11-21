@@ -16,12 +16,13 @@ from .learning_drawing_libraries import drawing_libraries, validate_observation
 
 
 HOST = Path(__file__).with_name('video_learning_host.mjs')
+DEFAULT_RENDER_TIMEOUT_SECONDS = 3600
 
 
 class VideoLearningRenderer(MethodAnimationRenderer):
-    def __init__(self, root, *, runtime_renderer):
+    def __init__(self, root, *, runtime_renderer, timeout=DEFAULT_RENDER_TIMEOUT_SECONDS):
         super().__init__(root, runtime_renderer.image, assets_dir=runtime_renderer.assets_dir,
-            enabled=runtime_renderer.enabled, timeout=runtime_renderer.timeout,
+            enabled=runtime_renderer.enabled, timeout=timeout,
             hyperframes=True, legacy_bridge=runtime_renderer.legacy_bridge,
             generated_resource_resolver=runtime_renderer.generated_resource_resolver)
         _require(runtime_renderer.hyperframes is True, 'video_learning_hyperframes_required', 422)

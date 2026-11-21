@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {buildVideoProject, buildVideoExperiment, videoAssetUrl, validateReferenceFile} from '../../video_workbench/animation_lab_web/video-model.mjs';
-import {VideoLibraryController, analyzeVideoSelection, referenceBody, renderVideoDetail, updateVideoDetail} from '../../video_workbench/animation_lab_web/video-library.mjs';
+import {VideoLibraryController, analyzeVideoSelection, mountVideoLibrary, referenceBody, renderVideoDetail, updateVideoDetail} from '../../video_workbench/animation_lab_web/video-library.mjs';
 
 const root = new URL('https://video-service.panghuer.top/dev/animations/');
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -22,6 +23,7 @@ test('video brief freezes an explicit clip and sound-learning intent, within the
   const body = buildVideoProject({...fields, use_wikiskill: false}, ['ref'], uuid);
   assert.equal(body.start_seconds, 21); assert.equal(body.end_seconds, 28); assert.equal(body.learn_audio, true);
   assert.equal(body.use_wikiskill, false); assert.equal(body.width, 1280);
+  assert.equal(body.max_rounds, 1); assert.equal(body.max_seconds, 3600);
   for (const value of [{start_seconds: ''}, {end_seconds: Infinity}, {end_seconds: 21.5}, {end_seconds: 82}, {width: 1920}, {height: 1080}, {learn_audio: 'true'}]) {
     assert.throws(() => buildVideoProject({...fields, ...value}, ['ref'], uuid));
   }
@@ -80,6 +82,20 @@ test('candidate analysis uploads once without creating a project; explicit range
   assert.equal(posts.filter(x=>x.path.endsWith('projects')).length,1);
 });
 
+test('analysis submissions default to an hour and keep explicit shorter budgets', async () => {
+  for (const [options, expected] of [[{}, 3600], [{analysis_minutes: 2}, 120]]) {
+    const h = harness((path, request) => request.method
+      ? {id:'analysis-one', reference_id:'ref', state:'queued'} : catalog());
+    await h.controller.refresh();
+    assert.equal(await h.controller.analyze({reference_id:'ref', ...options}, null), true);
+    const sent = h.requests.find(row => row.request.method);
+    assert.equal(JSON.parse(sent.request.body).max_seconds, expected);
+  }
+  const h=harness(()=>catalog());await h.controller.refresh();
+  await assert.rejects(h.controller.analyze({reference_id:'ref',analysis_minutes:61},null),/1–60/);
+  assert.ok(h.requests.every(row=>!row.request.method));
+});
+
 test('an unknown analysis submission reconciles its original key from catalog without a second paid request', async () => {
   const storage=memoryStorage(), h=harness((p,r)=>{if(r.method)throw Error('lost');return catalog();},storage);
   await h.controller.refresh();await h.controller.analyze({reference_id:'ref',goal:fields.goal},null);
@@ -125,7 +141,7 @@ test('a lost analysis stop response is cleared by read-only proof of its termina
 });
 
 class Element {
-  constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.handlers={};this.listeners={};this.attributes={};this.currentTime=0;this.paused=true;this.muted=false;this.ended=false;this.readyState=0;this.duration=NaN;this.playCalls=0;this.replacements=0;this._text='';}
+  constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.handlers={};this.listeners={};this.attributes={};this.currentTime=0;this.paused=true;this.muted=false;this.ended=false;this.readyState=0;this.duration=NaN;this.playCalls=0;this.replacements=0;this._text='';this.value='';this.checked=false;this.disabled=false;}
   set textContent(value){this._text=String(value);this.children=[];} get textContent(){return this._text+this.children.map(x=>x.textContent).join('');}
   append(...items){this.children.push(...items);} setAttribute(k,v){this.attributes[k]=v;} getAttribute(k){return this.attributes[k]??null;}
   replaceChildren(...items){this.children=[];this.append(...items);this.replacements++;}
@@ -139,9 +155,77 @@ class Element {
   querySelectorAll(tag){return all(this).filter(x=>x!==this&&x.tagName===tag.toUpperCase());}
   querySelector(tag){return this.querySelectorAll(tag)[0]??null;}
   pause(){this.paused=true;} play(){this.paused=false;this.playCalls++;return Promise.resolve();}
+  focus(){}
 }
 const all = node => [node,...node.children.flatMap(all)];
 const doc = {createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment')};
+
+function videoFormDocument() {
+  // Load the shipping form's controls and reset values, so changing the HTML
+  // without the actual mounted submission flow cannot satisfy this regression.
+  const html=readFileSync(new URL('../../video_workbench/animation_lab_web/video-library.html',import.meta.url),'utf8');
+  const attributes=raw=>Object.fromEntries([...raw.matchAll(/([\w:-]+)(?:="([^"]*)")?/g)].map(([,key,value])=>[key,value??'']));
+  const nodes=new Map([...html.matchAll(/<([a-z][\w-]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)].map(([,tag,raw,id])=>{
+    const node=new Element(tag), attrs=attributes(raw);
+    Object.assign(node,attrs,{id,attributes:attrs,defaultValue:attrs.value??'',defaultChecked:'checked'in attrs,
+      checked:'checked'in attrs,hidden:'hidden'in attrs,disabled:'disabled'in attrs});
+    node.value=node.defaultValue; return [id,node];
+  }));
+  for (const [,raw,body]of html.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
+    const node=nodes.get(attributes(raw).id), options=[...body.matchAll(/<option\b([^>]*)>/g)].map(([,value])=>attributes(value));
+    node.defaultValue=(options.find(value=>'selected'in value)??options[0])?.value??'';
+    node.value=node.defaultValue;
+  }
+  const form=nodes.get('video-form'), body=html.match(/<form id="video-form">([\s\S]*?)<\/form>/)[1];
+  form.elements=[...body.matchAll(/\bid="([^"]+)"/g)].map(([,id])=>nodes.get(id))
+    .filter(node=>['INPUT','SELECT','TEXTAREA','BUTTON'].includes(node.tagName));
+  form.reset=()=>{for(const node of form.elements){node.value=node.defaultValue;node.checked=node.defaultChecked;}};
+  return {getElementById:id=>nodes.get(id)??null,createElement:tag=>new Element(tag),
+    createDocumentFragment:()=>new Element('fragment')};
+}
+
+test('mounted new, continued and fresh forms reset and submit the one-hour one-round defaults', async t => {
+  const formDoc=videoFormDocument(), get=id=>formDoc.getElementById(id), sent=[];
+  const current=project({candidates:[{id:'work',work_kind:'reproduction',media_url:'/api/video-lab/projects/video-one/artifacts/media'}]});
+  current.experiments[0].frozen={...fields,max_rounds:7,max_seconds:120};
+  const fetcher=async(url,request={})=>{
+    if(request.method)sent.push({path:url.pathname,body:JSON.parse(request.body)});
+    return {ok:true,status:200,json:async()=>url.pathname.endsWith('/catalog')
+      ? {...catalog([current]),references:[{id:'ref',file_name:'ref.mp4',duration_seconds:40}]} : current};
+  };
+  const NativeFormData=globalThis.FormData;
+  globalThis.FormData=class {
+    constructor(form){this.entries=form.elements.filter(node=>node.name&&!node.disabled
+      &&(node.type!=='checkbox'||node.checked)).map(node=>[node.name,node.value]);}
+    [Symbol.iterator](){return this.entries[Symbol.iterator]();}
+  };
+  t.after(()=>{globalThis.FormData=NativeFormData;});
+  const app=mountVideoLibrary(formDoc,{root,fetcher,storage:memoryStorage(),uuid:()=>uuid,schedule:()=>1,unschedule:()=>{}});
+  await app.ready;
+  for(const mode of ['new','continue','fresh']) {
+    get('video-rounds').value='7';get('video-minutes').value='2';get('video-analysis-minutes').value='2';
+    if(mode==='new')await get('video-new').handlers.click();
+    else await all(get('video-detail')).find(node=>node.tagName==='BUTTON'
+      &&node.textContent===(mode==='continue'?'继续优化':'从零重做')).handlers.click();
+    assert.equal(get('video-rounds').value,'1');assert.equal(get('video-minutes').value,'60');
+    assert.equal(get('video-analysis-minutes').value,'60');
+    get('video-name').value=fields.title;get('video-goal').value=fields.goal;get('video-reference-id').value='ref';
+    get('video-feedback').value='改善标签的可读性';
+    await get('video-form').handlers.submit({preventDefault(){}});
+    const body=sent.at(-1).body;assert.equal(body.max_rounds,1);assert.equal(body.max_seconds,3600);
+    if(mode!=='new')assert.equal(body.mode,mode);
+    await app.controller.refresh();
+  }
+  const explicit=buildVideoProject({...fields,max_rounds:2,max_minutes:2},['ref'],uuid);
+  assert.equal(explicit.max_rounds,2);assert.equal(explicit.max_seconds,120);
+  const api=JSON.parse(readFileSync(new URL('../../video_workbench/animation_lab_web/video-api.openapi.json',import.meta.url),'utf8'));
+  for(const name of ['ProjectStart','ExperimentStart']){
+    assert.equal(api.components.schemas[name].properties.max_rounds.default,1);
+    assert.equal(api.components.schemas[name].properties.max_seconds.default,3600);
+  }
+  assert.equal(api.components.schemas.AnalysisStart.properties.max_seconds.default,3600);
+  app.destroy();
+});
 
 test('comparison uses actual video players and aligns reference original time with generated clip time', async () => {
   const p=project({candidates:[{id:'work',work_kind:'reproduction',media_url:'/api/video-lab/projects/video-one/artifacts/media'}]});

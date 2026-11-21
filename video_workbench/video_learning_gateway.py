@@ -4,6 +4,8 @@ from .animation_review_gateway import _AnimationGateway
 
 
 class VideoLearningAuthorGateway(_AnimationGateway):
+    # The caller default does not supersede the admitted route or task deadline.
+    task_timeout_seconds = 3600
     protocol = reference
     profile = reference.AUTHOR_PROFILE
     visual_input = True

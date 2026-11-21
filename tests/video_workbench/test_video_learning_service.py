@@ -241,14 +241,57 @@ def test_owner_idempotency_and_failed_render_technical_retry(system, real_mp4):
     renderer.fail = True
     failed = finish(service, project)
     assert failed['state'] == 'failed'
+    original_run = service.store.read('experiments', 'developer', failed['latest_experiment_id'])
+    original_run = deepcopy(original_run)
     with pytest.raises(ServiceError):
         service.experiment('developer', project['id'], dict(request_id=uuid4().hex,
             mode='retry', feedback='cannot edit a technical retry'))
     renderer.fail = False
     retry = service.experiment('developer', project['id'], dict(request_id=uuid4().hex, mode='retry'))
+    restored = next(row for row in retry['experiments'] if row['id'] == retry['latest_experiment_id'])
+    assert restored['budget'] == original_run['budget'] == dict(max_rounds=1, max_seconds=900)
+    assert restored['frozen_sha256'] == original_run['frozen_sha256']
+    assert restored['candidates'][0]['source_sha256'] == original_run['candidates'][0]['source_sha256']
+    assert service.store.read('experiments', 'developer', original_run['id']) == original_run
     finished = finish(service, retry)
     assert finished['state'] == 'completed'
     assert len([doc for doc, _ in author.uploads if doc['work_kind'] == 'reproduction']) == 1
+
+
+def test_new_video_budget_defaults_are_one_hour_one_round_and_keep_explicit_short_budgets(system, real_mp4):
+    from video_workbench.picture_learning_service import PictureLearningService
+
+    service, author, reviewer, renderer = system
+    reference, _ = upload(service, real_mp4)
+    body = dict(request_id=uuid4().hex, title='Current video defaults', goal='Learn a visible technique.',
+        reference_ids=[reference['id']], width=320, height=180, start_seconds=0, end_seconds=2,
+        use_wikiskill=False)
+    created = service.start('developer', body)
+    run = created['experiments'][0]
+    assert run['budget'] == dict(max_rounds=1, max_seconds=3600)
+    assert run['deadline_at'] - run['created_at'] == 3600
+    explicit = service.start('developer', dict(body, request_id=uuid4().hex, max_rounds=2, max_seconds=120))
+    assert explicit['experiments'][0]['budget'] == dict(max_rounds=2, max_seconds=120)
+    assert PictureLearningService._budget({}) == dict(max_rounds=3, max_seconds=900)
+    assert not author.submissions and not reviewer.submissions and not renderer.calls
+
+
+def test_video_continue_and_fresh_use_current_defaults_instead_of_legacy_budget(system, real_mp4):
+    service, author, reviewer, renderer = system
+    project, _ = start(service, real_mp4, max_rounds=3, max_seconds=900)
+    completed = finish(service, project)
+    assert completed['experiments'][0]['budget'] == dict(max_rounds=3, max_seconds=900)
+    continued = service.experiment('developer', project['id'], dict(request_id=uuid4().hex,
+        mode='continue', base_candidate_id=completed['best_candidate_id'], use_wikiskill=False))
+    current = next(row for row in continued['experiments'] if row['id'] == continued['latest_experiment_id'])
+    assert current['budget'] == dict(max_rounds=1, max_seconds=3600)
+    assert current['deadline_at'] - current['created_at'] == 3600
+    finish(service, continued)
+    fresh = service.experiment('developer', project['id'], dict(request_id=uuid4().hex,
+        mode='fresh', use_wikiskill=False))
+    current = next(row for row in fresh['experiments'] if row['id'] == fresh['latest_experiment_id'])
+    assert current['budget'] == dict(max_rounds=1, max_seconds=3600)
+    assert fresh['experiments'][0]['budget'] == dict(max_rounds=3, max_seconds=900)
 
 
 def test_unknown_submission_is_reconciled_without_second_author_call(system, real_mp4):
@@ -297,6 +340,7 @@ def test_analysis_is_durable_budgeted_idempotent_and_never_starts_creation(syste
     body = dict(request_id=uuid4().hex, goal='Find a short visible effect worth learning.', max_seconds=600)
     analysis = service.analyze_reference('developer', ref['id'], body)
     assert analysis['state'] == 'queued' and analysis['creation_started'] is False
+    assert analysis['max_seconds'] == 600
     assert service.analyze_reference('developer', ref['id'], body)['id'] == analysis['id']
     assert not author.submissions and not reviewer.submissions and not renderer.calls
     assert not service.catalogue('developer')['projects']
@@ -316,6 +360,25 @@ def test_analysis_is_durable_budgeted_idempotent_and_never_starts_creation(syste
     with pytest.raises(ServiceError) as error:
         service.get_analysis('other-owner', ref['id'], analysis['id'])
     assert error.value.status == 404
+
+
+def test_video_reference_analysis_defaults_to_an_hour_and_accepts_explicit_shorter_budget(system, real_mp4):
+    service, author, reviewer, renderer = system
+    reference, _ = upload(service, real_mp4)
+    default = service.analyze_reference('developer', reference['id'], dict(request_id=uuid4().hex))
+    assert default['max_seconds'] == 3600
+    assert default['deadline_at'] - default['created_at'] == 3600
+    for seconds in (60, 600, 1800, 3600):
+        body = dict(request_id=uuid4().hex, max_seconds=seconds)
+        result = service.analyze_reference('developer', reference['id'], body)
+        assert result['max_seconds'] == seconds
+        assert service.analyze_reference('developer', reference['id'], body)['id'] == result['id']
+    for invalid in (59, 3601, True):
+        with pytest.raises(ServiceError, match='video_learning_analysis_budget_invalid'):
+            service.analyze_reference('developer', reference['id'], dict(request_id=uuid4().hex,
+                max_seconds=invalid))
+    assert not service.catalogue('developer')['projects']
+    assert not author.submissions and not reviewer.submissions and not renderer.calls
 
 
 def test_analysis_unknown_submit_reconciles_original_and_stop_waits_for_proof(system, real_mp4):
