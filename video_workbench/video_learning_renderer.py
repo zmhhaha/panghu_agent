@@ -62,16 +62,35 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         return result
 
     @staticmethod
-    def _adapter(context):
+    def _adapter(context, source):
         bounds = deepcopy(context['constraints'])
         bounds.setdefault('allowed_engines', ['html-svg', 'canvas', 'three'])
+        assets = deepcopy(context.get('assets', bounds.get('assets', {})))
+        libraries = drawing_libraries(bounds.get('drawing_libraries'), assets)
+        selected = {}
+        for name, library in libraries.items():
+            if source['engine'] in library['engines']:
+                selected[name] = library
+                continue
+            for asset in library['assets']:
+                _require(not any(asset in content for content in source['files'].values()),
+                    'learning_drawing_library_engine_not_admitted', 422)
+                assets.pop(asset, None)
+                if type(bounds.get('assets')) is dict:
+                    bounds['assets'].pop(asset, None)
+        # Available drawing helpers need not be dependencies of this engine.
+        # The original context remains intact in the immutable binding below.
+        if selected:
+            bounds['drawing_libraries'] = selected
+        else:
+            bounds.pop('drawing_libraries', None)
         return dict(schema=method.INPUT_SCHEMA, mode='create', goal=context['goal'],
             criteria=[dict(id='learning-target', description='Reproduce the frozen visual learning target')],
             methods=[], constraints=bounds, feedback=context['feedback'],
             base_source=None, reference=dict(learning_input_sha256=digest(context)),
             observation=dict(frames=[], audio_observed=False, motion_observed=False,
                 limitations=['Rendering is not Agent observation.']), comparison=None,
-            assets=deepcopy(context.get('assets', bounds.get('assets', {}))))
+            assets=assets)
 
     def _snapshot(self, operation_id, source, document, sound_events, deadline_at=None):
         context = protocol.validate_input(document)
@@ -79,9 +98,10 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         events = document.get('sound_events', sound_events or [])
         protocol.validate_sound_events(events, context['constraints']['duration_seconds'])
         payload = {key: checked[key] for key in ('engine', 'strategy', 'files')}
-        binding = super()._snapshot(operation_id, payload, self._adapter(context), events,
+        adapter = self._adapter(context, payload)
+        binding = super()._snapshot(operation_id, payload, adapter, events,
             deadline_at=deadline_at)
-        libraries = drawing_libraries(context['constraints'].get('drawing_libraries'), context.get('assets', {}))
+        libraries = adapter['constraints'].get('drawing_libraries')
         if libraries:
             request = binding['request']
             request['drawing_libraries'] = libraries

@@ -1,10 +1,15 @@
 """Fixed drawing assets, source custody and truthful invocation evidence."""
 from copy import deepcopy
+import base64
+import hashlib
 import json
+import shutil
+import subprocess
 
 import pytest
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
+from agent_service.profiles import video_reference_learning as video_protocol
 from video_workbench import animation_method_renderer as shared
 from video_workbench import picture_learning_renderer as picture
 from video_workbench.video_learning_renderer import VideoLearningRenderer, HOST as VIDEO_HOST
@@ -37,6 +42,11 @@ def configured(request, tmp_path, monkeypatch):
     else:
         value = VideoLearningRenderer(tmp_path / 'video', runtime_renderer=runtime)
         execute, document, source = VideoExecution(), video_document(), video_source()
+        # Exercise a compatible library engine; HTML/SVG has no ink dependency.
+        value.candidate_engines = ('canvas',)
+        document['constraints']['allowed_engines'] = ['canvas']
+        source['engine'] = 'canvas'
+        source['source_sha256'] = video_protocol.source_sha256(source)
         target = shared
 
     def capture(root):
@@ -125,3 +135,86 @@ def test_executed_function_claim_requires_loaded_module_and_exact_coverage_sourc
     value['api_execution']['module_sha256'] = '0' * 64
     with pytest.raises(ServiceError, match='evidence_invalid'):
         validate_observation(value, {'ink-landscape': descriptor()})
+
+
+def _three_binding(tmp_path):
+    runtime = shared.MethodAnimationRenderer(tmp_path / 'existing', IMAGE,
+        enabled=True, timeout=60, hyperframes=True, legacy_bridge=True)
+    value = VideoLearningRenderer(tmp_path / 'video', runtime_renderer=runtime)
+    value.candidate_engines = ('three',)
+    document = bind_library(video_document())
+    document['constraints']['allowed_engines'] = ['three']
+    document['assets']['three.module.min.js'] = shared.ASSET_SHA256['three.module.min.js']
+    source = deepcopy(video_source())
+    source['engine'] = 'three'
+    source['files']['scene.js'] = "import * as THREE from './assets/three.module.min.js';"
+    source['source_sha256'] = video_protocol.source_sha256(source)
+    return value, document, source
+
+
+def _actual_video_host_validation(request, resources):
+    node = shutil.which('node')
+    if node is None:
+        pytest.skip('Node.js is required for the actual host validator regression')
+    script = """
+const {validateDrawingLibraries} = await import(process.argv[1]);
+let raw='';for await(const chunk of process.stdin)raw+=chunk;
+const payload=JSON.parse(raw),resources=new Map(Object.entries(payload.resources)
+  .map(([name,value])=>[name,Buffer.from(value,'base64')]));
+try { process.stdout.write(JSON.stringify({accepted:true,
+  libraries:validateDrawingLibraries(payload.request,resources)})); }
+catch(error) { process.stdout.write(JSON.stringify({accepted:false,error:String(error)})); }
+"""
+    payload = dict(request=request, resources={name: base64.b64encode(raw).decode('ascii')
+        for name, raw in resources.items()})
+    result = subprocess.run([node, '--input-type=module', '-e', script, VIDEO_HOST.resolve().as_uri()],
+        input=canonical_bytes(payload), capture_output=True, timeout=15, check=True)
+    return json.loads(result.stdout)
+
+
+def test_three_request_omits_incompatible_library_and_passes_the_actual_unchanged_host(tmp_path):
+    value, document, source = _three_binding(tmp_path)
+    original_document, original_source = deepcopy(document), deepcopy(source)
+    host_sha256 = hashlib.sha256(VIDEO_HOST.read_bytes()).hexdigest()
+    binding = value._snapshot('three', source, document, [])
+    request = binding['request']
+
+    # Reconstruct the failed request's unconditional library attachment. The
+    # real host rejects it before scene execution, rather than a mocked check.
+    old_request = deepcopy(request)
+    old_request['drawing_libraries'] = document['constraints']['drawing_libraries']
+    old_request['assets_sha256'].update(descriptor()['assets'])
+    failure = _actual_video_host_validation(old_request,
+        {'/assets/'+name: raw for name, raw in read_assets().items()})
+    assert failure == dict(accepted=False, error='Error: learning_drawing_library_invalid')
+
+    assert _actual_video_host_validation(request, {}) == dict(accepted=True, libraries=None)
+    assert 'drawing_libraries' not in request
+    assert not (descriptor()['assets'].keys() & request['assets_sha256'].keys())
+    assert request['assets_sha256']['three.module.min.js'] == shared.ASSET_SHA256['three.module.min.js']
+    assert document == original_document and source == original_source
+    assert binding['document'] == document and binding['input_sha256'] == digest(document)
+    assert binding['source']['files'] == source['files']
+    assert binding['source_sha256'] == binding['learning_source_sha256'] == source['source_sha256']
+    assert request['host_sha256'] == host_sha256 == hashlib.sha256(VIDEO_HOST.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('asset', ['ink-landscape.mjs', 'ink-landscape.LICENSE.txt'])
+def test_three_cannot_depend_on_a_canvas_only_library(tmp_path, asset):
+    value, document, source = _three_binding(tmp_path)
+    source['files']['scene.js'] += f"\nimport './assets/{asset}';"
+    source['source_sha256'] = video_protocol.source_sha256(source)
+    with pytest.raises(ServiceError, match='learning_drawing_library_engine_not_admitted'):
+        value._snapshot('unsupported-combination', source, document, [])
+    assert not value.root.exists()
+
+
+def test_three_receipt_cannot_claim_a_library_absent_from_its_render_request(tmp_path, monkeypatch):
+    value, document, source = _three_binding(tmp_path)
+    binding = value._snapshot('three', source, document, [])
+    receipt = {}
+    monkeypatch.setattr(shared.MethodAnimationRenderer, '_outputs', lambda *_: (receipt, b'{}', None))
+    assert value._outputs(tmp_path, binding, {}) == (receipt, b'{}', None)
+    receipt['drawing_library_observation'] = observation()
+    with pytest.raises(ServiceError, match='learning_drawing_library_evidence_invalid'):
+        value._outputs(tmp_path, binding, {})
