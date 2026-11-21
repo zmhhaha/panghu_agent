@@ -22,8 +22,8 @@ function number(value, low, high, message) {
 }
 function requestId(value) { if (!UUID.test(value ?? '')) throw Error('无法生成有效请求编号'); return value; }
 export function videoBudget(fields) {
-  return {max_rounds: number(fields.max_rounds ?? 3, 1, 8, '探索轮数应为 1 至 8'),
-    max_seconds: number(fields.max_minutes ?? 15, 1, 60, '时间上限应为 1 至 60 分钟') * 60};
+  return {max_rounds: number(fields.max_rounds ?? 1, 1, 8, '探索轮数应为 1 至 8'),
+    max_seconds: number(fields.max_minutes ?? 60, 1, 60, '时间上限应为 1 至 60 分钟') * 60};
 }
 function skillSelection(fields) {
   if (fields.use_wikiskill !== undefined && typeof fields.use_wikiskill !== 'boolean') throw Error('请明确是否加载 WikiSkill');

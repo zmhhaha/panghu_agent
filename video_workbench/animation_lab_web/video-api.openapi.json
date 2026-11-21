@@ -912,13 +912,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 8,
-            "default": 3
+            "default": 1
           },
           "max_seconds": {
             "type": "integer",
             "minimum": 60,
             "maximum": 3600,
-            "default": 900
+            "default": 3600
           },
           "start_seconds": {
             "type": "number",
@@ -990,13 +990,13 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 8,
-            "default": 3
+            "default": 1
           },
           "max_seconds": {
             "type": "integer",
             "minimum": 60,
             "maximum": 3600,
-            "default": 900
+            "default": 3600
           },
           "capability_selection": {
             "$ref": "#/components/schemas/CapabilitySelection"
@@ -1277,8 +1277,8 @@
           "max_seconds": {
             "type": "integer",
             "minimum": 60,
-            "maximum": 1800,
-            "default": 600
+            "maximum": 3600,
+            "default": 3600
           }
         }
       },
