@@ -2,7 +2,10 @@
 import json
 import hashlib
 import time
+from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -14,6 +17,7 @@ from video_workbench.app import create_app
 from video_workbench.film_creation_workflow import FilmCreationWorkflow
 from agent_service.profiles.video_animation_film_module import PROFILE
 from test_production_film_runs import env, finish_module, children, OWNER
+from test_production_runs import seed
 
 
 def start(env, key, source=None):
@@ -62,6 +66,83 @@ def custody(env):
     with env.store.transaction() as db:
         return {table: [tuple(row) for row in db.execute('SELECT * FROM ' + table)]
             for table in ('production_runs', 'film_module_operations', 'film_module_versions')}
+
+
+def full_custody(env):
+    with env.store.transaction() as db:
+        return {table: [tuple(row) for row in db.execute('SELECT * FROM ' + table)]
+            for table in ('production_runs', 'film_module_operations', 'film_module_versions',
+                'film_render_operations', 'projects')}
+
+
+class SilentCustodyRenderer:
+    """Exercise the real workflow with explicit nonmedia fixture bytes only."""
+    def __init__(self):
+        self.calls = []
+
+    def render(self, snapshot, directory, **options):
+        self.calls.append(options['operation_id'])
+        data = b'synthetic-silent-render-custody-not-media'
+        path = Path(directory) / 'video.mp4'
+        path.write_bytes(data)
+        count = snapshot['clock']['frame_count']
+        return dict(path=str(path), sha256=hashlib.sha256(data).hexdigest(), bytes=len(data),
+            snapshot_sha256=snapshot['sha256'], runtime_fingerprint=snapshot['runtime_fingerprint'],
+            visual_mode='hyperframes-film', quality='draft', silent=True, contains_narration=False,
+            subtitles=False, audio_sample_rate=48000, audio_channels=2, width=snapshot['width'],
+            height=snapshot['height'], fps=24, video_codec='h264', audio_codec='aac',
+            duration_seconds=count / 24, expected_duration_seconds=count / 24,
+            film_export=dict(bundle_sha256=snapshot['bundle_sha256'], film_sha256=snapshot['film_sha256'],
+                project_manifest_sha256=snapshot['project_manifest_sha256'], concatenated_scene_videos=False,
+                clock=dict(fps=24, frame_count=count, sample_rate=48000, sample_count=count * 2000),
+                **{name: 'b' * 64 for name in ('export_receipt_sha256', 'capture_sha256', 'audio_mix_sha256',
+                    'job_result_sha256', 'job_binding', 'admission_sha256')}))
+
+
+def real_film_facade(env):
+    gateway = SimpleNamespace(profile=PROFILE, profile_revision='1', preflight=lambda deadline: None)
+    env.renderer = SilentCustodyRenderer()
+    env.facade = FilmCreationWorkflow(env.creation, gateway, env.adapter, env.renderer,
+        enabled=True, render_readiness=lambda: True)
+    env.runs.film_creation = env.facade
+
+
+def failed_whole_film(env, *, count=None):
+    if count is not None:
+        env.project = seed(env.store, env.joint, count=count)
+        with env.store.transaction() as db:
+            project = env.store._project(db, OWNER, env.project['id'])
+            for scene in project['scenes']:
+                scene['duration_seconds'] = 25
+            db.execute('DELETE FROM joint_plan_heads WHERE owner=? AND project_id=?', (OWNER, project['id']))
+            db.execute('INSERT INTO joint_plan_heads VALUES (?,?,?,?)',
+                (OWNER, project['id'], 'adopted-plan-1', env.joint._binding(project)))
+            env.store._save(db, project)
+        env.project = env.store.project(OWNER, env.project['id'])
+    real_film_facade(env)
+    run = start(env, 'original-whole-film-render-failure')
+    env.runs.tick()
+    for _ in env.project['scenes']:
+        module = children(env, 'film_module_operations')[-1]
+        finish_module(env, module['id'])
+        env.runs.tick()
+    render = children(env, 'film_render_operations')[-1]
+    env.creation.claim_submission('render', render['id'])
+    env.creation.update_operation('render', render['id'], status='failed',
+        error='hyperframes_film_execution_failed', stop_proven=True, finished_at=time.time())
+    env.runs.tick()
+    source = document(env, run['id'])
+    assert source['status'] == 'failed' and source['phase'] == 'draft'
+    assert all(item['module_status'] == 'completed' for item in source['items'])
+    return source
+
+
+def tamper_render(env, render_id, change):
+    with env.store.transaction() as db:
+        child = json.loads(db.execute('SELECT document FROM film_render_operations WHERE id=?',
+            (render_id,)).fetchone()[0])
+        change(child)
+        db.execute('UPDATE film_render_operations SET document=? WHERE id=?', (packed(child), render_id))
 
 
 def test_reuse_retains_original_prefix_and_targets_authors_only_fresh_suffix_then_one_snapshot(env):
@@ -341,3 +422,298 @@ def test_initial_admission_rechecks_original_configuration_release_and_asset_byt
     before = custody(env)
     with pytest.raises(ServiceError):start(env, 'initial-custody-rejection-' + change, source['id'])
     assert custody(env) == before
+
+
+def test_http_full_twelve_scene_reuse_creates_one_render_without_new_authors_or_audio(env, monkeypatch):
+    source = failed_whole_film(env, count=12)
+    before = full_custody(env)
+    old_render = env.creation.operation('render', source['draft_render_id'])
+    old_snapshot = env.creation.render_snapshot(old_render['id'])
+    assert old_snapshot['clock']['frame_count'] == 7200
+
+    def no_new_work(*args, **kwargs):
+        raise AssertionError('A full prefix must not admit any new author or audio work')
+
+    monkeypatch.setattr(env.facade, 'start_module', no_new_work)
+    monkeypatch.setattr(env.store, 'start_audio', no_new_work)
+    app = create_app(db_path=env.store.path, local_mode=False, background=False,
+        production_runs_enabled=True, trusted_hosts={'testserver'}, film_creation=env.facade)
+    monkeypatch.setattr(app.state.production_run_store.store, 'start_audio', no_new_work)
+    project = env.store.project(OWNER, env.project['id'])
+    body = dict(expected_revision=project['revision'], joint_plan_version_id='adopted-plan-1',
+        audio_mode='silent', reuse_completed_prefix_from_run_id=source['id'])
+    url = '/api/projects/' + project['id'] + '/production-runs'
+    headers = {'Idempotency-Key': 'http-retry-stopped-whole-film'}
+    with TestClient(app) as client:
+        client.headers['x-forwarded-user'] = OWNER
+        session = client.get('/api/session').json()
+        assert client.post(url, json=body, headers=headers).status_code == 403
+        client.headers['x-csrf-token'] = session['csrf_token']
+        client.headers['x-forwarded-user'] = 'foreign-owner'
+        foreign_session = client.get('/api/session').json()
+        client.headers['x-csrf-token'] = foreign_session['csrf_token']
+        assert client.post(url, json=body, headers=headers).status_code == 404
+        client.headers['x-forwarded-user'] = OWNER
+        client.headers['x-csrf-token'] = session['csrf_token']
+        response = client.post(url, json=body, headers=headers)
+        assert response.status_code == 202, response.text
+        run = response.json()
+        assert run['module_reuse']['prefix_count'] == 12
+        assert run['module_work_budget'] == dict(reused_scene_modules=12, new_scene_modules=0,
+            new_recordings=0, whole_film_renders=1)
+        assert run['module_reuse']['stopped_child_receipts'][old_render['id']] == digest(old_render)
+        current = document(env, run['id'])
+        assert current['items'] == source['items'] and current['module_targets'] == source['module_targets']
+        assert current['intents'] == {name: intent for name, intent in source['intents'].items() if name != 'draft'}
+        assert current['draft_render_id'] is None and current.get('render_snapshot_sha256') is None
+        assert client.post(url, json=body, headers=headers).json()['id'] == run['id']
+        after_admission = full_custody(env)
+        for _ in range(2):
+            assert client.get('/api/production-runs/' + run['id']).status_code == 200
+            assert client.get(url).status_code == 200
+        assert full_custody(env) == after_admission
+        app.state.production_run_store.tick()
+        renders = children(env, 'film_render_operations')
+        assert len(renders) == 2
+        fresh = renders[-1]
+        assert fresh['id'] != old_render['id']
+        assert fresh['request']['production_run_id'] == run['id']
+        assert fresh['request']['module_version_ids'] == [item['module_version_id'] for item in source['items']]
+        assert fresh['configuration'] == old_render['configuration']
+        snapshot = env.creation.render_snapshot(fresh['id'])
+        assert snapshot['production_run_id'] == run['id']
+        assert snapshot['clock'] == old_snapshot['clock'] and snapshot['recording_sha256'] == {}
+        assert snapshot['module_sha256'] == old_snapshot['module_sha256']
+        new_files = decode_film_execution_snapshot(snapshot, expected_snapshot_sha256=snapshot['sha256'],
+            runtime_fingerprint=env.creation.runtime, trusted_host_sha256=env.creation.hosts, image=env.creation.image)
+        old_files = decode_film_execution_snapshot(old_snapshot, expected_snapshot_sha256=old_snapshot['sha256'],
+            runtime_fingerprint=env.creation.runtime, trusted_host_sha256=env.creation.hosts, image=env.creation.image)
+        assert new_files == old_files
+        env.facade.tick()
+        app.state.production_run_store.tick()
+        assert env.renderer.calls == [fresh['id']]
+        completed = client.get('/api/production-runs/' + run['id']).json()
+        assert completed['status'] == completed['phase'] == 'completed'
+        assert completed['draft_render_id'] == fresh['id']
+        app.state.production_run_store.tick()
+        assert len(children(env, 'film_render_operations')) == 2
+        assert client.post(url, json=body, headers=headers).json()['id'] == run['id']
+    after = full_custody(env)
+    assert after['production_runs'][:len(before['production_runs'])] == before['production_runs']
+    assert after['film_render_operations'][:1] == before['film_render_operations']
+    for table in ('film_module_operations', 'film_module_versions', 'projects'):
+        assert after[table] == before[table]
+    assert not children(env, 'audio_operations') and not children(env, 'motion_operations')
+    assert not children(env, 'video_renders')
+
+
+@pytest.mark.parametrize('change', ['unstopped_render', 'active_render', 'cancelled_render', 'completed_render',
+    'unfinished_render', 'render_deadline', 'missing_render', 'extra_render', 'render_owner', 'render_project',
+    'render_key', 'render_request_hash', 'outer_request_hash',
+    'render_versions', 'render_targets', 'render_film', 'render_configuration', 'render_snapshot',
+    'assembly_manifest', 'missing_draft_intent', 'active_draft_intent', 'snapshot_pointer',
+    'unstopped_module', 'changed_module_source', 'changed_current_configuration'])
+def test_full_prefix_rejects_unstopped_or_changed_originals_before_new_journal(env, change):
+    source = failed_whole_film(env)
+    render_id = source['draft_render_id']
+    if change == 'unstopped_render':
+        tamper_render(env, render_id, lambda child: child.update(stop_proven=False))
+    elif change == 'active_render':
+        tamper_render(env, render_id, lambda child: child.update(status='running'))
+    elif change == 'cancelled_render':
+        tamper_render(env, render_id, lambda child: child.update(cancel_requested=True))
+    elif change == 'completed_render':
+        tamper_render(env, render_id, lambda child: child.update(status='completed'))
+    elif change == 'unfinished_render':
+        tamper_render(env, render_id, lambda child: child.update(finished_at=None))
+    elif change == 'render_deadline':
+        tamper_render(env, render_id, lambda child: child.update(deadline_at=child['deadline_at'] + 1))
+    elif change == 'outer_request_hash':
+        with env.store.transaction() as db:
+            db.execute('UPDATE film_render_operations SET request_hash=? WHERE id=?', ('d' * 64, render_id))
+    elif change == 'missing_render':
+        with env.store.transaction() as db:
+            db.execute('DELETE FROM film_render_operations WHERE id=?', (render_id,))
+    elif change == 'extra_render':
+        with env.store.transaction() as db:
+            row = list(db.execute('SELECT * FROM film_render_operations WHERE id=?', (render_id,)).fetchone())
+            child = json.loads(row[5]);child.update(id=str(uuid4()), request_key='unrecorded-extra-render')
+            row[0], row[3], row[5] = child['id'], child['request_key'], packed(child)
+            db.execute('INSERT INTO film_render_operations VALUES(?,?,?,?,?,?,?,?)', row)
+    elif change in {'render_owner', 'render_project', 'render_key', 'render_request_hash', 'render_configuration'}:
+        field = {'render_owner': 'owner', 'render_project': 'project_id', 'render_key': 'request_key',
+            'render_request_hash': 'request_sha256', 'render_configuration': 'configuration_sha256'}[change]
+        tamper_render(env, render_id, lambda child: child.update({field: 'unrelated-identity'}))
+    elif change in {'render_versions', 'render_targets', 'render_film'}:
+        field = {'render_versions': 'module_version_ids', 'render_targets': 'module_targets', 'render_film': 'film'}[change]
+        def alter_request(child):
+            if field == 'film':child['request'][field]['title'] = 'Different original film'
+            else:child['request'][field].reverse()
+            child['request_sha256'] = digest(child['request'])
+            source['intents']['draft']['request_sha256'] = child['request_sha256']
+        tamper_render(env, render_id, alter_request)
+        child = env.creation.operation('render', render_id)
+        with env.store.transaction() as db:
+            db.execute('UPDATE film_render_operations SET request_hash=? WHERE id=?',
+                (digest(dict(project_id=source['project_id'], request=child['request'])), render_id))
+        rewrite(env, source)
+    elif change == 'render_snapshot':
+        with env.store.transaction() as db:
+            row = db.execute('SELECT snapshot FROM film_render_operations WHERE id=?', (render_id,)).fetchone()
+            snapshot = json.loads(row[0]);snapshot['archive_base64'] = 'broken-original-archive'
+            db.execute('UPDATE film_render_operations SET snapshot=? WHERE id=?', (packed(snapshot), render_id))
+    elif change == 'assembly_manifest':
+        tamper_render(env, render_id, lambda child: child['assembly_manifest'].update(module_sha256={}))
+    elif change in {'missing_draft_intent', 'active_draft_intent', 'snapshot_pointer'}:
+        if change == 'missing_draft_intent':source['intents'].pop('draft')
+        elif change == 'active_draft_intent':source['intents']['draft']['active'] = True
+        else:source['render_snapshot_sha256'] = 'd' * 64
+        rewrite(env, source)
+    elif change == 'unstopped_module':
+        tamper_child(env, source['items'][-1]['module_operation_id'], stop_proven=False)
+    elif change == 'changed_module_source':
+        with env.store.transaction() as db:
+            item = source['items'][-1]
+            row = db.execute('SELECT package FROM film_module_versions WHERE id=?', (item['module_version_id'],)).fetchone()
+            package = json.loads(row[0]);module = package['result']['module']
+            module['files'][module['entry']] += '\n// illicit source change\n'
+            db.execute('UPDATE film_module_versions SET package=? WHERE id=?', (packed(package), item['module_version_id']))
+    else:
+        env.creation.configuration['max_seconds'] = 299
+        env.creation.configuration['sha256'] = digest({key: value for key, value in env.creation.configuration.items() if key != 'sha256'})
+    before = full_custody(env)
+    with pytest.raises(ServiceError):start(env, 'reject-full-prefix-' + change, source['id'])
+    assert full_custody(env) == before
+
+
+@pytest.mark.parametrize('change', ['render_receipt', 'snapshot', 'module_receipt'])
+def test_full_prefix_rechecked_before_export_and_gets_never_repair_history(env, change):
+    source = failed_whole_film(env)
+    run = start(env, 'full-prefix-recheck-before-export', source['id'])
+    if change == 'render_receipt':
+        tamper_render(env, source['draft_render_id'], lambda child: child.update(error='rewritten failure'))
+    elif change == 'module_receipt':
+        item = source['items'][-1]
+        child = env.creation.operation('module', item['module_operation_id'])
+        tamper_child(env, child['id'], deadline_at=child['deadline_at'] + 1)
+    else:
+        with env.store.transaction() as db:
+            db.execute('UPDATE film_render_operations SET snapshot=? WHERE id=?',
+                ('{}', source['draft_render_id']))
+    before = full_custody(env)
+    env.runs.get(OWNER, run['id']);env.runs.list(OWNER, env.project['id'])
+    assert full_custody(env) == before
+    env.runs.tick()
+    assert env.runs.get(OWNER, run['id'])['status'] == 'failed'
+    after = full_custody(env)
+    assert after['film_render_operations'] == before['film_render_operations']
+    assert after['film_module_operations'] == before['film_module_operations']
+    assert not env.renderer.calls
+
+
+def transition_and_asset_fixture(env, monkeypatch):
+    import test_production_film_runs as fixtures
+    name = 'assets/original-paper.svg'
+    env.creation.assets[name] = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1"/></svg>'
+    env.creation.runtime_capabilities['assets'][name.removeprefix('assets/')] = hashlib.sha256(env.creation.assets[name]).hexdigest()
+    env.creation.configuration['runtime_capabilities'] = deepcopy(env.creation.runtime_capabilities)
+    env.creation.configuration['sha256'] = digest({key: value for key, value in env.creation.configuration.items() if key != 'sha256'})
+    original_result = fixtures.raw_result
+
+    def result_with_original_transition(document):
+        index = document['film_context']['current_scene_index']
+        result = original_result(document, transform=index == 1)
+        if index:
+            at = round(document['film_context']['film']['scenes'][index]['start_seconds'] * 24)
+            result['incoming_boundary']['transition'].update(start_frame=at - 3, end_frame=at + 3)
+            result['incoming_boundary']['transition']['module']['assets'] = [name]
+        return result
+
+    monkeypatch.setattr(fixtures, 'raw_result', result_with_original_transition)
+    return name
+
+
+def test_full_prefix_preserves_original_transition_and_declared_asset_bytes(env, monkeypatch):
+    name = transition_and_asset_fixture(env, monkeypatch)
+    source = failed_whole_film(env)
+    before = full_custody(env)
+    original = env.creation.render_snapshot(source['draft_render_id'])
+    assert len(original['module_sha256']) == 3
+    run = start(env, 'reuse-full-prefix-with-transition', source['id'])
+    env.runs.tick()
+    fresh = children(env, 'film_render_operations')[-1]
+    assert fresh['request']['production_run_id'] == run['id']
+    snapshot = env.creation.render_snapshot(fresh['id'])
+    files = decode_film_execution_snapshot(snapshot, expected_snapshot_sha256=snapshot['sha256'],
+        runtime_fingerprint=env.creation.runtime, trusted_host_sha256=env.creation.hosts, image=env.creation.image)
+    assert snapshot['module_sha256'] == original['module_sha256']
+    assert files['project/' + name] == env.creation.assets[name]
+    for item in source['items']:
+        package = env.creation.module_package(OWNER, item['module_version_id'])
+        incoming = package['result']['incoming_boundary']
+        modules = [package['result']['module']]
+        if incoming is not None:
+            modules.append(incoming['transition_module'])
+        for module in modules:
+            for path, text in module['files'].items():
+                assert files['project/' + path] == text.encode()
+    after = full_custody(env)
+    for table in ('film_module_operations', 'film_module_versions', 'projects'):
+        assert after[table] == before[table]
+    assert after['film_render_operations'][:1] == before['film_render_operations']
+
+
+def test_full_prefix_rejects_a_self_consistent_snapshot_with_substituted_declared_asset(env, monkeypatch):
+    from video_workbench.hyperframes_film_project import compile_film_project
+    from video_workbench.hyperframes_film_browser import HOST_NAMES, compile_film_browser_bundle
+    from video_workbench.hyperframes_film_snapshot import freeze_film_execution_snapshot
+    name = transition_and_asset_fixture(env, monkeypatch)
+    source = failed_whole_film(env)
+    child = env.creation.operation('render', source['draft_render_id'])
+    packages = [env.creation.module_package(OWNER, item['module_version_id']) for item in source['items']]
+    modules, boundaries = [], []
+    for package in packages:
+        modules.append(package['result']['module'])
+        incoming = package['result']['incoming_boundary']
+        if incoming is not None:
+            modules.append(incoming['transition_module'])
+            boundaries.append(incoming['boundary'])
+    project = compile_film_project(film=source['film'], film_sha256=source['film_sha256'],
+        modules=modules, boundaries=boundaries, recordings=[], assets={name: b'substituted passive asset'},
+        runtime_fingerprint=env.creation.runtime)
+    bundle = compile_film_browser_bundle(project,
+        expected_project_manifest_sha256=hashlib.sha256(project['manifest.json']).hexdigest(),
+        width=1280, height=720, host_files=env.creation.host_files)
+    snapshot = freeze_film_execution_snapshot(bundle,
+        expected_bundle_sha256=hashlib.sha256(bundle['browser-manifest.json']).hexdigest(),
+        runtime_fingerprint=env.creation.runtime, trusted_host_sha256=env.creation.hosts, image=env.creation.image,
+        project_revision=child['request']['expected_revision'], production_run_id=source['id'],
+        timeout_seconds=child['request']['timeout_seconds'])
+    # The replacement passes the standalone snapshot verifier; comparison with
+    # the immutable author packages/assets must still reject it before admission.
+    decode_film_execution_snapshot(snapshot, expected_snapshot_sha256=snapshot['sha256'],
+        runtime_fingerprint=env.creation.runtime, trusted_host_sha256=env.creation.hosts, image=env.creation.image)
+    tamper_render(env, child['id'], lambda value: value.update(snapshot_sha256=snapshot['sha256']))
+    with env.store.transaction() as db:
+        db.execute('UPDATE film_render_operations SET snapshot=? WHERE id=?', (packed(snapshot), child['id']))
+    before = full_custody(env)
+    with pytest.raises(ServiceError):start(env, 'reject-self-consistent-wrong-asset', source['id'])
+    assert full_custody(env) == before
+
+
+def test_repeated_stopped_full_export_failure_keeps_bounded_lineage_and_all_original_modules(env):
+    source = failed_whole_film(env)
+    first = start(env, 'first-full-export-recovery', source['id'])
+    env.runs.tick()
+    render = children(env, 'film_render_operations')[-1]
+    env.creation.claim_submission('render', render['id'])
+    env.creation.update_operation('render', render['id'], status='failed', stop_proven=True,
+        error='hyperframes_film_execution_failed', finished_at=time.time())
+    env.runs.tick()
+    second = start(env, 'second-full-export-recovery', first['id'])
+    assert second['module_reuse']['lineage_run_ids'] == [first['id'], source['id']]
+    assert [item['module_version_id'] for item in second['items']] == [item['module_version_id'] for item in source['items']]
+    env.runs.tick()
+    assert len(children(env, 'film_module_operations')) == 2
+    assert len(children(env, 'film_render_operations')) == 3
+    assert not children(env, 'audio_operations')

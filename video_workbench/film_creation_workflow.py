@@ -103,6 +103,15 @@ class FilmCreationWorkflow:
         """Forward read-only prefix custody using the caller's transaction."""
         return self.creation.module_reuse_material(db, owner, version_id)
 
+    def source_runtime_policy(self):
+        return self.creation.source_runtime_policy()
+
+    def authorize_source_runtime_reuse(self, db, owner, source_run, target_run_id):
+        return self.creation.authorize_source_runtime_reuse(db, owner, source_run, target_run_id)
+
+    def source_runtime_configuration_for_child(self, run, phase, index=None):
+        return self.creation.source_runtime_configuration_for_child(run, phase, index)
+
     def preflight_resources(self, owner):
         from .manim_film_admission import validate_producer_capabilities
         configuration = self.creation.configuration or {}
@@ -189,6 +198,29 @@ class FilmCreationWorkflow:
     def _new_admission(self, op):
         if op['configuration_sha256'] != self.creation.configuration_sha256:
             raise ServiceError('film_creation_configuration_changed', 409)
+        receipt = op.get('request', {}).get('source_runtime_admission_receipt')
+        if receipt is not None:
+            from agent_service.contracts import digest
+            from .film_source_runtime_admission import exact, validate_receipt
+            policy = self.creation.source_runtime_policy()
+            if policy is None or not exact(op.get('configuration'), self.creation.configuration):
+                raise ServiceError('film_source_runtime_admission_required', 409)
+            request = op['request']
+            validate_receipt(policy, receipt, target_run_id=request['production_run_id'],
+                target_configuration_sha256=self.creation.configuration_sha256,
+                film_sha256=op['film_sha256'])
+            if op.get('kind') != 'render' or op.get('request_sha256') != digest(request):
+                raise ServiceError('film_source_runtime_receipt_mismatch', 409)
+            with self.creation.store.transaction() as db:
+                row = db.execute('SELECT document FROM production_runs WHERE id=? AND owner=? AND project_id=?',
+                    (receipt['source_run_id'], op['owner'], op['project_id'])).fetchone()
+                if row is None:
+                    raise ServiceError('film_source_runtime_source_mismatch', 409)
+                import json
+                expected = self.creation.authorize_source_runtime_reuse(
+                    db, op['owner'], json.loads(row[0]), request['production_run_id'], require_target_run=True)
+                if not exact(receipt, expected):
+                    raise ServiceError('film_source_runtime_receipt_mismatch', 409)
         self.readiness()
 
     def _module(self, initial):

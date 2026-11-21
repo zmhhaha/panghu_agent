@@ -52,6 +52,8 @@ class FilmProductionSettings:
     host_files: dict
     assets: dict
     admission: dict
+    source_runtime_admission: dict | None = None
+    source_runtime_admission_file: str | None = None
 
     @classmethod
     def from_env(cls, env=None):
@@ -116,7 +118,19 @@ class FilmProductionSettings:
                     raise ValueError()
             if any(checksum != expected_assets[key] for key, checksum in capabilities['assets'].items()):
                 raise ValueError()
-            return cls(gate == '1', value['image'], runtime, capabilities, hosts, host_files, assets, admission)
+            source_policy = None
+            source_policy_file = env.get('VIDEO_FILM_SOURCE_RUNTIME_ADMISSION_FILE', '')
+            if source_policy_file:
+                from .film_source_runtime_admission import load_policy_file, validate_execution_target
+                target_settings = cls(gate == '1', value['image'], runtime, capabilities, hosts, host_files, assets, admission)
+                target_manim = FilmManimSettings.from_env(target_settings, env)
+                source_policy = validate_execution_target(load_policy_file(source_policy_file),
+                    image=value['image'], runtime_fingerprint=runtime, trusted_host_sha256=hosts,
+                    runtime_capabilities=capabilities, execution_admission_sha256=admission['sha256'],
+                    resource_authoring=target_manim.context if target_manim is not None else None)
+            return cls(gate == '1', value['image'], runtime, capabilities, hosts, host_files, assets, admission,
+                source_runtime_admission=source_policy,
+                source_runtime_admission_file=source_policy_file or None)
         except (ValueError, KeyError, TypeError, OSError, ServiceError):
             raise ValueError('Whole-film production release is unavailable or does not match installed hosts and assets') from None
 

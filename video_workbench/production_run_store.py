@@ -98,6 +98,8 @@ class ProductionRunStore:
             result.update(module_reuse=deepcopy(run['module_reuse']),
                 module_reuse_sha256=run['module_reuse_sha256'],
                 module_work_budget=deepcopy(run['module_work_budget']))
+        if 'source_runtime_admission_receipt' in run:
+            result['source_runtime_admission_receipt'] = deepcopy(run['source_runtime_admission_receipt'])
         if 'sequence_registration' in run:
             result.update(sequence_id=run['sequence_registration']['sequence_id'],
                 sequence_registration=deepcopy(run['sequence_registration']))
@@ -347,6 +349,8 @@ class ProductionRunStore:
         current = self._check_film_configuration(self._film_service().readiness())
         require(current == run['film_creation_configuration'],
             'production_run_film_configuration_changed', 409)
+        if 'source_runtime_admission_receipt' in run:
+            self._film_service().source_runtime_configuration_for_child(run, 'draft')
 
     @staticmethod
     def _module_targets(run_id, count):
@@ -863,10 +867,14 @@ class ProductionRunStore:
                 raise
             if child is None:
                 return None
+            configuration_sha256 = run['film_creation_configuration']['configuration_sha256']
+            if 'source_runtime_admission_receipt' in run:
+                configuration_sha256 = creation.source_runtime_configuration_for_child(
+                    run, intent['phase'], intent.get('index'))
             require(child.get('project_id') == run['project_id']
                 and child.get('request_key') == intent['key']
                 and child.get('request_sha256') == intent['request_sha256']
-                and child.get('configuration_sha256') == run['film_creation_configuration']['configuration_sha256']
+                and child.get('configuration_sha256') == configuration_sha256
                 and child.get('film_sha256') == run['film_sha256']
                 and (intent['phase'] == 'draft'
                      or child.get('scene_id') == run['items'][intent['index']]['scene_id']),
@@ -1143,7 +1151,8 @@ class ProductionRunStore:
         self._save(run)
 
     def _require_module_reuse(self, run):
-        if not any(key in run for key in ('module_reuse', 'module_reuse_sha256', 'module_work_budget')):
+        if not any(key in run for key in ('module_reuse', 'module_reuse_sha256', 'module_work_budget',
+                'source_runtime_admission_receipt')):
             return
         from .production_module_reuse import verify
         with self.store.transaction() as db:
@@ -1170,11 +1179,14 @@ class ProductionRunStore:
             return result
         for module_index in range(len(run['items'])):
             self._frozen_module_package(run, module_index)
-        return dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
+        result = dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
             module_version_ids=[item['module_version_id'] for item in run['items']],
             module_targets=deepcopy(run['module_targets']), production_run_id=run['id'],
             timeout_seconds=render_timeout(round(run['film']['total_seconds'] * 24)),
             configuration_sha256=configuration_sha256)
+        if 'source_runtime_admission_receipt' in run:
+            result['source_runtime_admission_receipt'] = deepcopy(run['source_runtime_admission_receipt'])
+        return result
 
     def _step_film(self, run, project, *, admit):
         """New runs author native modules and submit exactly one full project.

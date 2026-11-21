@@ -29,7 +29,9 @@ def _sha(raw):
 
 def assemble_film_production(*, packages, film, film_sha256, recordings, assets,
         runtime_fingerprint, runtime_identity, module_targets, host_files,
-        trusted_host_sha256, image, project_revision, production_run_id, timeout_seconds=600):
+        trusted_host_sha256, image, project_revision, production_run_id, timeout_seconds=600,
+        source_runtime_admission=None, source_runtime_admission_receipt=None,
+        target_configuration_sha256=None):
     """Return a snapshot and provenance manifest for the exact ordered handoffs.
 
     ``module_targets`` and ``runtime_identity`` are externally frozen author
@@ -52,6 +54,20 @@ def assemble_film_production(*, packages, film, film_sha256, recordings, assets,
         and type(trusted_host_sha256) is dict and set(trusted_host_sha256) == HOST_NAMES
         and all(type(raw) is bytes and _sha(raw) == trusted_host_sha256[name]
                 for name, raw in host_files.items()), 'film_production_host_binding_mismatch', 409)
+    author_identity = identity
+    bridge = source_runtime_admission_receipt is not None or source_runtime_admission is not None
+    if bridge:
+        from .film_source_runtime_admission import exact, validate_policy, validate_receipt
+        policy = validate_policy(source_runtime_admission)
+        validate_receipt(policy, source_runtime_admission_receipt,
+            target_run_id=production_run_id, target_configuration_sha256=target_configuration_sha256,
+            film_sha256=film_sha256)
+        _require(exact(policy['target']['runtime_identity'], identity)
+            and exact(policy['target']['runtime_fingerprint'], runtime)
+            and exact(policy['target']['trusted_host_sha256'], trusted_host_sha256)
+            and policy['target']['image'] == image and recordings == [],
+            'film_production_runtime_binding_mismatch', 409)
+        author_identity = policy['source']['runtime_identity']
     _require(type(assets) is dict and len(assets) <= 128
         and all(type(name) is str and re.fullmatch(r'assets/[A-Za-z0-9_./-]+', name)
                 and not any(part in {'.', '..', ''} for part in name.split('/'))
@@ -74,7 +90,7 @@ def assemble_film_production(*, packages, film, film_sha256, recordings, assets,
         _require(context['predecessor'] == expected_previous,
             'film_production_exact_predecessor_mismatch', 409)
         _require(document['target'] == module_targets[index], 'film_production_target_mismatch', 409)
-        _require(bounds['runtime_identity'] == identity, 'film_production_runtime_binding_mismatch', 409)
+        _require(bounds['runtime_identity'] == author_identity, 'film_production_runtime_binding_mismatch', 409)
         current_dimensions = (bounds['width'], bounds['height'], bounds['fps'])
         if dimensions is None:
             dimensions = current_dimensions
@@ -93,6 +109,11 @@ def assemble_film_production(*, packages, film, film_sha256, recordings, assets,
             skill_delivery_sha256=package['skill_delivery_sha256'],
             skill_tool_evidence_sha256=package['skill_tool_evidence_sha256']))
         frozen.append(package)
+    if bridge:
+        from .film_source_runtime_admission import validate_packages
+        validate_packages(policy, source_runtime_admission_receipt, frozen, film=film,
+            module_targets=module_targets, target_run_id=production_run_id,
+            target_configuration_sha256=target_configuration_sha256)
     used = {name for module in modules for name in module['assets']}
     _require(used <= set(assets), 'film_production_asset_binding_mismatch', 409)
     project = compile_film_project(film=film, film_sha256=film_sha256, modules=modules,
@@ -116,5 +137,14 @@ def assemble_film_production(*, packages, film, film_sha256, recordings, assets,
         recording_sha256=deepcopy(snapshot['recording_sha256']), clock=deepcopy(snapshot['clock']),
         execution=dict(status='not_submitted', concatenated_scene_videos=False,
             evidence_scope='verified_stopped_modules_and_frozen_whole_project_not_render_or_adoption'))
+    if bridge:
+        manifest['source_runtime_admission'] = dict(policy_sha256=policy['sha256'],
+            receipt_sha256=source_runtime_admission_receipt['sha256'],
+            source_runtime_identity=deepcopy(author_identity), execution_runtime_identity=deepcopy(identity),
+            source_configuration_sha256=policy['source']['configuration']['sha256'],
+            target_configuration_sha256=target_configuration_sha256,
+            source_run_id=policy['source']['run_id'], source_run_sha256=policy['source']['run_sha256'],
+            source_snapshot_sha256=policy['source']['snapshot_sha256'],
+            module_package_sha256s=[digest(package) for package in frozen])
     manifest['sha256'] = digest(manifest)
     return dict(snapshot=snapshot, manifest=manifest)

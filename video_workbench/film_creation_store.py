@@ -47,13 +47,16 @@ def packed(value):
 
 class FilmCreationStore:
     def __init__(self, store, *, runtime_capabilities=None, runtime_fingerprint=None, host_files=None,
-            trusted_host_sha256=None, image=None, assets=None, enabled=False, resource_authoring=None, _mode='configured'):
+            trusted_host_sha256=None, image=None, assets=None, enabled=False, resource_authoring=None,
+            source_runtime_admission=None, source_runtime_admission_file=None,
+            execution_admission_sha256=None, _mode='configured'):
         require(type(enabled) is bool)
         self.store, self.enabled = store, enabled
         require(_mode in {'configured', 'recovery'}, 'film_creation_configuration_invalid')
         if _mode == 'recovery':
             require(not enabled and all(value is None for value in (runtime_capabilities,
-                runtime_fingerprint, host_files, trusted_host_sha256, image, assets)),
+                runtime_fingerprint, host_files, trusted_host_sha256, image, assets,
+                source_runtime_admission, source_runtime_admission_file, execution_admission_sha256)),
                 'film_creation_configuration_invalid')
             self.runtime_capabilities = self.runtime = self.hosts = self.image = None
             self.host_files = self.assets = self.configuration = None
@@ -79,7 +82,19 @@ class FilmCreationStore:
             from .manim_film_admission import validate_consumer_context
             self.configuration['resource_authoring'] = validate_consumer_context(resource_authoring,
                 runtime=self.runtime, hosts=self.hosts, image=self.image)
+        self.source_runtime_admission_file = source_runtime_admission_file
+        require(source_runtime_admission_file is None or source_runtime_admission is not None,
+            'film_source_runtime_admission_invalid', 409)
+        if source_runtime_admission is not None:
+            from .film_source_runtime_admission import validate_policy
+            require(execution_admission_sha256 is not None, 'film_source_runtime_admission_invalid', 409)
+            self.configuration['source_runtime_admission'] = validate_policy(source_runtime_admission)
         self.configuration['sha256'] = digest(self.configuration)
+        if source_runtime_admission is not None:
+            from .film_source_runtime_admission import validate_target_configuration
+            validate_target_configuration(source_runtime_admission, self.configuration,
+                execution_admission_sha256=execution_admission_sha256)
+            self.source_runtime_policy()
         self._init_schema()
 
     @classmethod
@@ -438,6 +453,109 @@ class FilmCreationStore:
         assets = self._assets_for_operations(db, owner, [version['operation_id']])
         return dict(version=version, package=package, assets=assets)
 
+    def source_runtime_policy(self):
+        """Return current operator authority, never a request-selected policy."""
+        from .film_source_runtime_admission import (
+            exact, load_policy_file, validate_target_configuration,
+        )
+        policy = (self.configuration or {}).get('source_runtime_admission')
+        if policy is None:
+            return None
+        path = getattr(self, 'source_runtime_admission_file', None)
+        if path is not None:
+            require(exact(load_policy_file(path), policy), 'film_source_runtime_policy_changed', 409)
+        return validate_target_configuration(policy, self.configuration)
+
+    def authorize_source_runtime_reuse(self, db, owner, source_run, target_run_id, *, require_target_run=False):
+        """Bind exact stopped original material on the caller's existing DB."""
+        from .film_source_runtime_admission import exact, make_receipt, validate_packages
+        policy = self.source_runtime_policy()
+        require(policy is not None and owner == policy['source']['owner'],
+            'film_source_runtime_admission_required', 409)
+        receipt = make_receipt(policy, source_run, target_run_id, self.configuration)
+        scope = policy['source']
+        original = db.execute('SELECT document FROM production_runs WHERE id=? AND owner=? AND project_id=?',
+            (scope['run_id'], owner, scope['project_id'])).fetchone()
+        require(original is not None and exact(json.loads(original[0]), source_run),
+            'film_source_runtime_source_mismatch', 409)
+        row = db.execute('SELECT id,owner,project_id,idem,request_hash,document,snapshot FROM film_render_operations '
+            'WHERE id=? AND owner=? AND project_id=?',
+            (scope['render_id'], owner, scope['project_id'])).fetchone()
+        require(row is not None, 'film_source_runtime_source_mismatch', 409)
+        child, snapshot = json.loads(row[5]), json.loads(row[6])
+        require(tuple(row[:4]) == (child.get('id'), owner, scope['project_id'], child.get('request_key'))
+            and row[4] == digest(dict(project_id=scope['project_id'], request=child.get('request')))
+            and child.get('request_sha256') == digest(child.get('request'))
+            and child.get('owner') == owner and child.get('project_id') == scope['project_id']
+            and child.get('status') == 'failed' and child.get('stop_proven') is True
+            and not child.get('cancel_requested') and child.get('result') is None
+            and child.get('snapshot_sha256') == scope['snapshot_sha256']
+            and child.get('request', {}).get('production_run_id') == scope['run_id']
+            and exact(child.get('configuration'), scope['configuration']),
+            'film_source_runtime_source_mismatch', 409)
+        verify_film_execution_snapshot(snapshot, expected_snapshot_sha256=scope['snapshot_sha256'],
+            runtime_fingerprint=scope['configuration']['runtime_fingerprint'],
+            trusted_host_sha256=scope['configuration']['trusted_host_sha256'],
+            image=scope['configuration']['image'])
+        packages = []
+        for expected in scope['modules']:
+            version, package = self._version(db, owner, expected['version_id'])
+            require(version['operation_id'] == expected['operation_id']
+                and version['project_id'] == scope['project_id']
+                and version['scene_id'] == expected['scene_id'],
+                'film_source_runtime_package_scope_mismatch', 409)
+            packages.append(package)
+        validate_packages(policy, receipt, packages, film=source_run['film'],
+            module_targets=source_run['module_targets'], target_run_id=target_run_id,
+            target_configuration_sha256=self.configuration_sha256)
+        target_row = db.execute('SELECT document FROM production_runs WHERE id=? AND owner=? AND project_id=?',
+            (target_run_id, owner, scope['project_id'])).fetchone()
+        require(target_row is not None or not require_target_run, 'film_source_runtime_receipt_mismatch', 409)
+        if target_row is not None:
+            # Attach establishes these custody pins before the journal exists.
+            # Every later use, including queued -> external render admission,
+            # compares all original child bytes against that durable selection.
+            target = json.loads(target_row[0])
+            reuse = target.get('module_reuse')
+            require(target.get('id') == target_run_id and target.get('owner') == owner
+                and target.get('project_id') == scope['project_id']
+                and target.get('film_sha256') == scope['film_sha256']
+                and target.get('film_creation_configuration', {}).get('configuration_sha256') == self.configuration_sha256
+                and exact(target.get('source_runtime_admission_receipt'), receipt)
+                and type(reuse) is dict and reuse.get('schema') == 'video.production-module-prefix-reuse.v1'
+                and target.get('module_reuse_sha256') == digest(reuse)
+                and reuse.get('source_run_id') == scope['run_id']
+                and reuse.get('source_run_sha256') == scope['run_sha256']
+                and reuse.get('prefix_count') == 12
+                and target.get('module_work_budget') == dict(reused_scene_modules=12,
+                    new_scene_modules=0, whole_film_renders=1, new_recordings=0),
+                'film_source_runtime_receipt_mismatch', 409)
+            stopped = {child['id']: digest(child)}
+            for expected in scope['modules']:
+                module_row = db.execute('SELECT id,owner,project_id,scene_id,idem,request_hash,document '
+                    'FROM film_module_operations WHERE id=? AND owner=? AND project_id=?',
+                    (expected['operation_id'], owner, scope['project_id'])).fetchone()
+                require(module_row is not None, 'film_source_runtime_source_mismatch', 409)
+                module = json.loads(module_row[6])
+                require(tuple(module_row[:5]) == (module.get('id'), owner, scope['project_id'],
+                        expected['scene_id'], module.get('request_key'))
+                    and module.get('owner') == owner and module.get('project_id') == scope['project_id']
+                    and module.get('scene_id') == expected['scene_id']
+                    and module.get('request_sha256') == digest(module.get('request'))
+                    and module_row[5] == digest(dict(project_id=scope['project_id'],
+                        scene_id=expected['scene_id'], request=module.get('request'))),
+                    'film_source_runtime_source_mismatch', 409)
+                stopped[module['id']] = digest(module)
+            require(len(stopped) == 13 and exact(reuse.get('stopped_child_receipts'), stopped),
+                'film_source_runtime_source_mismatch', 409)
+        return receipt
+
+    def source_runtime_configuration_for_child(self, run, phase, index=None):
+        from .film_source_runtime_admission import expected_child_configuration
+        require(run['film_creation_configuration']['configuration_sha256'] == self.configuration_sha256,
+            'film_creation_configuration_changed', 409)
+        return expected_child_configuration(run, phase, index, policy=self.source_runtime_policy())
+
     def module_predecessor(self, owner, version_id):
         return dict(version_id=version_id, predecessor=predecessor_from_package(self.module_package(owner, version_id)))
 
@@ -627,7 +745,8 @@ class FilmCreationStore:
 
     def start_render(self, owner, project_id, request, idem):
         self._validate_request(request, {'expected_revision', 'film', 'film_sha256', 'module_version_ids',
-            'module_targets', 'production_run_id', 'timeout_seconds', 'configuration_sha256'})
+            'module_targets', 'production_run_id', 'timeout_seconds', 'configuration_sha256'},
+            optional={'source_runtime_admission_receipt'})
         fingerprint = digest(dict(project_id=project_id, request=request))
         with self.store.transaction() as db:
             if replay := self._replay(db, owner, idem, 'render', fingerprint):
@@ -645,12 +764,27 @@ class FilmCreationStore:
                     and version['film_sha256'] == request['film_sha256'], 'film_creation_render_module_mismatch', 409)
                 packages.append(package)
                 source_operations.append(version['operation_id'])
+            source_receipt = request.get('source_runtime_admission_receipt')
+            source_policy = self.source_runtime_policy() if source_receipt is not None else None
+            if source_receipt is not None:
+                from .film_source_runtime_admission import exact, validate_receipt
+                require(source_policy is not None, 'film_source_runtime_admission_required', 409)
+                validate_receipt(source_policy, source_receipt, target_run_id=request['production_run_id'],
+                    target_configuration_sha256=self.configuration_sha256, film_sha256=request['film_sha256'])
+                source = db.execute('SELECT document FROM production_runs WHERE id=? AND owner=? AND project_id=?',
+                    (source_receipt['source_run_id'], owner, project_id)).fetchone()
+                require(source is not None and exact(source_receipt,
+                    self.authorize_source_runtime_reuse(db, owner, json.loads(source[0]), request['production_run_id'],
+                        require_target_run=True)),
+                    'film_source_runtime_receipt_mismatch', 409)
             assembled = assemble_film_production(packages=packages, film=film, film_sha256=request['film_sha256'],
                 recordings=self._recordings(db, project, film), assets=self._assets_for_operations(db, owner, source_operations), runtime_fingerprint=self.runtime,
                 runtime_identity=self.runtime_capabilities['runtime_identity'], module_targets=request['module_targets'],
                 host_files=self.host_files, trusted_host_sha256=self.hosts, image=self.image,
                 project_revision=request['expected_revision'], production_run_id=request['production_run_id'],
-                timeout_seconds=request['timeout_seconds'])
+                timeout_seconds=request['timeout_seconds'], source_runtime_admission=source_policy,
+                source_runtime_admission_receipt=source_receipt,
+                target_configuration_sha256=self.configuration_sha256 if source_receipt is not None else None)
             require(db.execute('SELECT count(*) FROM film_render_operations WHERE project_id=?', (project_id,)).fetchone()[0] < 64,
                 'film_creation_render_limit', 409)
             now = time.time()

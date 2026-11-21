@@ -54,7 +54,8 @@ def test_explicit_silent_run_freezes_visual_clock_and_authors_real_modules_witho
         env.runs.tick()
         operation = children(env, 'film_module_operations')[-1]
         task = operation['document']['core_task']
-        assert task['film_context']['schema'] == 'video.hyperframes-film-author-context.v2'
+        assert task['film_context']['schema'] == 'video.hyperframes-film-author-context.v3'
+        assert (task['film_context']['predecessor_appearance'] is None) == (index == 0)
         assert task['film_context']['film'] == film
         assert task['scene']['narration'] == ''
         assert task['scene']['beats'] is task['scene']['alignment'] is task['scene']['audio_sha256'] is None

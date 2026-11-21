@@ -733,7 +733,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     runtime_fingerprint=film_settings.runtime_fingerprint,
                     host_files=film_settings.host_files, trusted_host_sha256=film_settings.trusted_host_sha256,
                     image=film_settings.image, assets=film_settings.assets, enabled=film_settings.enabled,
-                    resource_authoring=manim_settings.context if manim_settings is not None else None)
+                    resource_authoring=manim_settings.context if manim_settings is not None else None,
+                    source_runtime_admission=getattr(film_settings, 'source_runtime_admission', None),
+                    source_runtime_admission_file=getattr(film_settings, 'source_runtime_admission_file', None),
+                    execution_admission_sha256=getattr(film_settings, 'admission', {}).get('sha256'))
             film_creation = FilmCreationWorkflow(creation_store, module_gateway, skill_adapter,
                 owned_film_renderer, enabled=film_settings.enabled if film_settings is not None else False,
                 render_readiness=lambda: execution_readiness(owned_film_renderer, film_settings)
