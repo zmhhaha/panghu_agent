@@ -1,0 +1,47 @@
+{
+  "schema": "video.scene-world.v1",
+  "id": "river-world",
+  "revision": 1,
+  "seed": 31,
+  "style": "ink-landscape",
+  "space": {"projection": "scattered", "bounds": {"x": -100, "y": -100, "width": 1600, "height": 1000}},
+  "layers": [
+    {"id": "far", "order": 0, "parallax": 0.2},
+    {"id": "middle", "order": 10, "parallax": 0.6},
+    {"id": "near", "order": 20, "parallax": 1}
+  ],
+  "objects": [
+    {"id": "far-mountain", "kind": "mountain", "layer_id": "far", "parent_id": null,
+      "bounds": {"x": 0, "y": 0, "width": 750, "height": 320},
+      "transform": {"x": 200, "y": 150, "scale_x": 1, "scale_y": 1, "rotation": 0},
+      "depth": {"kind": "ordinal", "value": 0}, "anchors": {"foot": [375, 320]}},
+    {"id": "main-peak", "kind": "mountain", "layer_id": "middle", "parent_id": null,
+      "bounds": {"x": 0, "y": 0, "width": 600, "height": 560},
+      "transform": {"x": 650, "y": 100, "scale_x": 1, "scale_y": 1, "rotation": 0},
+      "depth": {"kind": "ordinal", "value": 1}, "anchors": {}},
+    {"id": "shore", "kind": "bank", "layer_id": "near", "parent_id": null,
+      "bounds": {"x": 0, "y": 0, "width": 1200, "height": 100},
+      "transform": {"x": 0, "y": 650, "scale_x": 1, "scale_y": 1, "rotation": 0},
+      "depth": {"kind": "ordinal", "value": 2}, "anchors": {"tree-base": [250, 0]}, "order": 0},
+    {"id": "near-tree", "kind": "tree", "layer_id": "near", "parent_id": null,
+      "bounds": {"x": 0, "y": 0, "width": 180, "height": 650},
+      "transform": {"x": 200, "y": 0, "scale_x": 1, "scale_y": 1, "rotation": 0},
+      "depth": {"kind": "ordinal", "value": 3}, "anchors": {"root": [50, 650], "leaf-join": [70, 130]}, "order": 1},
+    {"id": "leaf-group", "kind": "leaves", "layer_id": "near", "parent_id": "near-tree",
+      "bounds": {"x": 0, "y": 0, "width": 60, "height": 50},
+      "transform": {"x": 70, "y": 130, "scale_x": 1, "scale_y": 1, "rotation": 0},
+      "depth": {"kind": "ordinal", "value": 3}, "anchors": {"base": [0, 0]}, "order": 2}
+  ],
+  "layout": {
+    "grid": {"origin": [0, 0], "spacing": [200, 200], "columns": 7, "rows": 5},
+    "points": [{"id": "focus", "position": [850, 300]}],
+    "regions": [{"id": "bank-support", "kind": "rect", "bounds": {"x": 0, "y": 630, "width": 1200, "height": 120}}]
+  },
+  "relations": [
+    {"id": "root-on-bank", "kind": "attachment", "object_id": "near-tree", "anchor": "root", "target_object_id": "shore", "target_anchor": "tree-base", "tolerance": 0.01},
+    {"id": "leaf-on-tree", "kind": "attachment", "object_id": "leaf-group", "anchor": "base", "target_object_id": "near-tree", "target_anchor": "leaf-join", "tolerance": 0.01},
+    {"id": "tree-supported", "kind": "support", "object_id": "near-tree", "anchor": "root", "region_id": "bank-support", "tolerance": 0},
+    {"id": "tree-before-peak", "kind": "occlusion", "front_id": "near-tree", "back_id": "main-peak"},
+    {"id": "peak-before-far", "kind": "occlusion", "front_id": "main-peak", "back_id": "far-mountain"}
+  ]
+}
