@@ -1,0 +1,125 @@
+{
+  "schema": "video.scene-space-picture-validation.v1",
+  "date": "2026-11-23",
+  "scope": "actual_model_authored_scene_with_separate_api_correctness_diagnostic_not_original_task_success",
+  "deployed_executor_commit": "0070ef365e27e176a0785867915362de5d5d2007",
+  "executor_image_digest": "sha256:8170dc114b45a4fde01ccb2c89c111228db1833eeb2b609751b486be4d00a6a6",
+  "reference_sha256": "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+  "project_id": "828ad13262f245af98bfa2f6881f1629",
+  "failed_experiments": [
+    {
+      "id": "c0f86993236f4ad3b2bc394d3f752858",
+      "error": {
+        "code": "scene_world_text_invalid"
+      },
+      "stage": "author"
+    },
+    {
+      "id": "2ef57b7fcb8040129547d03ecad15853",
+      "error": {
+        "code": "scene_space_export_budget_unavailable"
+      },
+      "stage": "render"
+    },
+    {
+      "id": "43b0b57dbe774446a206452e9e6a2bb8",
+      "error": {
+        "code": "picture_learning_render_failed"
+      },
+      "stage": "render"
+    }
+  ],
+  "metadata": {
+    "layers": 6,
+    "objects": 9,
+    "grid": {
+      "columns": 11,
+      "origin": [
+        0,
+        0
+      ],
+      "rows": 7,
+      "spacing": [
+        128,
+        120
+      ]
+    },
+    "named_points": 5,
+    "relations": 11,
+    "real_3d_reconstruction": false
+  },
+  "diagnostic": {
+    "operation_id": "source-correctness-diagnostic-43b0b57d-20261123",
+    "status": "rendered",
+    "technical_passed": true,
+    "stop_proven": true,
+    "original_operation_id": "43b0b57dbe774446a206452e9e6a2bb8-1",
+    "original_source_sha256": "1bc8df4826c3a8ff32c59caf5d97f7be08e82509f29f61e2a771006b060de48d",
+    "corrected_source_sha256": "6261944f5f92ee201a04565bb18b72c3f827b340417e78fcf549aec55b49f7a9",
+    "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+    "png_sha256": "cf1d255a23e5f4267b6abdf44821e8cc22d920bd3c0dd89e1970daf1f16290b4",
+    "composition_changed": false,
+    "plan_changed": false,
+    "original_binding_unchanged": true,
+    "original_run_marked_success": false,
+    "new_model_calls": 0,
+    "model_tokens_still_unknown": true,
+    "measured_controller_seconds": 21.157009315211326,
+    "usage_settled": true,
+    "artistic_acceptance": false,
+    "checks": {
+      "reload_passed": true,
+      "repeat_passed": true,
+      "reverse_passed": true,
+      "samples": [
+        {
+          "frame": 0,
+          "sha256": "cf1d255a23e5f4267b6abdf44821e8cc22d920bd3c0dd89e1970daf1f16290b4"
+        }
+      ]
+    },
+    "scene_space_observation": {
+      "cache_hits": 36,
+      "cache_pixels": 1583793,
+      "frame_range": {
+        "end_frame": 1,
+        "start_frame": 0
+      },
+      "frames_composited": 4,
+      "objects_painted": 9,
+      "peak_work_pixels": 1843200,
+      "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+      "recipes_executed": 0,
+      "runtime_revision": "scene-space-compositor-1",
+      "runtime_sha256": "6b0fd362c01f4cc30f6fa5e2b722dd62090e19c73ea8436b7c96ec903722a18a",
+      "schema": "video.scene-space-compositor-observation.v1",
+      "scope": "host_compositor_execution_not_visual_acceptance"
+    }
+  },
+  "ink_execution": {
+    "renderCanvas": 30,
+    "createStrokeGroupDocument": 30
+  },
+  "visual_assessment": {
+    "scope": "manual_static_image_comparison_no_formal_model_score",
+    "conclusion": "No demonstrated overall depth or artistic improvement; local brush continuity improved.",
+    "improved": [
+      "More continuous downhill brush texture than the earlier isolated repeated patches."
+    ],
+    "unresolved": [
+      "Distant ridge visible through translucent principal peaks.",
+      "Similar cone-shaped mountains with weak planar turns.",
+      "Nearly uniform horizontal fade at mountain feet."
+    ],
+    "source_correctness_copy": true,
+    "formal_review_completed": false,
+    "transfer_completed": false,
+    "effect_adopted": false,
+    "wikiskill_published": false
+  },
+  "limitations": [
+    "Different image dimensions and knowledge settings prevent causal attribution to grid/layering alone.",
+    "Original picture-library operations remain failed and unchanged; the corrected PNG is a separate diagnostic artifact.",
+    "Model token consumption remains unknown rather than zero."
+  ]
+}
