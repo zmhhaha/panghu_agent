@@ -11,6 +11,23 @@ const hash=raw=>createHash('sha256').update(raw).digest('hex');
 const requireValue=(ok,code='scene_space_host_invalid')=>{if(!ok)throw Error(code);};
 const read=(path,max)=>{const s=lstatSync(path);requireValue(s.isFile()&&!s.isSymbolicLink()&&s.size<=max,'scene_space_file_invalid');return readFileSync(path);};
 
+// Drain coverage while each document's Debugger script IDs are still live.
+export async function collectSceneDrawingExecution(session,origin,library,previous=[]){
+ const captured=await session.send('Profiler.takePreciseCoverage');
+ const byRange=new Map(previous.map(fn=>[fn.start_offset+':'+fn.end_offset,{...fn}]));
+ for(const script of captured.result){if(script.url!==origin+'/assets/ink-landscape.mjs')continue;
+  const text=await session.send('Debugger.getScriptSource',{scriptId:script.scriptId});
+  requireValue(hash(Buffer.from(text.scriptSource,'utf8'))===library.assets['ink-landscape.mjs'],'scene_space_drawing_coverage_changed');
+  for(const fn of script.functions){const r=fn.ranges[0];if(!fn.functionName||!r||r.count<=0)continue;
+   requireValue(Number.isSafeInteger(r.count)&&fn.functionName.length<=200,'scene_space_drawing_coverage_invalid');
+   const key=r.startOffset+':'+r.endOffset,old=byRange.get(key);
+   byRange.set(key,{function_name:fn.functionName,start_offset:r.startOffset,end_offset:r.endOffset,
+    call_count:r.count+(old?.call_count||0)});}}
+ const rows=[...byRange.values()].sort((a,b)=>a.start_offset-b.start_offset||a.end_offset-b.end_offset);
+ requireValue(rows.length<=1024&&rows.every(fn=>Number.isSafeInteger(fn.call_count)),'scene_space_drawing_coverage_budget');
+ return rows;
+}
+
 export async function captureSceneSpace({chromium,request,binding,resources,engineRuntime,projectRuntime,root,
  executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}){
  requireValue(request.schema==='video.scene-space-render-request.v1'&&request.engine==='canvas');
@@ -84,8 +101,13 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
    requireValue(reverse.equals(reference.get(frame))&&repeat.equals(reverse),'scene_space_reverse_or_repeat_mismatch');
    samples.push({frame,sha256:hash(reverse)});}
   const firstObservation=await page.evaluate(()=>window.__trustedSceneSpaceObservation());
+  let drawingFunctions=[];
+  if(request.drawing_libraries)drawingFunctions=await collectSceneDrawingExecution(security,origin,
+   request.drawing_libraries['ink-landscape'],drawingFunctions);
   await ready();
   for(const frame of selected){requireValue((await capture(frame)).equals(reference.get(frame)),'scene_space_reload_mismatch');}
+  if(request.drawing_libraries)drawingFunctions=await collectSceneDrawingExecution(security,origin,
+   request.drawing_libraries['ink-landscape'],drawingFunctions);
   const engineObservation=await engineRuntime.verifyPageEngine(page,'canvas');
   const runtimeProof=await page.evaluate(()=>({...window.__trustedHyperFramesProject.state}));
   requireValue(firstObservation.objects_painted===binding.object_caches.length&&firstObservation.cache_pixels===binding.total_cached_pixels,
@@ -93,20 +115,10 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
   let drawingObservation;
   if(request.drawing_libraries){const library=request.drawing_libraries['ink-landscape'];
    requireValue(scripts.has('/assets/ink-landscape.mjs'),'scene_space_drawing_library_not_loaded');
-   const captured=await security.send('Profiler.takePreciseCoverage'),functions=[];
-   for(const script of captured.result){if(script.url!==origin+'/assets/ink-landscape.mjs')continue;
-    const text=await security.send('Debugger.getScriptSource',{scriptId:script.scriptId});
-    requireValue(hash(Buffer.from(text.scriptSource,'utf8'))===library.assets['ink-landscape.mjs'],'scene_space_drawing_coverage_changed');
-    for(const fn of script.functions){const r=fn.ranges[0];if(fn.functionName&&r?.count>0)functions.push({function_name:fn.functionName,
-     start_offset:r.startOffset,end_offset:r.endOffset,call_count:r.count});}}
-   const byRange=new Map();for(const fn of functions){const key=fn.start_offset+':'+fn.end_offset,old=byRange.get(key);
-    byRange.set(key,{...fn,call_count:fn.call_count+(old?.call_count||0)});}
-   const rows=[...byRange.values()].sort((a,b)=>a.start_offset-b.start_offset||a.end_offset-b.end_offset);
-   requireValue(rows.length<=1024,'scene_space_drawing_coverage_budget');
    drawingObservation={schema:'video.learning-drawing-library-observation.v1',scope:'loaded_scripts_not_api_calls_or_visual_application',
     drawing_libraries:request.drawing_libraries,loaded_scripts:[...scripts].sort(),loaded_libraries:['ink-landscape'],
     api_execution:{schema:'video.learning-drawing-api-execution.v1',scope:'v8_executed_functions_not_visual_application',
-     module_sha256:library.assets['ink-landscape.mjs'],functions:rows}};}
+     module_sha256:library.assets['ink-landscape.mjs'],functions:drawingFunctions}};}
   return{checks:{repeat_passed:true,reverse_passed:true,reload_passed:true,samples},sample_frames:sampleFrames,
    ...(drawingObservation?{drawing_library_observation:drawingObservation}:{}),
    scene_space_observation:{...firstObservation,frame_range:binding.frame_range,runtime_sha256:request.scene_runtime_sha256},

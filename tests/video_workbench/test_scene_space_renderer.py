@@ -35,6 +35,13 @@ def source():
     return dict(value,source_sha256=source_sha256(value))
 
 
+def test_scene_coverage_is_collected_before_document_script_ids_expire():
+    node=shutil.which('node')
+    if not node:pytest.skip('Node unavailable')
+    subprocess.run([node,'--test',str(Path(__file__).with_name('scene-space-coverage.test.mjs'))],
+        check=True,timeout=30)
+
+
 def test_binding_bounds_resolution_before_any_painter_runs(plan):
     original=deepcopy(plan)
     render=prepare_scene_render(plan,source_sha256=source()['source_sha256'])
