@@ -265,15 +265,35 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
 
     def _render(self, run, operation):
         candidate = self._candidate(run)
+        elapsed = None
         if operation['status'] == 'reserved':
+            started = time.monotonic()
+            previous_prepare = operation.get('scene_space_preflight', {}).get('measured_prepare_seconds', 0)
+            options = self._scene_render_options(run, operation, candidate)
+            render_deadline = self._scene_admit_render(run, operation, candidate, options)
+            try:
+                options, render_deadline = self._scene_prepare_render(run, operation, candidate,
+                    options, render_deadline, started=started)
+            except Exception as error:
+                failure = error if isinstance(error, ServiceError) else ServiceError('scene_space_learning_prepare_failed', 503)
+                return self._scene_reject_preflight(run, operation, candidate, failure,
+                    elapsed=max(0, time.monotonic() - started) + previous_prepare)
             if not self.store.claim(run['owner'], operation['id'], now=self.clock()):
                 return
             operation['status'] = 'claimed'
-            result = self.renderer.render(operation['id'], candidate['source'], operation['input'],
-                                          deadline_at=run['deadline_at'])
+            try:
+                result = self.renderer.render(operation['id'], candidate['source'], operation['input'],
+                                              deadline_at=render_deadline, **options)
+            except ServiceError as error:
+                if options and getattr(error, 'not_dispatched', False) is True and getattr(error, 'stop_proven', False) is True:
+                    return self._scene_reject_preflight(run, operation, candidate, error,
+                        elapsed=max(0, time.monotonic() - started) + previous_prepare)
+                raise
+            elapsed = max(0, time.monotonic() - started) + previous_prepare
         else:
             recover = getattr(self.renderer, 'recover', None) or self.renderer.lookup
             result = recover(operation['id'])
+        self._scene_finish_render(run, operation, candidate, result, elapsed=elapsed)
         if not result or result.get('status') == 'unknown' or result.get('stop_proven') is not True:
             run['state'] = 'submission_unknown'
             return
@@ -298,7 +318,7 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
         observed = self.media.sample(path, media_sha256=sha, start_seconds=0,
             end_seconds=run['frozen']['duration_seconds'], store=self.store)
         poster_sha = observed['frames'][0]['sha256']
-        artifacts = {}
+        artifacts = deepcopy(candidate.get('artifacts', {}))
         for kind, content, mime in (
             ('media', raw, 'video/mp4'), ('poster', self.store.read_blob(poster_sha), 'image/jpeg'),
             ('source', canonical_bytes(candidate['source']), 'application/json'),

@@ -1,0 +1,714 @@
+{
+  "schema": "video.scene-space-native-browser-validation.v1",
+  "date": "2026-11-22",
+  "platform": "Windows native Chrome",
+  "host_sha256": "134d50ac8da23c821bdcc3b69363cc258916874170972dad8f0a6047850cca1e",
+  "runtime_sha256": "6b0fd362c01f4cc30f6fa5e2b722dd62090e19c73ea8436b7c96ec903722a18a",
+  "scope": "actual_browser_pixels_media_and_host_capture_function",
+  "container_image_tested": false,
+  "deployed": false,
+  "model_calls": 0,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "artistic_acceptance": false,
+  "tests": {
+    "renderer_and_legacy_renderer_regression_passed": 104,
+    "native_browser_cases": 6,
+    "subsequent_font_initialization_regression_passed": 13,
+    "subsequent_native_ink_paint_case_passed": true
+  },
+  "pixel_check": {
+    "position": [
+      200,
+      300
+    ],
+    "unmasked_rgb": [
+      72,
+      44,
+      30
+    ],
+    "masked_rgb": [
+      91,
+      131,
+      173
+    ],
+    "meaning": "Local foreground mask exposes painted far layer"
+  },
+  "cases": [
+    {
+      "name": "video",
+      "captured_frames": 96,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "b026862a1f20023368391be4cacbde090700569c491598faec5160094c3989fb"
+          },
+          {
+            "frame": 48,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          },
+          {
+            "frame": 0,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          }
+        ]
+      },
+      "objects_painted": 5,
+      "cache_hits": 515,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 3,
+      "output_sha256": "1ed617616e8616526c4c13985b6bd149d729a900a0629cb750a9ca5334b8255f",
+      "output_bytes": 32828,
+      "full_decode_passed": true,
+      "video_streams": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720,
+          "frame_count": 96,
+          "fps": "24/1"
+        }
+      ]
+    },
+    {
+      "name": "still",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+      "output_bytes": 4472
+    },
+    {
+      "name": "mask",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2"
+          }
+        ]
+      },
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2",
+      "output_bytes": 4449
+    },
+    {
+      "name": "ink",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+      "output_bytes": 4472,
+      "drawing_library_observation": {
+        "schema": "video.learning-drawing-library-observation.v1",
+        "scope": "loaded_scripts_not_api_calls_or_visual_application",
+        "drawing_libraries": {
+          "ink-landscape": {
+            "assets": {
+              "ink-landscape.LICENSE.txt": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108",
+              "ink-landscape.mjs": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6"
+            },
+            "engines": [
+              "canvas"
+            ],
+            "entrypoint": "./assets/ink-landscape.mjs",
+            "library_id": "ink-landscape",
+            "license": "MIT",
+            "role": "drawing",
+            "schema": "video.learning-drawing-library.v1",
+            "source_revision": "b6c96a5e94124bfad8113aaa136ede2298151b5f",
+            "version": "0.1.0"
+          }
+        },
+        "loaded_scripts": [
+          "/assets/ink-landscape.mjs",
+          "/runtime/scene-space-runtime.mjs",
+          "/scene.js"
+        ],
+        "loaded_libraries": [
+          "ink-landscape"
+        ],
+        "api_execution": {
+          "schema": "video.learning-drawing-api-execution.v1",
+          "scope": "v8_executed_functions_not_visual_application",
+          "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+          "functions": [
+            {
+              "function_name": "finite",
+              "start_offset": 2091,
+              "end_offset": 2265,
+              "call_count": 5
+            },
+            {
+              "function_name": "integer",
+              "start_offset": 2609,
+              "end_offset": 2773,
+              "call_count": 5
+            },
+            {
+              "function_name": "seedValue",
+              "start_offset": 2774,
+              "end_offset": 2842,
+              "call_count": 5
+            },
+            {
+              "function_name": "createRandom",
+              "start_offset": 3188,
+              "end_offset": 3498,
+              "call_count": 5
+            },
+            {
+              "function_name": "freeze",
+              "start_offset": 100030,
+              "end_offset": 100232,
+              "call_count": 3007
+            },
+            {
+              "function_name": "getTechniqueReading",
+              "start_offset": 224144,
+              "end_offset": 224242,
+              "call_count": 100
+            },
+            {
+              "function_name": "entry",
+              "start_offset": 227948,
+              "end_offset": 229304,
+              "call_count": 100
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "ink-paint",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788"
+          }
+        ]
+      },
+      "objects_painted": 1,
+      "cache_hits": 4,
+      "native_contexts": 3,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788",
+      "output_bytes": 16164,
+      "drawing_library_observation": {
+        "schema": "video.learning-drawing-library-observation.v1",
+        "scope": "loaded_scripts_not_api_calls_or_visual_application",
+        "drawing_libraries": {
+          "ink-landscape": {
+            "assets": {
+              "ink-landscape.LICENSE.txt": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108",
+              "ink-landscape.mjs": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6"
+            },
+            "engines": [
+              "canvas"
+            ],
+            "entrypoint": "./assets/ink-landscape.mjs",
+            "library_id": "ink-landscape",
+            "license": "MIT",
+            "role": "drawing",
+            "schema": "video.learning-drawing-library.v1",
+            "source_revision": "b6c96a5e94124bfad8113aaa136ede2298151b5f",
+            "version": "0.1.0"
+          }
+        },
+        "loaded_scripts": [
+          "/assets/ink-landscape.mjs",
+          "/runtime/scene-space-runtime.mjs",
+          "/scene.js"
+        ],
+        "loaded_libraries": [
+          "ink-landscape"
+        ],
+        "api_execution": {
+          "schema": "video.learning-drawing-api-execution.v1",
+          "scope": "v8_executed_functions_not_visual_application",
+          "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+          "functions": [
+            {
+              "function_name": "copyStrokeBrush",
+              "start_offset": 90,
+              "end_offset": 1179,
+              "call_count": 18
+            },
+            {
+              "function_name": "brushStateAt",
+              "start_offset": 1180,
+              "end_offset": 1968,
+              "call_count": 437
+            },
+            {
+              "function_name": "finite",
+              "start_offset": 2091,
+              "end_offset": 2265,
+              "call_count": 222
+            },
+            {
+              "function_name": "positive",
+              "start_offset": 2266,
+              "end_offset": 2416,
+              "call_count": 40
+            },
+            {
+              "function_name": "bounded",
+              "start_offset": 2417,
+              "end_offset": 2608,
+              "call_count": 47
+            },
+            {
+              "function_name": "integer",
+              "start_offset": 2609,
+              "end_offset": 2773,
+              "call_count": 27
+            },
+            {
+              "function_name": "seedValue",
+              "start_offset": 2774,
+              "end_offset": 2842,
+              "call_count": 27
+            },
+            {
+              "function_name": "text",
+              "start_offset": 2843,
+              "end_offset": 2997,
+              "call_count": 55
+            },
+            {
+              "function_name": "hashText",
+              "start_offset": 2998,
+              "end_offset": 3187,
+              "call_count": 14
+            },
+            {
+              "function_name": "copyPoint",
+              "start_offset": 3499,
+              "end_offset": 3724,
+              "call_count": 33
+            },
+            {
+              "function_name": "copyInkPoint",
+              "start_offset": 3725,
+              "end_offset": 3964,
+              "call_count": 33
+            },
+            {
+              "function_name": "pathLength",
+              "start_offset": 3965,
+              "end_offset": 4181,
+              "call_count": 14
+            },
+            {
+              "function_name": "copyPath",
+              "start_offset": 4182,
+              "end_offset": 4590,
+              "call_count": 14
+            },
+            {
+              "function_name": "timing",
+              "start_offset": 7607,
+              "end_offset": 7976,
+              "call_count": 14
+            },
+            {
+              "function_name": "strokeMark",
+              "start_offset": 7977,
+              "end_offset": 9075,
+              "call_count": 14
+            },
+            {
+              "function_name": "createInkScene",
+              "start_offset": 9076,
+              "end_offset": 14842,
+              "call_count": 13
+            },
+            {
+              "function_name": "availableId",
+              "start_offset": 9396,
+              "end_offset": 9546,
+              "call_count": 1
+            },
+            {
+              "function_name": "assertUnused",
+              "start_offset": 9549,
+              "end_offset": 9675,
+              "call_count": 14
+            },
+            {
+              "function_name": "stroke",
+              "start_offset": 9700,
+              "end_offset": 9975,
+              "call_count": 14
+            },
+            {
+              "function_name": "snapshot",
+              "start_offset": 14673,
+              "end_offset": 14802,
+              "call_count": 2
+            },
+            {
+              "function_name": "finite2",
+              "start_offset": 14928,
+              "end_offset": 15084,
+              "call_count": 17
+            },
+            {
+              "function_name": "sourcePoints",
+              "start_offset": 15085,
+              "end_offset": 16034,
+              "call_count": 2
+            },
+            {
+              "function_name": "segments",
+              "start_offset": 16438,
+              "end_offset": 17022,
+              "call_count": 2
+            },
+            {
+              "function_name": "evaluate",
+              "start_offset": 17023,
+              "end_offset": 17997,
+              "call_count": 440
+            },
+            {
+              "function_name": "sampleStrokePath",
+              "start_offset": 17998,
+              "end_offset": 20647,
+              "call_count": 2
+            },
+            {
+              "function_name": "sampleBrushContact",
+              "start_offset": 43582,
+              "end_offset": 47054,
+              "call_count": 2
+            },
+            {
+              "function_name": "positionAt",
+              "start_offset": 44193,
+              "end_offset": 45041,
+              "call_count": 874
+            },
+            {
+              "function_name": "clamp2",
+              "start_offset": 47137,
+              "end_offset": 47203,
+              "call_count": 65592
+            },
+            {
+              "function_name": "hash3",
+              "start_offset": 47205,
+              "end_offset": 47511,
+              "call_count": 122967
+            },
+            {
+              "function_name": "noise",
+              "start_offset": 47512,
+              "end_offset": 47723,
+              "call_count": 47633
+            },
+            {
+              "function_name": "split",
+              "start_offset": 47724,
+              "end_offset": 48183,
+              "call_count": 44
+            },
+            {
+              "function_name": "releaseFilaments",
+              "start_offset": 48184,
+              "end_offset": 51636,
+              "call_count": 2
+            },
+            {
+              "function_name": "prepare",
+              "start_offset": 51637,
+              "end_offset": 57084,
+              "call_count": 2
+            },
+            {
+              "function_name": "prefix",
+              "start_offset": 57085,
+              "end_offset": 57847,
+              "call_count": 129
+            },
+            {
+              "function_name": "ribbon",
+              "start_offset": 57848,
+              "end_offset": 58834,
+              "call_count": 129
+            },
+            {
+              "function_name": "drawContactStroke",
+              "start_offset": 58835,
+              "end_offset": 59392,
+              "call_count": 2
+            },
+            {
+              "function_name": "finite5",
+              "start_offset": 60126,
+              "end_offset": 60238,
+              "call_count": 30
+            },
+            {
+              "function_name": "range",
+              "start_offset": 60239,
+              "end_offset": 60400,
+              "call_count": 10
+            },
+            {
+              "function_name": "validatePoints",
+              "start_offset": 60401,
+              "end_offset": 60786,
+              "call_count": 2
+            },
+            {
+              "function_name": "validate",
+              "start_offset": 60787,
+              "end_offset": 62737,
+              "call_count": 1
+            },
+            {
+              "function_name": "progressAt",
+              "start_offset": 63005,
+              "end_offset": 63146,
+              "call_count": 2
+            },
+            {
+              "function_name": "renderCanvas",
+              "start_offset": 72678,
+              "end_offset": 74068,
+              "call_count": 1
+            },
+            {
+              "function_name": "compact",
+              "start_offset": 74834,
+              "end_offset": 75246,
+              "call_count": 4
+            },
+            {
+              "function_name": "corners",
+              "start_offset": 77357,
+              "end_offset": 79425,
+              "call_count": 2
+            },
+            {
+              "function_name": "modulate",
+              "start_offset": 79842,
+              "end_offset": 81694,
+              "call_count": 2
+            },
+            {
+              "function_name": "endpointGeometry",
+              "start_offset": 81695,
+              "end_offset": 84799,
+              "call_count": 2
+            },
+            {
+              "function_name": "compileLocalBrushGeometry",
+              "start_offset": 84800,
+              "end_offset": 84945,
+              "call_count": 2
+            },
+            {
+              "function_name": "choice",
+              "start_offset": 85064,
+              "end_offset": 85216,
+              "call_count": 24
+            },
+            {
+              "function_name": "unique",
+              "start_offset": 85651,
+              "end_offset": 85992,
+              "call_count": 3
+            },
+            {
+              "function_name": "measure2",
+              "start_offset": 85993,
+              "end_offset": 86385,
+              "call_count": 3
+            },
+            {
+              "function_name": "createBrushStroke",
+              "start_offset": 87161,
+              "end_offset": 94596,
+              "call_count": 3
+            },
+            {
+              "function_name": "freeze",
+              "start_offset": 100030,
+              "end_offset": 100232,
+              "call_count": 3007
+            },
+            {
+              "function_name": "getTechniqueReading",
+              "start_offset": 224144,
+              "end_offset": 224242,
+              "call_count": 100
+            },
+            {
+              "function_name": "entry",
+              "start_offset": 227948,
+              "end_offset": 229304,
+              "call_count": 100
+            },
+            {
+              "function_name": "generatorFor",
+              "start_offset": 247631,
+              "end_offset": 247710,
+              "call_count": 3
+            },
+            {
+              "function_name": "assertOptions",
+              "start_offset": 248010,
+              "end_offset": 248491,
+              "call_count": 3
+            },
+            {
+              "function_name": "contactControls",
+              "start_offset": 248492,
+              "end_offset": 249042,
+              "call_count": 3
+            },
+            {
+              "function_name": "prepare2",
+              "start_offset": 249043,
+              "end_offset": 250677,
+              "call_count": 3
+            },
+            {
+              "function_name": "createBrushDocument",
+              "start_offset": 251113,
+              "end_offset": 251447,
+              "call_count": 3
+            },
+            {
+              "function_name": "fields5",
+              "start_offset": 341030,
+              "end_offset": 341409,
+              "call_count": 11
+            },
+            {
+              "function_name": "text5",
+              "start_offset": 341410,
+              "end_offset": 341549,
+              "call_count": 3
+            },
+            {
+              "function_name": "colour4",
+              "start_offset": 341550,
+              "end_offset": 341729,
+              "call_count": 5
+            },
+            {
+              "function_name": "hash6",
+              "start_offset": 341730,
+              "end_offset": 341906,
+              "call_count": 2
+            },
+            {
+              "function_name": "validateParents",
+              "start_offset": 341907,
+              "end_offset": 342504,
+              "call_count": 1
+            },
+            {
+              "function_name": "createStrokeGroupDocument",
+              "start_offset": 342505,
+              "end_offset": 347170,
+              "call_count": 1
+            }
+          ]
+        }
+      },
+      "ink_pixel_check": {
+        "dark_pixel_count": 3833,
+        "declared_screen_bounds": {
+          "height": 779.833080150463,
+          "width": 215.95377604166666,
+          "x": -31.763763996799213,
+          "y": -119.89728009259255
+        },
+        "pixel_bounds": [
+          8,
+          110,
+          146,
+          427
+        ],
+        "schema": "video.scene-space-ink-pixel-check.v1",
+        "scope": "two_actual_brush_strokes_zero_origin_object_cache_not_artistic_acceptance",
+        "transform_compatibility": "renderCanvas resets its internal transform; zero-origin document matches cache dimensions and finally restores the caller context"
+      }
+    },
+    {
+      "name": "font",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "f5b1ec017cb0bbcc271fb9c245c69d99473bbf1eb63145553a374608815654af"
+          }
+        ]
+      },
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "f5b1ec017cb0bbcc271fb9c245c69d99473bbf1eb63145553a374608815654af",
+      "output_bytes": 8099
+    }
+  ]
+}

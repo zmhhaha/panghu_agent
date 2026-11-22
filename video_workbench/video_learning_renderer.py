@@ -57,7 +57,9 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         result['drawing_libraries'] = {'ink-landscape': library}
         result['assets'].update(library['assets'])
         result['runtime_identity']['host_sha256'] = hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest()
-        result['schema'] = 'video.reference-learning-runtime-capabilities.v1'
+        result['schema'] = 'video.reference-learning-runtime-capabilities.v2'
+        from .scene_space_renderer import render_capability
+        result['scene_space'] = render_capability(admitted_engines=result['allowed_engines'] if self.enabled else ())
         result['evidence_scope'] = 'sampled_frames_only'
         result['limits'] = dict(width=1280, height=720, fps=24, duration_seconds=60)
         return result
@@ -151,13 +153,19 @@ class VideoLearningRenderer(MethodAnimationRenderer):
                     drawing_library_observation=deepcopy(receipt['drawing_library_observation']))
         return value
 
-    def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None):
+    def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None, scene_space=None,
+               expected_request_sha256=None):
         # Parent render calls self.lookup after its single durable claim.
-        return super().render(operation_id, source, document, sound_events, deadline_at=deadline_at)
+        return super().render(operation_id, source, document, sound_events, deadline_at=deadline_at,scene_space=scene_space,
+            expected_request_sha256=expected_request_sha256)
 
     submit = render
 
     def lookup(self, operation_id):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self).lookup(operation_id)
+        if spatial is not None:
+            return spatial
         try:
             result = super().lookup(operation_id)
         except Exception as error:

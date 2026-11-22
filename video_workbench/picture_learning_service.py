@@ -20,6 +20,7 @@ from .animation_creation_service import _run_lock
 from .learning_capabilities import LearningCapabilitiesMixin
 from .learning_strategy_service import LearningStrategyMixin
 from .learning_execution_guidance import learning_execution_guidance
+from .scene_space_learning_service import SceneSpaceLearningMixin
 from .remote_reference_service import RemoteReferenceServiceMixin, remote_reference, MAX_SOURCE_SECONDS
 from .picture_learning_store import (
     PictureLearningStore, TERMINAL, identifier, new_id, owner_id, require,
@@ -61,7 +62,7 @@ def _image(raw, mime):
     return width, height
 
 
-class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMixin, LearningStrategyMixin):
+class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixin, LearningCapabilitiesMixin, LearningStrategyMixin):
     protocol = protocol
     prefix = PREFIX
     store_type = PictureLearningStore
@@ -75,6 +76,7 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
         self.root = self.store.root
         self.author, self.reviewer = author_gateway, review_gateway
         self.renderer, self.library_adapter, self.clock = renderer, library_adapter, clock
+        self._scene_usage_store = None
         self.resource_stage = resource_stage
         if remote_media_adapter is None:
             from .remote_reference_media import RemoteReferenceMedia
@@ -234,13 +236,17 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
 
     @staticmethod
     def _new_experiment(owner, pid, eid, request_id, mode, frozen, budget, now):
-        return dict(id=eid, owner=owner, project_id=pid, request_id=request_id, mode=mode,
+        result = dict(id=eid, owner=owner, project_id=pid, request_id=request_id, mode=mode,
             frozen=frozen, frozen_sha256=digest(frozen), budget=budget,
             state='queued', stage='author', work_kind='reproduction', round=1,
             candidates=[], active_candidate_id=None, operation_ids=[], active_operation_id=None,
             best_candidate_id=None, transfer_task=None, transfer_status='pending',
             stop_requested=False, stop_proven=False, stop_reason=None, error=None,
             created_at=now, updated_at=now, deadline_at=now + budget['max_seconds'])
+        if frozen.get('scene_space_learning') is not None:
+            result['scene_space_render_budget'] = PictureLearningService._new_scene_run_budget(eid, budget['max_seconds'])
+            result['scene_space_model_receipts'] = []
+        return result
 
     def _all_candidates(self, owner, project_id):
         return [candidate for run in self.store.list('experiments', owner, project_id=project_id)
@@ -308,6 +314,9 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
             run['resource_baseline_descriptor'] = deepcopy(candidate['resource_descriptor'])
             run['resource_prior_review'] = deepcopy(candidate.get('review'))
         if retry:
+            if prior.get('scene_space_render_budget') is not None:
+                run['scene_space_render_budget'] = deepcopy(prior['scene_space_render_budget'])
+                run['scene_space_model_receipts'] = deepcopy(prior.get('scene_space_model_receipts', []))
             run.update(round=prior['round'], work_kind=prior['work_kind'],
                        transfer_task=deepcopy(prior['transfer_task']),
                        transfer_status=prior['transfer_status'])
@@ -474,8 +483,8 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
             knowledge_binding=deepcopy(frozen['library_binding']), assets=assets, frozen_at=run['created_at'],
             selection=dict(base_candidate_id=best['id'] if best else frozen.get('base_candidate_id'),
                            previous_review_candidate_id=candidate['id'] if candidate else None))
-        return self._remote_document(run,
-            self._learning_document(run, self._resource_document(run, document)))
+        return self._scene_document(run, self._remote_document(run,
+            self._learning_document(run, self._resource_document(run, document))))
 
     def _operation(self, run):
         if run['active_operation_id']:
@@ -516,6 +525,11 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
         return self._save(run)
 
     def _agent(self, run, operation):
+        scene_status = self._scene_run_status(run)
+        if operation['stage'] == 'author' and scene_status is not None and not scene_status['can_start_render']:
+            operation.update(status='cancelled', error='scene_space_render_budget_unavailable')
+            self._finish_operation(run, operation)
+            return self._finish(run, 'scene_space_render_budget_unavailable')
         gateway = self.author if operation['stage'] == 'author' else self.reviewer
         document = operation['input']
         if operation['status'] == 'reserved':
@@ -564,6 +578,7 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
         if job.get('stop_proven') is not True:
             run['state'] = 'submission_unknown'
             return
+        self._scene_model_usage(run, operation, job)
         if job['state'] != 'completed':
             operation.update(status='failed', error='picture_learning_agent_' + job['state'])
             self._finish_operation(run, operation)
@@ -573,6 +588,8 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
         try:
             result = gateway.collect(job['job_id'], operation['input_sha256'], document)
             self.protocol.validate_result(result, operation['input_sha256'], document)
+            if operation['stage'] == 'author':
+                self._validate_scene_author(run, document, result)
             receipt = gateway.model_frame_receipt(job['job_id'])
             expected = {frame['sha256'] for frame in document['observation']['frames']}
             observed = {row.get('sha256') for row in receipt.get('images', [])
@@ -649,6 +666,7 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
             candidate['resource_plan'] = deepcopy(run['resource_plan'])
         candidate['artifacts'] = {'source': dict(id=candidate['id'] + '-source',
             sha256=self.store.blob(canonical_bytes(source)), mime_type='application/json')}
+        self._prepare_scene_candidate(run, operation, candidate)
         run['candidates'].append(candidate)
         run.update(active_candidate_id=candidate['id'], stage='render')
         return candidate
@@ -702,15 +720,35 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
 
     def _render(self, run, operation):
         candidate = self._candidate(run)
+        elapsed = None
         if operation['status'] == 'reserved':
+            started = time.monotonic()
+            previous_prepare = operation.get('scene_space_preflight', {}).get('measured_prepare_seconds', 0)
+            options = self._scene_render_options(run, operation, candidate)
+            render_deadline = self._scene_admit_render(run, operation, candidate, options)
+            try:
+                options, render_deadline = self._scene_prepare_render(run, operation, candidate,
+                    options, render_deadline, started=started)
+            except Exception as error:
+                failure = error if isinstance(error, ServiceError) else ServiceError('scene_space_learning_prepare_failed', 503)
+                return self._scene_reject_preflight(run, operation, candidate, failure,
+                    elapsed=max(0, time.monotonic() - started) + previous_prepare)
             if not self.store.claim(run['owner'], operation['id'], now=self.clock()):
                 return
             operation['status'] = 'claimed'
-            result = self.renderer.render(operation['id'], candidate['source'], operation['input'],
-                                          deadline_at=run['deadline_at'])
+            try:
+                result = self.renderer.render(operation['id'], candidate['source'], operation['input'],
+                                              deadline_at=render_deadline, **options)
+            except ServiceError as error:
+                if options and getattr(error, 'not_dispatched', False) is True and getattr(error, 'stop_proven', False) is True:
+                    return self._scene_reject_preflight(run, operation, candidate, error,
+                        elapsed=max(0, time.monotonic() - started) + previous_prepare)
+                raise
+            elapsed = max(0, time.monotonic() - started) + previous_prepare
         else:
             recover = getattr(self.renderer, 'recover', None) or self.renderer.lookup
             result = recover(operation['id'])
+        self._scene_finish_render(run, operation, candidate, result, elapsed=elapsed)
         if not result or result.get('status') == 'unknown' or result.get('stop_proven') is not True:
             run['state'] = 'submission_unknown'
             return
@@ -728,7 +766,7 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
                 == (result['width'], result['height']), 'picture_learning_render_dimensions_changed', 409)
         sha = self.store.blob(raw)
         observed_sha, observed_mime = self._vision_copy(raw, 'image/png')
-        artifacts = {}
+        artifacts = deepcopy(candidate.get('artifacts', {}))
         for kind, content, mime in (
             ('picture', raw, 'image/png'),
             ('source', canonical_bytes(candidate['source']), 'application/json'),
@@ -753,6 +791,10 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
         operation = (self.store.read('operations', run['owner'], run['active_operation_id'])
                      if run['active_operation_id'] else None)
         if operation and operation['status'] == 'reserved':
+            if operation['stage'] == 'render' and run.get('scene_space_render_budget') is not None:
+                measured = operation.get('scene_space_preflight', {}).get('measured_prepare_seconds')
+                self._scene_finish_render(run, operation, self._candidate(run),
+                    dict(status='failed', stop_proven=True, not_dispatched=True), elapsed=measured)
             operation['status'] = 'cancelled'
             self._finish_operation(run, operation)
         if operation and operation['status'] not in {'reserved', 'completed', 'failed', 'cancelled'}:
@@ -767,6 +809,7 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
                 if result.get('status') == 'rendered':
                     self._render(run, operation)
                 else:
+                    self._scene_finish_render(run, operation, self._candidate(run), result)
                     operation.update(status='failed', result=result)
                     self._finish_operation(run, operation)
             else:
@@ -791,6 +834,7 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
                     operation['job_id'] = job['job_id']
                     self._agent(run, operation)
                 else:
+                    self._scene_model_usage(run, operation, job)
                     operation.update(status='cancelled', job_id=job['job_id'])
                     self._finish_operation(run, operation)
         self._cancel_remote_observation(run)
@@ -898,6 +942,9 @@ class PictureLearningService(RemoteReferenceServiceMixin, LearningCapabilitiesMi
                                  'technical_retry_context', 'internal_attempts', 'learning_strategy',
                                  'resource_context', 'resource_draft_source', 'resource_baseline_descriptor'}}
         result['learning_progress'] = self._learning_progress(run)
+        if run.get('scene_space_render_budget') is not None:
+            result['scene_space_render_status'] = self._scene_run_status(run)
+            result['scene_space_model_usage'] = self._scene_model_status(run)
         result['internal_attempts'] = [self._candidate_public(run['project_id'], item)
                                       for item in run.get('internal_attempts', [])]
         if run.get('resource_plan') and self.resource_stage is not None:

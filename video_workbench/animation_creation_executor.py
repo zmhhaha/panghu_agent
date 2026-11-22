@@ -42,6 +42,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   enable_collaborative_authoring=False, collaboration_agent_token_file=None,
                   picture_agent_token_file=None, video_learning_agent_token_file=None,
                   remote_reference_cookie_file=None, remote_reference_dns='system',
+                  enable_scene_space_rendering=False,
                   wikiskill_recovery_manifest_file=None, wikiskill_recovery_manifest_sha256=None,
                   wikiskill_recovery_owner=None):
     if enable_isolated_rendering is not True:
@@ -259,8 +260,16 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 methods.wikiskill.capture = with_failed_compilation_draft(methods.wikiskill.capture,
                     trusted_root=root, manifest_file=wikiskill_recovery_manifest_file,
                     manifest_sha256=wikiskill_recovery_manifest_sha256, owner=wikiskill_recovery_owner)
+        scene_space_service=None
+        if enable_scene_space_rendering:
+            if methods is None or method_project_runtime!='hyperframes-core-bridge':
+                raise ValueError('scene_space_hyperframes_methods_required')
+            from .scene_space_renderer import scene_renderer
+            from .scene_space_render_http import SceneSpaceRenderService
+            scene_space_service=SceneSpaceRenderService(Path(root)/'scene-space-queue',scene_renderer(methods.renderer))
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources,
+            scene_space_service=scene_space_service,
             picture_service=pictures, video_learning_service=videos,
             film_review_service=FilmReviewProxy(Path(root) / 'film-reviews', service.review_gateway))
         server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client, picture_client, video_learning_client) if client is not None)
@@ -318,6 +327,8 @@ def main(argv=None):
     parser.add_argument('--wikiskill-recovery-manifest-sha256')
     parser.add_argument('--wikiskill-recovery-owner')
     parser.add_argument('--enable-isolated-rendering', action='store_true')
+    parser.add_argument('--enable-scene-space-rendering',action='store_true',
+        help='Admit the separate scene-space private queue and host; preserves all historical render routes.')
     parser.add_argument('--listen', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8767)
     args = parser.parse_args(argv)

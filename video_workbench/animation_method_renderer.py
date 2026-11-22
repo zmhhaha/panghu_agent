@@ -585,7 +585,21 @@ class MethodAnimationRenderer:
                  'animation_method_render_binding_changed')
         return dict(row), binding
 
-    def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None):
+    def scene_space_capabilities(self):
+        from .scene_space_renderer import render_capability
+        return render_capability(admitted_engines=self.capabilities()['allowed_engines'] if self.enabled else ())
+
+    def validate_scene_request(self,operation_id,source,document,*,scene_space,deadline_at=None):
+        from .scene_space_renderer import scene_renderer
+        return scene_renderer(self).validate_request(operation_id,source,document,
+            scene_space=scene_space,deadline_at=deadline_at)
+
+    def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None, scene_space=None,
+               expected_request_sha256=None):
+        if scene_space is not None:
+            from .scene_space_renderer import scene_renderer
+            return scene_renderer(self).render(operation_id,source,document,sound_events,
+                scene_space=scene_space,deadline_at=deadline_at,expected_request_sha256=expected_request_sha256)
         _require(self.enabled, 'animation_method_renderer_disabled', 503)
         binding = self._snapshot(operation_id, source, document, sound_events or [], deadline_at)
         # Existing claims are always reconciled even after their deadline. The
@@ -833,6 +847,10 @@ class MethodAnimationRenderer:
 
     def stopping_proof(self, operation_id):
         """Read only the original cleanup receipt; never reconcile or clean up."""
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self).stopping_proof(operation_id)
+        if spatial is not None:
+            return spatial
         row, binding = self._row(operation_id, historical=True)
         root = self._directory(operation_id)
         outcome, outcome_raw = _json(root / 'render-outcome.json', 65536)
@@ -862,6 +880,10 @@ class MethodAnimationRenderer:
             scope='original_bound_container_cleanup_receipt_not_new_cleanup')
 
     def lookup(self, operation_id):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self).lookup(operation_id)
+        if spatial is not None:
+            return spatial
         # Reading a stopped historical attempt does not authorize execution
         # with its old pin. render() keeps _row's strict current-image default.
         row, binding = self._row(operation_id, historical=True)
@@ -988,12 +1010,20 @@ class MethodAnimationRenderer:
         return public_result
 
     def media_path(self, operation_id):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self)
+        if spatial.lookup(operation_id) is not None:
+            return spatial.media_path(operation_id)
         result = self.lookup(operation_id)
         _require(result is not None and result['media'] is not None,
                  'animation_method_render_media_unavailable', 404)
         return self._directory(operation_id) / 'work/output.mp4'
 
     def frames(self, operation_id, max_frames=12):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self)
+        if spatial.lookup(operation_id) is not None:
+            return spatial.frames(operation_id,max_frames=max_frames)
         _require(type(max_frames) is int and 1 <= max_frames <= 24,
                  'animation_method_render_frame_budget_invalid', 422)
         result = self.lookup(operation_id)

@@ -179,6 +179,9 @@ class MethodLabClient(PictureLabClient, VideoLabClient):
     def method_version(self, owner, method_version_id):
         return self._request(owner, 'GET', PREFIX + '/methods/' + quote(_identifier(method_version_id), safe=''))
 
+    def method_scene_space(self,owner,method_version_id):
+        return self._request(owner,'GET',PREFIX+'/methods/'+quote(_identifier(method_version_id),safe='')+'/scene-space')
+
     def accept_validation(self, owner, validation_id, body):
         return self._request(owner, 'POST', PREFIX + '/validations/' + quote(_identifier(validation_id), safe='') + '/accept', body)
 
@@ -226,6 +229,9 @@ def route_private(handler, owner, method, path, body=None):
             return True
         if len(pieces) == 3 and pieces[0] == 'methods' and pieces[2] == 'readiness':
             _send_bounded(handler, service.publication_readiness(owner, _identifier(pieces[1], encoded=True)))
+            return True
+        if len(pieces)==3 and pieces[0]=='methods' and pieces[2]=='scene-space':
+            _send_bounded(handler,service.get_method_scene_space(owner,_identifier(pieces[1],encoded=True)))
             return True
         if pieces == ['methods', 'published']:
             catalogue = getattr(service, 'published_catalogue', None)

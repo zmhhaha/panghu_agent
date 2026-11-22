@@ -39,7 +39,9 @@ class PictureLearningRenderer(MethodAnimationRenderer):
         read_assets()
         result['drawing_libraries'] = {'ink-landscape': library}
         result['assets'].update(library['assets'])
-        result['schema'] = 'video.picture-learning-runtime-capabilities.v1'
+        result['schema'] = 'video.picture-learning-runtime-capabilities.v2'
+        from .scene_space_renderer import render_capability
+        result['scene_space'] = render_capability(admitted_engines=result['allowed_engines'] if self.enabled else ())
         result['runtime_identity'].update(host_sha256=digest_bytes(_read(HOST, 1024 * 1024)),
             project_runtime_sha256=digest_bytes(_read(PROJECT_RUNTIME, 1024 * 1024)),
             hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256)
@@ -113,7 +115,11 @@ class PictureLearningRenderer(MethodAnimationRenderer):
             image=self.image, image_digest=self.image_digest, timeout_seconds=self.timeout,
             configured_timeout_seconds=self.timeout, deadline_at=deadline_at)
 
-    def render(self, operation_id, source, document, *, deadline_at=None):
+    def render(self, operation_id, source, document, *, deadline_at=None, scene_space=None,expected_request_sha256=None):
+        if scene_space is not None:
+            from .scene_space_renderer import scene_renderer
+            return scene_renderer(self).render(operation_id,source,document,
+                scene_space=scene_space,deadline_at=deadline_at,expected_request_sha256=expected_request_sha256)
         _require(self.enabled, 'picture_renderer_disabled', 503)
         binding = self._snapshot(operation_id, source, document, deadline_at)
         with closing(self._connect(create=True)) as db:
@@ -179,6 +185,10 @@ class PictureLearningRenderer(MethodAnimationRenderer):
         return self.lookup(operation_id)
 
     def lookup(self, operation_id):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self).lookup(operation_id)
+        if spatial is not None:
+            return spatial
         try:
             row, binding = self._row(operation_id, historical=True)
         except ServiceError as error:

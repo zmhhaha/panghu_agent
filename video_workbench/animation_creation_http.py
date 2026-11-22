@@ -177,11 +177,14 @@ class CreationHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, service, token, *, host='127.0.0.1', port=0, pump=True, method_service=None,
-                 film_resource_service=None, film_review_service=None, picture_service=None, video_learning_service=None, close_callbacks=()):
+                 film_resource_service=None, film_review_service=None, picture_service=None, video_learning_service=None,
+                 scene_space_service=None, close_callbacks=()):
         self.service, self._token = service, _token(token)
         self.pump = CreationPump(service) if pump else None
         self.method_service = method_service
         self.method_pump = CreationPump(method_service) if pump and method_service is not None else None
+        self.scene_space_service=scene_space_service
+        self.scene_space_pump=CreationPump(scene_space_service) if pump and scene_space_service is not None else None
         self.video_learning_service = video_learning_service
         self.video_learning_pump = CreationPump(video_learning_service) if pump and video_learning_service is not None else None
         self.picture_service = picture_service
@@ -198,6 +201,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
             self.pump.start()
         if self.method_pump:
             self.method_pump.start()
+        if self.scene_space_pump:
+            self.scene_space_pump.start()
         if self.video_learning_pump:
             self.video_learning_pump.start()
         if self.picture_pump:
@@ -214,6 +219,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
             self.pump.close()
         if self.method_pump:
             self.method_pump.close()
+        if self.scene_space_pump:
+            self.scene_space_pump.close()
         if self.video_learning_pump:
             self.video_learning_pump.close()
         if self.picture_pump:
@@ -261,6 +268,10 @@ class CreationHandler(BaseHTTPRequestHandler):
         owner = self._auth()
         pieces = parsed.path.strip('/').split('/')
         service = self.server.service
+        if method=='GET' and parsed.path.startswith('/api/scene-space-renders'):
+            from .scene_space_render_http import route_private
+            _require(not parsed.query)
+            if route_private(self,owner,method,parsed.path):return
         if method == 'GET' and parsed.path.startswith('/api/video-lab/'):
             from .video_learning_http import route_private
             _require(not parsed.query)
@@ -309,7 +320,8 @@ class CreationHandler(BaseHTTPRequestHandler):
             from .film_review_proxy import MAX_BODY as FILM_REVIEW_MAX_BODY
             from .picture_learning_http import MAX_BODY as PICTURE_MAX_BODY
             from .video_learning_http import MAX_BODY as VIDEO_MAX_BODY
-            body_limit = (VIDEO_MAX_BODY if parsed.path.startswith('/api/video-lab/') else PICTURE_MAX_BODY if parsed.path.startswith('/api/picture-lab/') else
+            from .scene_space_render_http import MAX_BODY as SCENE_SPACE_MAX_BODY
+            body_limit = (SCENE_SPACE_MAX_BODY if parsed.path=='/api/scene-space-renders' else VIDEO_MAX_BODY if parsed.path.startswith('/api/video-lab/') else PICTURE_MAX_BODY if parsed.path.startswith('/api/picture-lab/') else
                 FILM_REVIEW_MAX_BODY if parsed.path.startswith('/api/film-reviews/')
                 else 1024 * 1024 if parsed.path.startswith('/api/method-lab/')
                 else 128 * 1024 if parsed.path.startswith('/api/film-manim/') else 32768)
@@ -317,6 +329,9 @@ class CreationHandler(BaseHTTPRequestHandler):
                      and not self.headers.get_all('Transfer-Encoding'), 'animation_creation_body_size', 413)
             _require(self.headers.get_content_type() == 'application/json', 'animation_creation_json_required', 415)
             body = _json(self.rfile.read(int(lengths[0])))
+            if parsed.path.startswith('/api/scene-space-renders'):
+                from .scene_space_render_http import route_private
+                if route_private(self,owner,method,parsed.path,body):return
             if parsed.path.startswith('/api/video-lab/'):
                 from .video_learning_http import route_private
                 if route_private(self, owner, method, parsed.path, body):

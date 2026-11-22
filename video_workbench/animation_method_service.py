@@ -19,6 +19,7 @@ from agent_service.animation_knowledge_contract import MAX_EXPERIENCE_BYTES
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_method as protocol
 from agent_service.profiles import video_animation_skill_method as skill_protocol
+from agent_service.profiles.video_animation_create import source_sha256
 from .animation_creation_service import _run_lock
 from .animation_method_store import AnimationMethodStore, _structural_changes
 from .animation_method_commissions import (
@@ -592,6 +593,11 @@ class AnimationMethodService:
                     if method['id'] in methods:
                         add('method:' + method['id'], 'method', method)
                         research.update(method.get('research_record_ids', []))
+                for record in self.trash.documents(db,'methods.animation_method_scene_space',owner):
+                    origin=record.get('evidence') or {}
+                    if record['method_version_id'] in methods and (
+                            not origin.get('commission_id') or origin['commission_id'] in visible_ids):
+                        add('method-scene-space:'+record['id'],'method_scene_space',record)
                 for observation in self.trash.documents(db, 'methods.animation_research_records', owner):
                     if observation['id'] in research:
                         add('research:' + observation['id'], 'research', observation)
@@ -603,6 +609,9 @@ class AnimationMethodService:
                     members = [row for row in effect['commissions'] if row['id'] in visible_ids]
                     if members:
                         view = deepcopy(dict(effect, commissions=members))
+                        visible_candidates={candidate['id'] for run in runs for candidate in _candidates(run)}
+                        if view.get('adopted_candidate_id') not in visible_candidates:
+                            view['adopted_candidate_id']=None
                         if view.get('open_commission_id') not in visible_ids:
                             usable = [row for row in members if row.get('best_candidate_id') and row['state'] == 'completed']
                             chosen = max(usable or members, key=lambda row: (row['created_at'], row['id']))
@@ -663,6 +672,10 @@ class AnimationMethodService:
         _require(len(canonical_bytes(result)) <= 2 * 1024 * 1024,
                  'animation_method_response_too_large', 413)
         return result
+
+    def get_method_scene_space(self,owner,method_version_id):
+        return dict(schema='video.animation-method-scene-records.v1',
+            records=self.methods.get_scene_space(owner,method_version_id))
 
     @serialized_library_mutation
     def accept_validation(self, owner, validation_id, body):
@@ -1256,6 +1269,12 @@ class AnimationMethodService:
                 from .animation_runtime_capabilities import drawing_context_budget
                 data['constraints']['native_drawing_context_budget'] = drawing_context_budget()
         allowed_engines = data.get('constraints', {}).get('allowed_engines', ['html-svg'])
+        if previous_request is None and retry_source is None and 'canvas' in allowed_engines:
+            provider=getattr(self.renderer,'scene_space_capabilities',None)
+            if callable(provider) and not data.get('resource_authoring') and not data.get('resource_planning') and not data.get('collaboration'):
+                scene_capability=provider()
+                if scene_capability.get('admitted') is True:
+                    data.setdefault('constraints',{})['scene_space_capability']=deepcopy(scene_capability)
         if data.get('criteria'):
             protocol.criteria(data['criteria'])
         _require(data.get('role', 'reference') in {'reference', 'transfer'})
@@ -1976,6 +1995,16 @@ class AnimationMethodService:
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
             comparison=comparison, assets=assets)
+        if run['frozen'].get('constraints',{}).get('scene_space_capability') and mode in {'plan','create'}:
+            from .scene_space_effects import effect_scene_offer
+            document['constraints']['scene_space']=effect_scene_offer(run)
+            if run['frozen'].get('use_wikiskill') is not False:
+                from .scene_space_learning import transferable_scene_method
+                methods=[]
+                for version_id in run['frozen'].get('method_versions',[]):
+                    for record in self.methods.get_scene_space(owner,version_id):
+                        methods.append(transferable_scene_method({'scene_space':record['metadata']})['scene_space'])
+                if methods:document['constraints']['scene_space_methods']=methods[:32]
         origin = run['frozen'].get('picture_origin')
         if origin is not None and run['frozen'].get('creation_mode') != 'fresh':
             from .picture_animation_bridge import validate_origin
@@ -2149,6 +2178,9 @@ class AnimationMethodService:
                             if row.get('model_request_completed') is True}
                 _require(expected <= observed, 'animation_method_frame_transport_incomplete', 409)
             active_protocol.validate_result(result, operation['input_sha256'], operation['input'])
+            if result.get('source') is not None and run['frozen'].get('constraints',{}).get('scene_space_capability'):
+                from .scene_space_effects import effect_scene_metadata
+                effect_scene_metadata(result,run,operation['input'])
             if run['frozen'].get('resource_planning'):
                 if operation['input'].get('mode') == 'plan':
                     self._derive_capability_decision(run, operation, result)
@@ -2202,6 +2234,14 @@ class AnimationMethodService:
     def _materialize(self, owner, run, render):
         authored = next(op for op in run['operations'] if op['id'] == render['input']['author_operation_id'])
         result = authored['result']
+        from .scene_space_effects import effect_scene_metadata,portable_method
+        scene_metadata=effect_scene_metadata(result,run,authored['input'])
+        if scene_metadata is None and run['frozen'].get('constraints',{}).get('scene_space_capability'):
+            origin=run['frozen'].get('picture_origin',{}).get('method') or {}
+            candidate=origin.get('scene_space')
+            if type(candidate) is dict and candidate.get('schema')=='video.scene-space-method.v1':
+                from .scene_space_learning import validate_scene_method
+                scene_metadata=validate_scene_method(candidate)
         if 'capability_selection' in run['frozen']:
             validate_rendered_selection(self._effective_selection(run), result['source'],
                                         render['result'], render.get('artifact_operation_id', render['id']))
@@ -2219,7 +2259,7 @@ class AnimationMethodService:
                 parent = (next((row for row in authored['input']['methods']
                     if row.get('problem') == proposal['problem'] and row.get('version_id')), None)
                     if self._protocol(run) is protocol else None)
-                body = deepcopy(proposal)
+                body = portable_method(proposal,enabled=bool(run['frozen'].get('constraints',{}).get('scene_space_capability')))
                 if body.get('parent_version_id'):
                     parent = self.methods.get_method(owner, body['parent_version_id'])
                 if parent and parent.get('owner') != owner:
@@ -2234,6 +2274,15 @@ class AnimationMethodService:
                 versions.append(method['id'])
         _require(bool(versions), 'animation_method_creator_no_method', 409)
         outcome = render['result']
+        if scene_metadata is not None:
+            for version_id in versions:
+                self.methods.attach_scene_space(owner,version_id,scene_metadata,
+                    render['id']+':scene-space:'+version_id,evidence=dict(
+                        commission_id=run['id'],author_operation_id=authored['id'],
+                        render_operation_id=render['id'],source_sha256=source_sha256(result['source']),
+                        input_sha256=authored['input_sha256'],technical=deepcopy(outcome.get('technical')),
+                        runtime=deepcopy(outcome.get('runtime',{}).get('scene_space')),
+                        continuous_motion_observed=False,audio_observed=False))
         _require(outcome.get('technical', {}).get('status') == 'passed',
                  'animation_method_render_failed', 409)
         candidate = self.commissions.add_candidate(owner, run['id'], dict(
@@ -2249,6 +2298,32 @@ class AnimationMethodService:
                 input_sha256=authored['input_sha256'])),
             render['id'] + ':demonstration')
         return candidate, demo
+
+    def _scene_render_arguments(self,run,document,operation_id):
+        if 'scene_space' not in document:return {}
+        expected=run['frozen'].get('constraints',{}).get('scene_space_capability')
+        provider=getattr(self.renderer,'scene_space_capabilities',None)
+        _require(expected is not None and callable(provider) and provider()==expected,
+            'scene_space_render_frozen_runtime_changed',409)
+        arguments=dict(scene_space=document['scene_space'])
+        prepare=getattr(self.renderer,'validate_scene_request',None)
+        if callable(prepare):
+            binding=prepare(operation_id,document['source'],document['document'],
+                scene_space=document['scene_space'],deadline_at=run['deadline_at'])
+            arguments['expected_request_sha256']=binding['request_sha256']
+        return arguments
+
+    def _execute_method_render(self,owner,run,operation,arguments):
+        try:
+            return self.renderer.render(operation['id'],operation['input']['source'],
+                operation['input']['document'],sound_events=operation['input']['sound_events'],
+                deadline_at=run['deadline_at'],**arguments)
+        except ServiceError as error:
+            if ('scene_space' in operation['input'] and getattr(error,'not_dispatched',False) is True
+                    and getattr(error,'stop_proven',False) is True):
+                self.commissions.fail(owner,operation['id'],error.code)
+                return None
+            raise
 
     def _record_review(self, owner, run, operation):
         result, document = operation['result'], operation['input']
@@ -2413,11 +2488,13 @@ class AnimationMethodService:
                     if active['status'] == 'reserved':
                         if run['deadline_at'] - self.clock() < 30:
                             return
+                        try:scene_arguments=self._scene_render_arguments(run,active['input'],active['id'])
+                        except ServiceError as error:
+                            if error.status>=500:raise
+                            self.commissions.fail(owner,active['id'],error.code);return
                         claim = self.commissions.claim(owner, active['id'])
                         if claim['submission_claimed']:
-                            result = self.renderer.render(active['id'], active['input']['source'],
-                                active['input']['document'], sound_events=active['input']['sound_events'],
-                                deadline_at=run['deadline_at'])
+                            result = self._execute_method_render(owner,run,active,scene_arguments)
                         else:
                             result = self.renderer.lookup(active['id'])
                     else:
@@ -2435,10 +2512,15 @@ class AnimationMethodService:
                                 self.commissions.fail(owner, active['id'],
                                     'animation_method_render_not_started', cancelled=run['cancel_requested'])
                                 return
-                            result = self.renderer.render(active['id'], active['input']['source'],
-                                active['input']['document'], sound_events=active['input']['sound_events'],
-                                deadline_at=run['deadline_at'])
+                            try:scene_arguments=self._scene_render_arguments(run,active['input'],active['id'])
+                            except ServiceError as error:
+                                if error.status>=500:raise
+                                self.commissions.fail(owner,active['id'],error.code);return
+                            result = self._execute_method_render(owner,run,active,scene_arguments)
                     if result is not None:
+                        if ('scene_space' in active['input'] and (result.get('status')=='unknown'
+                                or result.get('stop_proven') is not True)):
+                            return
                         self.commissions.complete(owner, active['id'], result)
                 else:
                     self._advance_agent(owner, dict(run, cancel_requested=bool(stopping)), active)
@@ -2508,7 +2590,13 @@ class AnimationMethodService:
                         self.commissions.stop(owner, commission_id, 'budget_exhausted', '本次画面渲染预算已用完')
                         return
                     from .animation_renderer_rebind import render_input
-                    self.commissions.reserve(owner, commission_id, 'render', render_input(run, authored),
+                    render_document=render_input(run,authored)
+                    if run['frozen'].get('constraints',{}).get('scene_space_capability'):
+                        from .scene_space_effects import effect_scene_metadata
+                        metadata=effect_scene_metadata(authored['result'],run,authored['input'])
+                        if metadata and metadata['plan'] is not None:
+                            render_document['scene_space']=metadata['plan']
+                    self.commissions.reserve(owner, commission_id, 'render', render_document,
                         'render-' + authored['id'])
                     return
             for candidate in run['candidates']:

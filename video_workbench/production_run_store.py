@@ -44,10 +44,11 @@ def packed(value):
 
 class ProductionRunStore:
     def __init__(self, store, joint_plan_store, motion_store, production, *, film_creation=None, sequence_store=None,
-            resource_stage=None):
+            resource_stage=None, scene_space_adapter=None):
         self.store, self.joint, self.motion, self.production = store, joint_plan_store, motion_store, production
         self.film_creation = film_creation
         self.sequence_store = sequence_store
+        self.scene_space_adapter = scene_space_adapter
         if resource_stage is None and film_creation is not None:
             from .production_resource_stage import ProductionResourceStage
             resource_stage = ProductionResourceStage(store, film_creation)
@@ -78,7 +79,8 @@ class ProductionRunStore:
                 if seconds is not None else None)
             items.append(dict({key: item.get(key) for key in PUBLIC_ITEM}, duration_seconds=duration,
                               candidate_current=bool(current and (item.get('motion_version_id')
-                                                     or item.get('module_version_id')))))
+                                                     or item.get('module_version_id')
+                                                     or run.get('renderer_mode')=='scene-space' and item.get('world_source_sha256')))))
             if silent:
                 items[-1].update(audio_status=item['audio_status'], clock_source='silent')
         result.update(items=items, current=bool(current),
@@ -103,6 +105,12 @@ class ProductionRunStore:
         if 'resource_plan_registration' in run:
             result.update(resource_plan_registration=deepcopy(run['resource_plan_registration']),
                 resources=deepcopy(run.get('resource_progress', {})))
+        if 'scene_space' in run:
+            result['scene_space'] = deepcopy(run['scene_space'])
+            for public_item, item in zip(result['items'],raw_items):
+                public_item.update(world_source_sha256=item.get('world_source_sha256'),
+                    scene_space_plan_sha256=item.get('scene_space_plan_sha256'))
+            result['progress']['done'] = sum(bool(item.get('world_source_sha256')) for item in raw_items) + int(run['status']=='completed')
         return result
 
     @staticmethod
@@ -116,6 +124,12 @@ class ProductionRunStore:
         This is a local custody check, not another render or media observation.
         Call outside a business transaction: creation owns its own connections.
         """
+        if self._uses_scene_space(run):
+            require(run['status']=='completed' and not (run.get('cancel_requested') or run.get('draining')
+                or run.get('blocked_reason')),'production_run_sequence_source_not_completed',409)
+            require(digest(run['frozen'])==run['binding_sha256'] and digest(run['film'])==run['film_sha256'],
+                'production_run_sequence_source_changed',409)
+            return self._scene_space_service().verified_source(run)
         from .film_render_adapter import validate_film_render_result
         require(self._uses_film(run) and run['status'] == 'completed'
             and not (run.get('cancel_requested') or run.get('draining') or run.get('blocked_reason')),
@@ -321,6 +335,14 @@ class ProductionRunStore:
     @staticmethod
     def _uses_film(run):
         return run.get('renderer_mode') == FILM_RENDERER
+
+    @staticmethod
+    def _uses_scene_space(run):
+        return run.get('renderer_mode') == 'scene-space'
+
+    def _scene_space_service(self):
+        require(self.scene_space_adapter is not None,'scene_space_production_unavailable',503)
+        return self.scene_space_adapter
 
     def _film_service(self):
         require(self.film_creation is not None, 'production_run_film_unavailable', 503)
@@ -624,7 +646,6 @@ class ProductionRunStore:
         audio_mode = request.get('audio_mode', 'narration')
         require(type(audio_mode) is str and audio_mode in {'narration', 'silent'})
         if audio_mode == 'silent':
-            require(self.film_creation is not None, 'production_run_silent_requires_film', 503)
             require('reuse_audio_from_run_id' not in request, 'production_run_silent_audio_reuse_conflict')
         resource_authoring = request.get('resource_authoring')
         if resource_authoring is not None:
@@ -633,6 +654,21 @@ class ProductionRunStore:
                     for key, value in resource_authoring.items()), 'production_run_resource_options_invalid')
         require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
         fingerprint = digest(dict(project_id=project_id, request=request))
+        # Frozen historical admissions survive a newly configured scene route,
+        # including replays of old resource-bearing requests and deleted views.
+        with self.store.transaction() as db:
+            previous = db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
+                (owner,idem)).fetchone()
+            if previous:
+                require(previous[0]==fingerprint,'idempotency_conflict',409)
+                run=json.loads(previous[1]);project=self.store._project(db,owner,project_id,include_deleted=True)
+                lifecycle=self.store._lifecycle(db,project_id)
+                current=not(lifecycle and lifecycle['deleted_at'] is not None)
+                return self.public(run,current=current and self._matches(run,project,db))
+        if audio_mode=='silent':
+            require(self.film_creation is not None or self.scene_space_adapter is not None
+                and getattr(self.scene_space_adapter,'enabled',True),
+                'production_run_silent_requires_film',503)
         parent_sequence = None
         if self.sequence_store is not None and self.film_creation is not None and 'reuse_audio_from_run_id' in request:
             with self.store.transaction() as db:
@@ -643,7 +679,28 @@ class ProductionRunStore:
                 # sequence or fresh recordings. No GET performs this mutation.
                 parent_sequence = self._sequence_parent(owner, project_id, request['reuse_audio_from_run_id'])
         configuration = resource_plan = resource_source = None
-        if self.film_creation is not None:
+        use_scene_space = (self.scene_space_adapter is not None
+            and getattr(self.scene_space_adapter,'enabled',True) and audio_mode == 'silent')
+        if use_scene_space:
+            # The new route has its own admission. Never require or borrow the
+            # old film-module profile/host merely to admit the scene compositor.
+            require(resource_authoring is None and 'resource_plan' not in request,
+                'scene_space_production_resource_not_admitted')
+            with self.store.transaction() as db:
+                replay = db.execute('SELECT 1 FROM production_runs WHERE owner=? AND idem=?',(owner,idem)).fetchone()
+                planning_project = self.store._project(db,owner,project_id)
+                require(not planning_project.get('joint_plan',{}).get('resource_plan'),
+                    'scene_space_production_resource_not_admitted')
+            if replay is None:
+                configuration = self.scene_space_adapter.freeze_configuration(owner,project_id)
+                require(type(configuration) is dict and configuration.get('available') is True
+                    and configuration.get('renderer_mode')=='scene-space'
+                    and configuration.get('fps')==24 and configuration.get('max_seconds')==300
+                    and configuration.get('audio_modes')==['silent']
+                    and type(configuration.get('configuration_sha256')) is str
+                    and re.fullmatch(r'[0-9a-f]{64}',configuration['configuration_sha256']),
+                    'scene_space_production_unavailable',503)
+        if self.film_creation is not None and not use_scene_space:
             # The facade authorizes through this same SQLite store and may do
             # network preflight. Do not hold BEGIN IMMEDIATE while calling it.
             # Historical idempotent replays do not need fresh admission.
@@ -778,6 +835,10 @@ class ProductionRunStore:
                 for item in run['items']:
                     item.update(module_operation_id=None, module_version_id=None, module_status='queued',
                         module_sha256=None, module_package_sha256=None, module_engine=None)
+                if use_scene_space:
+                    run.update(renderer_mode='scene-space',draft_render_source='scene-space',
+                        scene_space_configuration=deepcopy(configuration),scene_space=dict(status='pending',
+                            stop_proven=True,plan_sha256=None,source_sha256=None,render_id=None,error=None))
                 if resource_plan is not None:
                     run.update(resource_plan=resource_plan,
                         resource_plan_registration=dict(status='pending', operation_id=run['id'],
@@ -1010,6 +1071,8 @@ class ProductionRunStore:
 
     def _stop(self, run):
         pending = False
+        if self._uses_scene_space(run):
+            pending = not self._scene_space_service().cancel(run)
         if 'resource_plan_registration' in run:
             self._ensure_resource_plan(run)
             resources = self.resource_stage.cancel(run)
@@ -1066,6 +1129,11 @@ class ProductionRunStore:
         # sequence metadata must block fresh work, not erase a finished film.
         if admit:
             self._require_sequence_admission(run)
+        if self._uses_scene_space(run):
+            require(self._audio_ready(run),'scene_space_production_clock_not_ready',409)
+            self._freeze_film(run)
+            self._scene_space_service().advance(run,admit=admit,persist=self._save)
+            return
         if self._uses_film(run):
             self._step_film(run, project, admit=admit)
             return
@@ -1259,7 +1327,7 @@ class ProductionRunStore:
 
     def _recover_sequence_registration(self, run):
         """Recover only explicit pending metadata; never replay creation work."""
-        if (self.sequence_store is None or not self._uses_film(run) or run['status'] != 'completed'
+        if (self.sequence_store is None or not (self._uses_film(run) or self._uses_scene_space(run)) or run['status'] != 'completed'
                 or 'sequence_registration' not in run
                 or run['sequence_registration']['status'] == 'registered'):
             return
