@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from agent_service.contracts import ServiceError
-from agent_service.scene_space_contract import world_sha256
+from agent_service.scene_space_contract import validate_world, world_sha256
 from video_workbench.scene_space_learning import (
     METHOD_SCHEMA, scene_method_guidance, transferable_scene_method, validate_scene_method,
 )
-from video_workbench.scene_space_plan import automatic_plan, default_budget
+from video_workbench.scene_space_plan import automatic_plan, default_budget, validate_plan
 
 
 WORLD_PATH = Path(__file__).resolve().parents[1] / 'fixtures/scene_space/world.json'
@@ -113,3 +113,54 @@ def test_guidance_preserves_source_and_evidence_boundaries():
     assert offer['source_scope']=='sampled_frames_only'
     assert any('source files' in row for row in offer['instructions'])
     assert any('Changed-content transfer' in row for row in offer['instructions'])
+
+
+def test_guidance_structural_example_passes_the_real_world_plan_and_method_validators():
+    example=scene_method_guidance('static_image')['structural_example']
+    world=validate_world(example['world'])
+    plan=validate_plan(example['plan'])
+    assert world_sha256(world)==world_sha256(plan['worlds'][0])
+    method=carrier()
+    method.update(world=example['world'],plan=example['plan'])
+    checked=validate_scene_method(method,source_scope='static_image',
+        source_refs=method['source']['references'],frame_ids=method['source']['frame_ids'])
+    assert checked['plan']['duration_frames']==1
+    assert checked['world']['style']=='unspecified'
+    assert all(row['recipe_ref'] is None for row in checked['world']['objects'])
+    # It is inert syntax: it supplies neither a source painter nor reusable art.
+    assert set(example)=={'purpose','world','plan'}
+    assert {row['kind'] for row in checked['world']['objects']}=={'placeholder'}
+    example['world']['style']='changed only in this returned offer'
+    assert scene_method_guidance('static_image')['structural_example']['world']['style']=='unspecified'
+
+
+@pytest.mark.parametrize('mistake,code',[
+    ('style_dictionary','scene_world_text_invalid'),
+    ('recipe_parameters','scene_world_fields_invalid'),
+    ('world_reference_wrapper','scene_world_fields_invalid'),
+])
+def test_author_guidance_example_does_not_relax_the_rejected_structures(mistake,code):
+    example=scene_method_guidance('static_image')['structural_example']
+    if mistake=='style_dictionary':
+        example['world']['style']={'medium':'ink'}
+        with pytest.raises(ServiceError,match=code):validate_world(example['world'])
+    elif mistake=='recipe_parameters':
+        example['world']['objects'][0]['recipe_ref']={'seed':1,'params':{}}
+        with pytest.raises(ServiceError,match=code):validate_world(example['world'])
+    else:
+        example['plan']['worlds']=[dict(world_id=example['world']['id'],world_revision=1)]
+        with pytest.raises(ServiceError,match=code):validate_plan(example['plan'])
+
+
+def test_occlusion_requires_explicit_drawing_order_as_well_as_consistent_depth():
+    world=scene_method_guidance('static_image')['structural_example']['world']
+    back=world['objects'][0]
+    back['depth']=dict(kind='ordinal',value=0)
+    front=deepcopy(back);front.update(id='front-object',depth=dict(kind='ordinal',value=1))
+    world['objects'].append(front)
+    world['relations']=[dict(id='front-over-back',kind='occlusion',front_id=front['id'],back_id=back['id'])]
+    with pytest.raises(ServiceError,match='scene_world_occlusion_order_invalid'):validate_world(world)
+    front['order']=1
+    assert validate_world(world)['objects'][1]['order']==1
+    front['depth']['value']=-1
+    with pytest.raises(ServiceError,match='scene_world_occlusion_depth_invalid'):validate_world(world)

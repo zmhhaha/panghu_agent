@@ -11,7 +11,7 @@ import re
 
 from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.scene_space_contract import WORLD_SCHEMA, validate_world, world_sha256
-from .scene_space_plan import PLAN_SCHEMA, validate_plan
+from .scene_space_plan import PLAN_SCHEMA, default_budget, default_provenance, validate_plan
 
 METHOD_SCHEMA = 'video.scene-space-method.v1'
 MAX_METHOD_BYTES = 1024 * 1024
@@ -169,6 +169,31 @@ def transferable_scene_method(method):
     return result
 
 
+def _scene_structure_example():
+    """An inert syntax example, deliberately without artwork or paint recipes."""
+    world = dict(schema=WORLD_SCHEMA, id='example-world', revision=1, seed=1,
+        style='unspecified', space=dict(projection='planar',
+            bounds=dict(x=0, y=0, width=64, height=64)),
+        layers=[dict(id='example-layer', order=0, parallax=1, cache_policy='static')],
+        objects=[dict(id='example-object', kind='placeholder', layer_id='example-layer',
+            parent_id=None, bounds=dict(x=0, y=0, width=16, height=16),
+            transform=dict(x=24, y=24, scale_x=1, scale_y=1, rotation=0),
+            depth=dict(kind='unknown', value=None), anchors=dict(center=[8, 8]))],
+        layout=dict(grid=dict(origin=[0, 0], spacing=[32, 32], columns=3, rows=3),
+            points=[dict(id='example-center', position=[32, 32])], regions=[]),
+        relations=[])
+    plan = dict(schema=PLAN_SCHEMA, id='example-plan', revision=1, fps=24,
+        duration_frames=1, viewport=dict(width=64, height=64), worlds=[deepcopy(world)],
+        shots=[dict(id='example-shot', world_id=world['id'], world_revision=1,
+            start_frame=0, end_frame=1, camera=dict(max_zoom=1,
+                keyframes=[dict(frame=0, x=32, y=32, zoom=1, easing='linear')]),
+            local_animation=[], transition='cut')],
+        budget=default_budget(), provenance=default_provenance())
+    return dict(purpose='Syntax only: a 64x64 generic placeholder, not a composition, painting recipe or task output. '
+        'Replace its viewport, geometry, objects, layers, IDs and budget for the actual task; never copy it as the artwork.',
+        world=world, plan=plan)
+
+
 def scene_method_guidance(scope):
     """A data-only author offer, kept inside existing constraints semantics."""
     scope = _scope(scope)
@@ -180,34 +205,87 @@ def scene_method_guidance(scope):
         hypothesis_fields=['id', 'claim', 'confidence', 'evidence_frame_ids', 'alternatives', 'unknowns'],
         stage_fields=['stage', 'status', 'notes', 'evidence_frame_ids', 'limitations'],
         stages=sorted(_STAGES), statuses=sorted(_STATUSES),
+        method_types=dict(world='null or a complete world object',plan='null or a complete plan object',
+            source='object with exactly the listed source_fields; references is an array of {id,sha256}, '
+                'frame_ids an array of those same IDs; copy only supplied IDs/digests, at most 128; all observation flags false',
+            hypotheses='array of at most 32 objects: id, claim:string, confidence:finite number 0..1, '
+                'evidence_frame_ids:string array, alternatives:string array, unknowns:string array',
+            principles='array of at most 32 nonempty strings, each at most 4000 characters',
+            stages='array with unique admitted stage names; status from statuses, notes is a string, '
+                'evidence_frame_ids references supplied frames, limitations is a string array; authors cannot mark verified/completed',
+            limitations='array of at most 32 nonempty strings, each at most 4000 characters',
+            size='the whole scene-space method is at most 1048576 canonical JSON bytes'),
         world_contract=dict(required=['schema','id','revision','seed','style','space','layers',
             'objects','layout','relations'],
+            field_types=dict(schema='literal video.scene-world.v1',
+                id='ASCII ID matching [A-Za-z0-9][A-Za-z0-9_.:-]{0,79}; not constructor, prototype or __proto__',
+                revision='integer 1..1000000',seed='integer 0..4294967295',
+                style='nonempty single-line string, at most 120 characters; never an object, palette or style dictionary',
+                space='object',layers='array of 1..32 layer objects',objects='array of 1..256 object objects',
+                layout='object with exactly grid, points and regions',relations='array, at most 1024 relations'),
+            scalar_rules='Numbers must be finite JSON numbers, not booleans or numeric strings. '
+                'IDs are strings, points are [x,y] arrays, and rectangles are {x,y,width,height} objects. '
+                'Only the listed required/optional fields are allowed; no arbitrary appearance or metadata fields.',
             space=dict(projection='planar | scattered | geometric',bounds='rect{x,y,width,height}'),
-            layer=dict(required=['id','order','parallax'],optional=['opacity','blur','cache_policy','mask_region_id']),
+            rect='x/y and right/bottom within [-1000000,1000000], width/height positive (at least 0.000001)',
+            layer=dict(required=['id','order','parallax'],optional=['opacity','blur','cache_policy','mask_region_id'],
+                types=dict(order='unique integer -4096..4096; later layers have greater order',
+                    parallax='number 0..2',opacity='number 0..1, default 1',blur='number 0..128, default 0',
+                    cache_policy='static for the currently admitted host',mask_region_id='null or an existing region ID')),
             object=dict(required=['id','kind','layer_id','parent_id','bounds','transform','depth','anchors'],
+                identity='id and kind are ASCII IDs; layer_id references a declared layer; parent_id is null or another object ID',
                 transform=['x','y','scale_x','scale_y','rotation'],
+                transform_types='x/y are parent-local translations; scale_x/scale_y are numbers 0.0001..1000; rotation is degrees -360..360',
                 depth=dict(kind='ordinal | geometric | unknown',value='number; null for unknown'),
-                anchors='map of anchor name to local [x,y]',optional=['order','allow_overflow','overflow_reason','recipe_ref']),
+                anchors='map of at most 32 ASCII anchor IDs to local [x,y] arrays inside object.bounds',
+                optional=['order','allow_overflow','overflow_reason','recipe_ref'],
+                optional_types=dict(order='integer -4096..4096, default 0',allow_overflow='boolean, default false',
+                    overflow_reason='null when allow_overflow=false; nonempty string when true',
+                    recipe_ref='omit, null, or exactly {id:ASCII_ID,sha256:64_lowercase_hex_characters}; an inert identity reference only, never seed/params/drawing instructions')),
             layout=dict(grid='null or {origin:[x,y],spacing:[dx,dy],columns,rows}',
-                points='[{id,position:[x,y],depth:{kind,value}}]',regions='[{id,kind:rect,bounds}] or polygon points'),
+                grid_limits='spacing positive; columns/rows integers 1..128, product <=4096; first/last grid points inside space.bounds',
+                points='array of {id,position:[x,y],depth?:{kind,value}}, at most 4096; positions inside space.bounds',
+                regions='array of {id,kind:"rect",bounds:{x,y,width,height}} or {id,kind:"polygon",points:[[x,y],...]}; '
+                    'at most 128 regions, polygon 3..256 distinct vertices, nonzero area, no self intersection; all inside space.bounds',
+                total_points='at most 16384 grid points, named points, region vertices and anchors combined'),
             relations=dict(
                 attachment=['id','kind','object_id','anchor','target_object_id','target_anchor'],
                 support=['id','kind','object_id','anchor','region_id'],
                 scale=['id','kind','object_id','reference_object_id','metric','min_ratio','max_ratio'],
-                occlusion=['id','kind','front_id','back_id'])),
+                occlusion=['id','kind','front_id','back_id'],
+                rules='IDs/anchors/regions must exist. Attachment/support may add tolerance from 0 to 5% of the smaller world side; '
+                    'scale metric is width|height|area, 0.000001<=min_ratio<=max_ratio<=1000000. '
+                    'World-space attachments, support and scale must already hold. Parent/attachment/occlusion graphs cannot cycle. '
+                    'Occluding front objects need a strictly greater (layer.order,object.order) tuple, '
+                    'and no smaller depth value when both objects have the same non-unknown depth kind. '
+                    'Depth describes distance but does not sort drawing order; give overlapping same-layer objects explicit different order values.')),
         plan_contract=dict(required=['schema','id','revision','fps','duration_frames','viewport','worlds',
             'shots','budget','provenance'],fps=24,
+            worlds='Array of 1..16 complete video.scene-world.v1 objects BY VALUE, not {world_id,world_revision} references. '
+                'If method.scene_space.world is also present, the matching plan world must contain the same complete world data.',
+            dimensions='viewport is exactly {width:integer 1..1280,height:integer 1..720}; '
+                'it must match the actual task dimensions. duration_frames is an integer 1..7200.',
+            identity='id is an ASCII ID (at most 100 characters); revision is an integer 1..1000000',
             camera='fixed principal direction; x/y are world-space view centre; zoom in [.25,8]',
             shots=dict(required=['id','world_id','world_revision','start_frame','end_frame','camera','local_animation'],
-                interval='half-open start_frame/end_frame partitions',
+                count='array of 1..16 shots; every world must be used by a shot',
+                interval='ordered, gap-free half-open integer start_frame/end_frame partitions from 0 to duration_frames',
                 camera='{max_zoom,keyframes:[{frame,x,y,zoom,easing}]}',
+                camera_keys='1..16 keys in strictly increasing absolute integer frames; first at shot.start_frame, '
+                    'and if multiple keys, last at shot.end_frame; easing linear|smoothstep; each zoom <= max_zoom',
                 local_animation='[{id,target_id,property:x|y|rotation|scale|opacity,keyframes:[{frame,value,easing}]}]',
+                local_keys='at most 64 tracks, unique target/property pairs; target_id is an existing object; '
+                    '1..32 keys with the same absolute-frame boundary rules; scale values .01..16, opacity 0..1',
                 transition='optional cut | continuous'),
             provenance=dict(origin='generated',source_refs=[],evidence_scope='scene_data_only',
                 motion_observed=False,audio_observed=False,whole_video_watched=False),
+            budget_rules='Use exactly model/render/revisions and the demonstrated nested keys. Use the host-supplied task budget when offered; '
+                'example limits do not authorize larger work. All limits/used counts must be nonnegative and used values cannot exceed limits; '
+                'keep unknown measured tokens null rather than inventing actual usage.',
             budget=dict(model=dict(limit_calls=16,used_calls=0,limit_tokens=1000000,used_tokens=0),
                 render=dict(limit_seconds=3600,used_seconds=0,max_cached_pixels=16777216,max_temporary_bytes=134217728),
                 revisions=dict(limit=4,used=0))),
+        structural_example=_scene_structure_example(),
         instructions=[
             'The currently admitted Canvas compositor accepts only static layer cache_policy. Paint each object once; express supported local changes with absolute-frame transform/opacity tracks. Other cache policies remain descriptive metadata until separately admitted.',
             'When useful, record spatial, layer, scale, anchor and occlusion hypotheses in method.scene_space; source files retain their exact contract.',
@@ -215,6 +293,8 @@ def scene_method_guidance(scope):
             'Copy source references and frame IDs only from the host offer. Confidence describes a hypothesis, not verified geometry or artistic acceptance.',
             'One image or sampled frames do not establish actual camera movement, three-dimensional reconstruction, continuous motion, audio or full-video observation. Keep all three observation flags false.',
             'world and plan may be null for a partial learning stage. A plan must use the common world/plan schema and match the actual output viewport and frame count.',
+            'Use the exact field types. world.style is one short string. Omit recipe_ref unless you have a real id+sha256 identity; keep your own per-object drawing parameters in scene.js keyed by object ID. plan.worlds embeds complete world objects, while shots reference their world_id and world_revision.',
+            'The structural_example is a validated syntax illustration with one generic placeholder and no painting recipe. Build the actual composition from the task, using the offered dimensions/frame count and budget, rather than rendering or inheriting that example.',
             'A world-only hypothesis uses ordinary source rendering and separate layout diagnostics. A non-null plan selects the admitted scene-space compositor and requires its artwork API.',
             'For the admitted Canvas compositor, scene.html must provide canvas[data-scene-space-output] styled to fill the viewport, and scene.js must register window.__sceneSpaceArtwork={paintObject(ctx,object,world){...}}. Paint only each object in its local bounds; the host applies parent/layer/camera transforms, opacity and masking. Use the declared seed for reproducible artwork. Do not define a nonconfigurable window.__animationExperiment; the host owns the frame clock.',
             'ink.renderCanvas resets its internal Canvas transform. For direct object painting use bounds.x=bounds.y=0, match the InkScene document width/height to object.bounds, and use clear:false; express world placement in object.transform. For nonzero local bounds, render into an admitted local Canvas and drawImage it back into bounds, within the context and pixel budgets.',
