@@ -70,16 +70,19 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         libraries = drawing_libraries(bounds.get('drawing_libraries'), assets)
         selected = {}
         for name, library in libraries.items():
-            if source['engine'] in library['engines']:
+            referenced = any(asset in content for asset in library['assets']
+                             for content in source['files'].values())
+            compatible = source['engine'] in library['engines']
+            _require(compatible or not referenced,
+                'learning_drawing_library_engine_not_admitted', 422)
+            if compatible and referenced:
                 selected[name] = library
                 continue
             for asset in library['assets']:
-                _require(not any(asset in content for content in source['files'].values()),
-                    'learning_drawing_library_engine_not_admitted', 422)
                 assets.pop(asset, None)
                 if type(bounds.get('assets')) is dict:
                     bounds['assets'].pop(asset, None)
-        # Available drawing helpers need not be dependencies of this engine.
+        # Optional helpers are dependencies only when the source references them.
         # The original context remains intact in the immutable binding below.
         if selected:
             bounds['drawing_libraries'] = selected

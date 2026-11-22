@@ -42,10 +42,13 @@ def configured(request, tmp_path, monkeypatch):
     else:
         value = VideoLearningRenderer(tmp_path / 'video', runtime_renderer=runtime)
         execute, document, source = VideoExecution(), video_document(), video_source()
-        # Exercise a compatible library engine; HTML/SVG has no ink dependency.
+        # Exercise an explicit compatible dependency, independent of availability.
         value.candidate_engines = ('canvas',)
         document['constraints']['allowed_engines'] = ['canvas']
         source['engine'] = 'canvas'
+        source['files']['scene.html'] = source['files']['scene.html'].replace(
+            '</body>', '<script type="module" src="./scene.js"></script></body>')
+        source['files']['scene.js'] = "import * as ink from './assets/ink-landscape.mjs';"
         source['source_sha256'] = video_protocol.source_sha256(source)
         target = shared
 
@@ -152,6 +155,27 @@ def _three_binding(tmp_path):
     return value, document, source
 
 
+def _native_canvas_binding(tmp_path):
+    runtime = shared.MethodAnimationRenderer(tmp_path / 'existing', IMAGE,
+        enabled=True, timeout=60, hyperframes=True, legacy_bridge=True)
+    value = VideoLearningRenderer(tmp_path / 'video', runtime_renderer=runtime)
+    value.candidate_engines = ('canvas',)
+    document = bind_library(video_document())
+    document['constraints']['allowed_engines'] = ['canvas']
+    document['assets']['NotoSansCJK-Regular.ttc'] = shared.ASSET_SHA256['NotoSansCJK-Regular.ttc']
+    source = deepcopy(video_source())
+    source['engine'] = 'canvas'
+    source['files'] = {
+        'scene.html': '<html><body><canvas width="320" height="180"></canvas>'
+            '<script src="./scene.js"></script></body></html>',
+        'scene.js': "const ctx=document.querySelector('canvas').getContext('2d');"
+            "window.__animationExperiment={seek(t){ctx.clearRect(0,0,320,180);"
+            "ctx.fillRect(t*10,20,30,30);}};",
+    }
+    source['source_sha256'] = video_protocol.source_sha256(source)
+    return value, document, source
+
+
 def _actual_video_host_validation(request, resources):
     node = shutil.which('node')
     if node is None:
@@ -170,6 +194,77 @@ catch(error) { process.stdout.write(JSON.stringify({accepted:false,error:String(
     result = subprocess.run([node, '--input-type=module', '-e', script, VIDEO_HOST.resolve().as_uri()],
         input=canonical_bytes(payload), capture_output=True, timeout=15, check=True)
     return json.loads(result.stdout)
+
+
+def test_native_canvas_omits_unused_library_and_passes_the_actual_unchanged_host(tmp_path):
+    value, document, source = _native_canvas_binding(tmp_path)
+    original_document, original_source = deepcopy(document), deepcopy(source)
+    host_sha256 = hashlib.sha256(VIDEO_HOST.read_bytes()).hexdigest()
+    binding = value._snapshot('native-canvas', source, document, [])
+    request = binding['request']
+
+    # Reproduce the real pre-browser failure when an unused helper is attached.
+    old_request = deepcopy(request)
+    old_request['drawing_libraries'] = document['constraints']['drawing_libraries']
+    old_request['assets_sha256'].update(descriptor()['assets'])
+    assert _actual_video_host_validation(old_request,
+        {'/assets/'+name: raw for name, raw in read_assets().items()}) == dict(
+            accepted=False, error='Error: learning_drawing_library_invalid')
+    assert _actual_video_host_validation(request, {}) == dict(accepted=True, libraries=None)
+    assert 'drawing_libraries' not in request
+    assert not (descriptor()['assets'].keys() & request['assets_sha256'].keys())
+    assert request['assets_sha256'] == {
+        name: checksum for name, checksum in original_document['assets'].items()
+        if name not in descriptor()['assets']}
+    assert document == original_document and source == original_source
+    assert binding['document'] == document and binding['input_sha256'] == digest(document)
+    assert binding['source']['files'] == source['files']
+    assert binding['source_sha256'] == binding['learning_source_sha256'] == source['source_sha256']
+    assert request['host_sha256'] == host_sha256 == hashlib.sha256(VIDEO_HOST.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('asset', ['ink-landscape.mjs', 'ink-landscape.LICENSE.txt'])
+def test_canvas_explicit_drawing_dependency_is_never_silently_removed(tmp_path, asset):
+    value, document, source = _native_canvas_binding(tmp_path)
+    source['files']['scene.js'] += f"\nimport './assets/{asset}';"
+    source['source_sha256'] = video_protocol.source_sha256(source)
+    original_document, original_source = deepcopy(document), deepcopy(source)
+    binding = value._snapshot('explicit-canvas', source, document, [])
+    assert binding['request']['drawing_libraries'] == document['constraints']['drawing_libraries']
+    assert all(binding['request']['assets_sha256'][name] == checksum
+               for name, checksum in descriptor()['assets'].items())
+    assert document == original_document and source == original_source
+    assert binding['document'] == original_document
+    assert binding['learning_source_sha256'] == original_source['source_sha256']
+
+
+@pytest.mark.parametrize('mutation', ['revision', 'module', 'license'])
+def test_unused_canvas_library_is_validated_before_dependency_selection(tmp_path, mutation):
+    value, document, source = _native_canvas_binding(tmp_path)
+    if mutation == 'revision':
+        document['constraints']['drawing_libraries']['ink-landscape']['source_revision'] = '0' * 40
+    else:
+        name = 'ink-landscape.mjs' if mutation == 'module' else 'ink-landscape.LICENSE.txt'
+        document['assets'][name] = '0' * 64
+    with pytest.raises(ServiceError, match='ink_landscape_library_not_admitted'):
+        value._snapshot('changed-unused-library', source, document, [])
+    assert not value.root.exists()
+
+
+def test_changed_vendor_module_bytes_are_rejected_before_native_canvas_execution(tmp_path, monkeypatch):
+    from video_workbench import ink_landscape_library as ink
+    value, document, source = _native_canvas_binding(tmp_path)
+    vendor = tmp_path / 'vendor'
+    shutil.copytree(ink.ROOT, vendor)
+    (vendor / 'ink-landscape.mjs').write_bytes(b'changed module bytes')
+    monkeypatch.setattr(ink, 'ROOT', vendor)
+
+    def unexpected_execution(*_):
+        pytest.fail('changed offered vendor bytes must fail before execution')
+    monkeypatch.setattr(shared, 'execute_method_render', unexpected_execution)
+    with pytest.raises(ServiceError, match='ink_landscape_library_bytes_invalid'):
+        value.render('changed-vendor-module', source, document)
+    assert not value.root.exists()
 
 
 def test_three_request_omits_incompatible_library_and_passes_the_actual_unchanged_host(tmp_path):
