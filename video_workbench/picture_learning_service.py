@@ -525,6 +525,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         return self._save(run)
 
     def _agent(self, run, operation):
+        if self._scene_block_diagnostic_model(run, operation):
+            return
         scene_status = self._scene_run_status(run)
         if operation['stage'] == 'author' and scene_status is not None and not scene_status['can_start_render']:
             operation.update(status='cancelled', error='scene_space_render_budget_unavailable')
@@ -781,6 +783,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         operation.update(status='completed', result={key: value for key, value in result.items()
                                                      if not key.endswith('_path')})
         self._finish_operation(run, operation)
+        if self._scene_complete_diagnostic(run, operation, candidate):
+            return
         run['stage'] = 'review'
 
     def _stop_or_expire(self, run):

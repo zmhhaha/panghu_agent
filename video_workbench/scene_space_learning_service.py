@@ -8,6 +8,8 @@ from .picture_learning_store import require
 from .scene_space_learning import (METHOD_SCHEMA as SCENE_METHOD_SCHEMA,
     scene_method_guidance, transferable_scene_method, validate_scene_method)
 
+MAX_STATIC_DIAGNOSTIC_RENDER_SECONDS = 60
+
 
 class SceneSpaceLearningMixin:
     def _freeze_learning_options(self, body, frozen, *, prior=None):
@@ -241,16 +243,70 @@ class SceneSpaceLearningMixin:
         require(reserve > 0, 'scene_space_learning_budget_exhausted', 409)
         if options:
             store, task_id = self._scene_store(), candidate['scene_space_task_id']
-            task_status = store.require_export(run['owner'], task_id)
-            reserve = min(reserve, task_status['remaining']['render_seconds'])
+            task = store.get(run['owner'], task_id)
+            status = task['usage_status']
+            diagnostic = (status['status'] == 'usage_unknown'
+                and status['used']['model_tokens'] is None
+                and status['used']['render_seconds'] is not None
+                and 'duration_seconds' not in run['frozen']
+                and options['scene_space']['duration_frames'] == 1)
+            task_status = status if diagnostic else store.require_export(run['owner'], task_id)
+            held = sum(row['render_seconds'] for row in task['reservations']
+                if row['status'] == 'active' and row['id'] != operation['id'])
+            reserve = min(reserve, max(0, task_status['remaining']['render_seconds'] - held))
+            phase = 'preview' if diagnostic else 'render'
+            if diagnostic:
+                reserve = min(reserve, MAX_STATIC_DIAGNOSTIC_RENDER_SECONDS)
             require(reserve > 0, 'scene_space_learning_budget_exhausted', 409)
-            store.reserve(run['owner'], task_id, operation['id'], phase='render',
+            require(operation.get('scene_space_render_phase', phase) == phase,
+                'scene_space_learning_settlement_changed', 409)
+            operation['scene_space_render_phase'] = phase
+            if diagnostic:
+                marker = dict(schema='video.scene-space-learning-diagnostic.v1',
+                    scope='static_diagnostic_png_only', status='reserved', reason='model_usage_unknown',
+                    plan_sha256=digest(options['scene_space']), source_sha256=candidate['source_sha256'],
+                    max_frames=1, max_render_seconds=MAX_STATIC_DIAGNOSTIC_RENDER_SECONDS,
+                    model_review_authorized=False, transfer_authorized=False, formal_export_authorized=False,
+                    visual_quality='not_assessed', motion_observed=False, audio_observed=False)
+                operation['scene_space_diagnostic'] = marker
+                run['scene_space_diagnostic'] = deepcopy(marker)
+            # Record the chosen phase before the separate shared reservation;
+            # recovery must settle the same phase, including a preclaim failure.
+            self.store.put('operations', operation)
+            store.reserve(run['owner'], task_id, operation['id'], phase=phase,
                 model_calls=0, model_tokens=0, render_seconds=reserve)
         if prior is None:
             require(len(budget['reservations']) < 1024, 'scene_space_learning_usage_event_limit', 409)
             budget['reservations'].append(dict(id=operation['id'], seconds=reserve, status='active'))
         self.store.put('experiments', run)
         return min(run['deadline_at'], self.clock() + reserve)
+
+    def _scene_block_diagnostic_model(self, run, operation):
+        """A diagnostic bitmap grants no further paid Agent work."""
+        if operation['status'] != 'reserved' or not run.get('scene_space_diagnostic'):
+            return False
+        operation.update(status='cancelled', error='scene_space_diagnostic_model_not_authorized')
+        self._finish_operation(run, operation)
+        self._finish(run, 'scene_space_diagnostic_preview_only')
+        return True
+
+    def _scene_complete_diagnostic(self, run, operation, candidate):
+        marker = operation.get('scene_space_diagnostic')
+        if marker is None:
+            return False
+        require(operation.get('scene_space_render_phase') == 'preview'
+            and candidate.get('picture_sha256') is not None,
+            'scene_space_learning_diagnostic_invalid', 409)
+        report = dict(marker, status='rendered', picture_sha256=candidate['picture_sha256'],
+            render_operation_id=operation['id'])
+        candidate['scene_space_diagnostic'] = deepcopy(report)
+        candidate['verification_scope'] = 'static_diagnostic_only_not_reviewed'
+        candidate['artifacts']['scene-space-diagnostic'] = dict(
+            id=candidate['id'] + '-scene-space-diagnostic',
+            sha256=self.store.blob(canonical_bytes(report)), mime_type='application/json')
+        run['scene_space_diagnostic'] = deepcopy(report)
+        self._finish(run, 'scene_space_diagnostic_preview_only')
+        return True
 
     def _scene_prepare_render(self, run, operation, candidate, options, deadline_at, *, started):
         """Pin a pure render request before the durable execution claim."""
@@ -301,6 +357,8 @@ class SceneSpaceLearningMixin:
         if elapsed is None and seconds is not None:
             seconds += operation.get('scene_space_preflight', {}).get('measured_prepare_seconds', 0)
         outcome = 'completed' if result.get('status') == 'rendered' else 'failed'
+        phase = operation.get('scene_space_render_phase', 'render')
+        require(phase in {'render', 'preview'}, 'scene_space_learning_settlement_changed', 409)
         budget = run.get('scene_space_render_budget') or {}
         previous = next((event for event in budget.get('events', []) if event['id'] == operation['id']), None)
         store = self._scene_store() if task_id is not None else None
@@ -309,7 +367,7 @@ class SceneSpaceLearningMixin:
         if prior is not None:
             # A response/artifact failure after settlement can re-enter lookup.
             # Retain the first actual measurement rather than measuring again.
-            require(prior['phase'] == 'render' and prior['outcome'] == outcome,
+            require(prior['phase'] == phase and prior['outcome'] == outcome,
                 'scene_space_learning_settlement_changed', 409)
             # Settlement can commit in the shared ledger before the learning
             # run is saved. Reuse that first measurement after a process crash.
@@ -319,9 +377,9 @@ class SceneSpaceLearningMixin:
                 'scene_space_learning_settlement_changed', 409)
             seconds = previous['seconds']
         if store is not None and prior is None:
-            store.record_usage(run['owner'], task_id, id=operation['id'], phase='render',
+            store.record_usage(run['owner'], task_id, id=operation['id'], phase=phase,
                 outcome=outcome, model_calls=0, model_tokens=0, render_seconds=seconds)
-        self._scene_run_charge(run, operation['id'], outcome=outcome, seconds=seconds)
+        self._scene_run_charge(run, operation['id'], outcome=outcome, seconds=seconds, phase=phase)
         if store is None:
             return
         candidate['scene_space_usage'] = dict(task_id=task_id,

@@ -82,6 +82,166 @@ def system(tmp_path):
     return service,author,reviewer,renderer
 
 
+@pytest.fixture
+def unknown_token_system(system,monkeypatch):
+    service,author,reviewer,renderer=system
+    collect=author.collect
+    def unknown_tokens(*args,**kwargs):
+        result=collect(*args,**kwargs)
+        if result.get('source') is not None:
+            result['method']['scene_space']['plan']['budget']['model']['used_tokens']=None
+        return result
+    monkeypatch.setattr(author,'collect',unknown_tokens)
+    return system
+
+
+def test_unknown_model_budget_keeps_one_diagnostic_png_without_review_or_transfer(unknown_token_system):
+    service,author,reviewer,renderer=unknown_token_system
+    project,_=start(service,max_rounds=1)
+    completed=finish(service,project)
+    run=service.store.read('experiments','developer',completed['latest_experiment_id'])
+    assert run['state']=='completed' and run['stop_reason']=='scene_space_diagnostic_preview_only'
+    assert len(author.submissions)==len(renderer.calls)==1
+    assert reviewer.submissions==reviewer.uploads==[]
+    assert run['transfer_task'] is None and run['transfer_status']=='not_verified'
+    assert len(run['candidates'])==1 and run['candidates'][0]['review'] is None
+    candidate=run['candidates'][0]
+    assert candidate['picture_sha256'] and candidate['source_sha256']
+    assert candidate['scene_space']['plan']['budget']['model']['used_tokens'] is None
+    assert candidate['verification_scope']=='static_diagnostic_only_not_reviewed'
+    report=candidate['scene_space_diagnostic']
+    assert report['status']=='rendered' and report['max_frames']==1
+    assert report['model_review_authorized'] is report['transfer_authorized'] is report['formal_export_authorized'] is False
+    path,mime=service.artifact('developer',project['id'],candidate['artifacts']['scene-space-diagnostic']['id'])
+    assert mime=='application/json' and path.read_bytes()==canonical_bytes(report)
+    task=service._scene_store().get('developer',candidate['scene_space_task_id'])
+    assert task['usage']['baseline']['model_tokens'] is None
+    reservation=task['reservations'][0]
+    assert reservation['phase']=='preview' and reservation['model_calls']==reservation['model_tokens']==0
+    assert 0<reservation['render_seconds']<=60 and reservation['status']=='settled'
+    event=next(row for row in task['usage']['events'] if row['id']==candidate['render_operation_id'])
+    local=next(row for row in run['scene_space_render_budget']['events'] if row['id']==event['id'])
+    assert event['phase']==local['phase']=='preview'
+    assert event['render_seconds']==local['seconds']>=0
+    assert completed['experiments'][-1]['scene_space_model_usage']['completeness']=='unknown'
+    with pytest.raises(ServiceError,match='export_budget_unavailable'):
+        service._scene_store().require_export('developer',candidate['scene_space_task_id'])
+    with pytest.raises(ServiceError,match='budget_unavailable'):
+        service._scene_store().reserve('developer',candidate['scene_space_task_id'],'paid-review',
+            phase='review',model_calls=1,model_tokens=1)
+
+
+def test_diagnostic_marker_blocks_a_reserved_paid_operation_after_recovery(unknown_token_system):
+    service,author,reviewer,renderer=unknown_token_system
+    project,_=start(service,max_rounds=1)
+    completed=finish(service,project)
+    run=service.store.read('experiments','developer',completed['latest_experiment_id'])
+    run.update(state='running',stage='review',active_operation_id=None)
+    operation=service._operation(run)
+    service._agent(run,operation)
+    assert operation['status']=='cancelled'
+    assert run['stop_reason']=='scene_space_diagnostic_preview_only'
+    assert reviewer.uploads==reviewer.submissions==[]
+    assert len(author.submissions)==len(renderer.calls)==1
+
+
+def test_unknown_budget_technical_retry_reuses_the_unstarted_source_plan_and_ledger(unknown_token_system,monkeypatch):
+    service,author,reviewer,renderer=unknown_token_system
+    current_admit=service._scene_admit_render
+    def old_export_gate(run,operation,candidate,options):
+        return service._scene_store().require_export(run['owner'],candidate['scene_space_task_id'])
+    monkeypatch.setattr(service,'_scene_admit_render',old_export_gate)
+    project,_=start(service,max_rounds=1)
+    failed=finish(service,project)
+    before=service.store.read('experiments','developer',failed['latest_experiment_id'])
+    candidate=deepcopy(before['candidates'][0])
+    task_before=service._scene_store().get('developer',candidate['scene_space_task_id'])
+    assert before['state']=='failed' and before['stop_proven']
+    assert before['error']['code']=='scene_space_export_budget_unavailable'
+    assert not renderer.calls and len(author.submissions)==1
+    monkeypatch.setattr(service,'_scene_admit_render',current_admit)
+    service.next_experiment('developer',project['id'],dict(request_id=uuid4().hex,mode='retry'))
+    completed=finish(service,project)
+    after=service.store.read('experiments','developer',completed['latest_experiment_id'])
+    restored=after['candidates'][0]
+    assert after['stop_reason']=='scene_space_diagnostic_preview_only'
+    assert restored['source']==candidate['source'] and restored['scene_space']==candidate['scene_space']
+    assert restored['scene_space_task_id']==candidate['scene_space_task_id']
+    assert restored['picture_sha256'] and len(author.submissions)==len(renderer.calls)==1
+    assert not reviewer.submissions
+    assert after['scene_space_render_budget']['root_experiment_id']==before['scene_space_render_budget']['root_experiment_id']
+    assert all(row in after['scene_space_render_budget']['events'] for row in before['scene_space_render_budget']['events'])
+    task_after=service._scene_store().get('developer',candidate['scene_space_task_id'])
+    assert task_after['frozen']==task_before['frozen']
+    assert task_after['usage']['root_plan_sha256']==task_before['usage']['root_plan_sha256']
+    assert task_after['usage']['baseline']==task_before['usage']['baseline']
+
+
+def test_diagnostic_recovery_reuses_shared_preview_settlement_and_never_renders_twice(unknown_token_system,monkeypatch):
+    service,author,reviewer,renderer=unknown_token_system
+    renderer.lose_result=True
+    project,_=start(service,max_rounds=1)
+    for _ in range(8):
+        service.advance('developer',project['latest_experiment_id'])
+        run=service.store.read('experiments','developer',project['latest_experiment_id'])
+        if run['state']=='submission_unknown':break
+    assert run['state']=='submission_unknown' and len(renderer.calls)==1
+    operation=service.store.read('operations','developer',run['active_operation_id'])
+    assert operation['status']=='claimed' and operation['scene_space_render_phase']=='preview'
+    candidate=run['candidates'][0]
+    # The PNG exists but its response was lost; emulate shared settlement
+    # committing before the experiment write, then resume the same operation.
+    shared=service._scene_store()
+    shared.record_usage('developer',candidate['scene_space_task_id'],id=operation['id'],
+        phase='preview',outcome='completed',model_calls=0,model_tokens=0,render_seconds=.25)
+    recover=renderer.recover
+    monkeypatch.setattr(renderer,'recover',lambda identity:dict(recover(identity),measured_render_seconds=.1))
+    restarted=PictureLearningService(service.root,author_gateway=author,review_gateway=reviewer,renderer=renderer)
+    completed=finish(restarted,project)
+    after=restarted.store.read('experiments','developer',run['id'])
+    assert after['stop_reason']=='scene_space_diagnostic_preview_only'
+    assert completed['candidates'][0]['picture_url']
+    assert len(renderer.calls)==len(author.submissions)==1 and not reviewer.submissions
+    event=next(row for row in after['scene_space_render_budget']['events'] if row['id']==operation['id'])
+    assert event['phase']=='preview' and event['seconds']==.25
+    assert all(row['status']=='settled' for row in after['scene_space_render_budget']['reservations'])
+    ledger=shared.get('developer',candidate['scene_space_task_id'])['usage']
+    restarted.advance('developer',run['id'])
+    assert shared.get('developer',candidate['scene_space_task_id'])['usage']==ledger
+
+
+@pytest.mark.parametrize('unavailable',['unknown_render','over_budget'])
+def test_diagnostic_cannot_bypass_unknown_render_cost_or_exhaustion(unknown_token_system,unavailable):
+    service,author,reviewer,renderer=unknown_token_system
+    project,_=start(service,max_rounds=1)
+    for _ in range(8):
+        run=service.store.read('experiments','developer',project['latest_experiment_id'])
+        if run['stage']=='render':break
+        service.advance('developer',run['id'])
+    candidate=run['candidates'][0]
+    service._scene_store().record_usage('developer',candidate['scene_space_task_id'],id='prior-render',
+        phase='render',outcome='failed',render_seconds=None if unavailable=='unknown_render' else 3601)
+    failed=finish(service,project)
+    assert failed['state']=='failed' and not renderer.calls and not reviewer.submissions
+    assert failed['experiments'][-1]['error']['code']=='scene_space_export_budget_unavailable'
+
+
+def test_diagnostic_preclaim_failure_settles_the_reserved_preview_phase(unknown_token_system):
+    service,author,reviewer,renderer=unknown_token_system
+    renderer.prepare_error='scene_space_test_preflight_rejection'
+    project,_=start(service,max_rounds=1)
+    failed=finish(service,project)
+    run=service.store.read('experiments','developer',failed['latest_experiment_id'])
+    assert run['state']=='failed' and run['stop_reason']=='render_preflight_rejected'
+    assert not renderer.calls and not reviewer.submissions
+    operation=service.store.read('operations','developer',run['operation_ids'][-1])
+    assert operation['scene_space_render_phase']=='preview' and operation['result']['not_dispatched']
+    task=service._scene_store().get('developer',run['candidates'][0]['scene_space_task_id'])
+    assert task['reservations'][0]['phase']=='preview' and task['reservations'][0]['status']=='settled'
+    event=next(row for row in task['usage']['events'] if row['id']==operation['id'])
+    assert event['phase']=='preview' and event['outcome']=='failed' and event['render_seconds']>=0
+
+
 def test_new_learning_carries_a_validated_plan_and_transfers_only_general_principles(system):
     service,author,reviewer,renderer=system
     project,_=start(service,max_rounds=1)
@@ -489,3 +649,23 @@ def test_video_preclaim_rejection_does_not_create_a_render_or_lookup_dead_end(tm
     operation=service.store.read('operations','developer',run['operation_ids'][-1])
     assert run['stop_proven'] is True and run['stop_reason']=='render_preflight_rejected'
     assert operation['status']=='failed' and operation['result']['not_dispatched'] is True
+
+
+def test_unknown_model_budget_does_not_admit_a_multiframe_video_as_a_diagnostic(tmp_path,real_mp4,monkeypatch):
+    author,reviewer=VideoSceneGateway(),VideoGateway()
+    collect=author.collect
+    def unknown_tokens(*args,**kwargs):
+        result=collect(*args,**kwargs)
+        if result.get('source') is not None:
+            result['method']['scene_space']['plan']['budget']['model']['used_tokens']=None
+        return result
+    monkeypatch.setattr(author,'collect',unknown_tokens)
+    renderer=VideoSceneRenderer(tmp_path/'renders',real_mp4)
+    service=VideoLearningService(tmp_path/'video',author_gateway=author,review_gateway=reviewer,renderer=renderer)
+    project,_=start_video(service,real_mp4,max_rounds=1)
+    failed=finish_video(service,project)
+    assert failed['state']=='failed' and not renderer.calls and not reviewer.submissions
+    run=service.store.read('experiments','developer',failed['latest_experiment_id'])
+    assert run['error']['code']=='scene_space_export_budget_unavailable'
+    assert run['candidates'][0]['scene_space']['plan']['duration_frames']==48
+    assert not run.get('scene_space_diagnostic')
