@@ -1,0 +1,243 @@
+{
+  "active": [],
+  "actual_render_seconds": 28.861715156119317,
+  "added_study_tables": [
+    "shared-mountain-unity-studies/scene-space.sqlite3:scene_plans",
+    "shared-mountain-unity-studies/scene-space.sqlite3:scene_tasks"
+  ],
+  "artistic_acceptance": false,
+  "builds": 0,
+  "cases": [
+    {
+      "artistic_acceptance": false,
+      "case_id": "old",
+      "checks": {
+        "reload_passed": true,
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "7f4edb27fc9e3b4609b31262476861555a9b5bd6b66069110e804a1c63985f29"
+          }
+        ]
+      },
+      "error": null,
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "measured_controller_seconds": 13.302519032731652,
+      "model_calls": 0,
+      "operation_id": "shared-mountain-unity-20261123-r1-old",
+      "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+      "png_sha256": "7f4edb27fc9e3b4609b31262476861555a9b5bd6b66069110e804a1c63985f29",
+      "reserved_seconds": 180,
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "scene_space_observation": {
+        "artwork_api_revision": 3,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "coverage_callbacks": 10,
+        "coverage_contexts": 1,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "frames_composited": 4,
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "projectPoint": 186,
+          "sampleProjection": 235600
+        },
+        "geometry_resource_usage": {
+          "handles_reserved": 4,
+          "max_handles": 32,
+          "max_total_bytes": 16777216,
+          "meshes_created": 2,
+          "numeric_bytes_reserved": 3798576,
+          "projections_created": 2
+        },
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "objects_painted": 10,
+        "peak_work_pixels": 2764800,
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "recipes_executed": 0,
+        "runtime_revision": "scene-space-compositor-3",
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "schema": "video.scene-space-compositor-observation.v1",
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216,
+          "numeric_bytes_reserved": 0
+        },
+        "surface_helper_calls": {},
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+      },
+      "schema": "video.shared-mountain-unity-case.v1",
+      "scope": "same_layout_manual_source_study_not_original_picture_run_success",
+      "source_sha256": "5a9ea515a521027e38d511c8ab98add1ca8595934d09408905f9f4642fe7485f",
+      "status": "rendered",
+      "stop_proven": true,
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "technical_passed": true
+    },
+    {
+      "artistic_acceptance": false,
+      "case_id": "new",
+      "checks": {
+        "reload_passed": true,
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "bf0c40b38a0629e723636748a72ccc48fa8a379534c4c59d6d90ab009bca2724"
+          }
+        ]
+      },
+      "error": null,
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "measured_controller_seconds": 15.559196123387665,
+      "model_calls": 0,
+      "operation_id": "shared-mountain-unity-20261123-r1-new",
+      "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+      "png_sha256": "bf0c40b38a0629e723636748a72ccc48fa8a379534c4c59d6d90ab009bca2724",
+      "reserved_seconds": 180,
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "scene_space_observation": {
+        "artwork_api_revision": 3,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "coverage_callbacks": 10,
+        "coverage_contexts": 1,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "frames_composited": 4,
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "projectPoint": 140,
+          "sampleProjection": 235600
+        },
+        "geometry_resource_usage": {
+          "handles_reserved": 4,
+          "max_handles": 32,
+          "max_total_bytes": 16777216,
+          "meshes_created": 2,
+          "numeric_bytes_reserved": 3798576,
+          "projections_created": 2
+        },
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "objects_painted": 10,
+        "peak_work_pixels": 2764800,
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "recipes_executed": 0,
+        "runtime_revision": "scene-space-compositor-3",
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "schema": "video.scene-space-compositor-observation.v1",
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216,
+          "numeric_bytes_reserved": 0
+        },
+        "surface_helper_calls": {},
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+      },
+      "schema": "video.shared-mountain-unity-case.v1",
+      "scope": "same_layout_manual_source_study_not_original_picture_run_success",
+      "source_sha256": "1b6693b620f576dacf2b328367999a00458b8440f3f86ff825e996b153734be0",
+      "status": "rendered",
+      "stop_proven": true,
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "technical_passed": true
+    }
+  ],
+  "controller_container_exists": false,
+  "controller_study_wall_seconds": 28.96945821773261,
+  "deployments": 0,
+  "deployments_changed": [],
+  "deployments_checked": 89,
+  "executor_image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:a587a7f224d55e004d37f19c75b640371bf02b1f349deacc30a84a7a5b467d3d",
+  "formal_picture_runs_modified": false,
+  "model_calls": 0,
+  "model_tokens_added": 0,
+  "original_retained_tables": 16,
+  "original_retained_unchanged": true,
+  "runtime_capability_unchanged": true,
+  "runtime_revision": "bbb263faf64f79457b7afab8d8556205e8c34b86",
+  "schema": "video.shared-mountain-unity-study-verification.v1",
+  "settled_reservations": 2,
+  "source_only": true,
+  "status": "passed",
+  "task_id": "shared-mountain-unity-20261123-r1",
+  "total_retained_tables": 18,
+  "unknown_baseline_preserved": true,
+  "wikiskill_published": false,
+  "date": "2026-11-23",
+  "invariants": {
+    "geometry_and_raw_field_source_sha256": "92c228541a4588fae4d8b347b7dddfd8fb85d97a67a0107641f7b674dbf50ac5",
+    "plan_file_sha256": "21ef5296f64ce8bce2993e2a16cfa591714608bcee3bee04646338343e2162ae",
+    "raw_geometry_and_field_unchanged": true,
+    "plan_unchanged": true,
+    "runtime_unchanged": true,
+    "coverage_changed": true,
+    "coverage_scope": "selected_outer_edge_pixels_only_1_to_2px_fringe_original_interior_alpha_retained",
+    "extra_author_alpha_bytes": 235600,
+    "extra_author_alpha_in_helper_budget": false,
+    "source_scope": "manual_artwork_example_not_runtime_or_learning_defaults"
+  },
+  "native_evidence": "native-evidence.json",
+  "source_files_sha256": {
+    "scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
+    "scene.js": "3629650f786404ede5a57b1bd570ee944e6a9b1e2160e168d6ad4d6d0576cad4"
+  },
+  "output_files_sha256": {
+    "preview.png": "bf0c40b38a0629e723636748a72ccc48fa8a379534c4c59d6d90ab009bca2724",
+    "comparison.png": "2a1c79c4fd9982ff98b40b0fc29a38e32e99161000c5924653aa78deba24d646"
+  },
+  "visual_review": {
+    "images_viewed": true,
+    "independent_review": true,
+    "artistic_acceptance": false,
+    "improvements": [
+      "Central mountain dark ink is more connected and stable.",
+      "Foreground repeated oblique white slots/barcode pattern is weaker.",
+      "Pine tufts spread in more directions and read as rounder clusters."
+    ],
+    "limitations": [
+      "Some mountain strokes still resemble vertical wood grain.",
+      "Pale saddle regions still read as bright steps.",
+      "Large summit paper gaps and isolated dark dots remain.",
+      "Foreground rock divisions are less clear and fine grain still resembles sandpaper.",
+      "Pine tuft size and darkness remain somewhat similar."
+    ]
+  },
+  "raw_sanitized_evidence": {
+    "path": "D:\\codex-work\\operations\\shared-mountain-unity-20261123\\release\\evidence\\study-verification.json",
+    "sha256": "ebbab675da5dc63a77d0d1ca5de7cc349d6b524bc8c52f337f69f8486a8eb67b"
+  },
+  "effect_adopted": false,
+  "learning_defaults_modified": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false
+}
