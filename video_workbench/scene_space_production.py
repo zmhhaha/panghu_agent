@@ -95,7 +95,7 @@ def _author_guidance(frames, budget):
         artwork=dict(registration='window.__sceneSpaceArtwork',canvas_selector='canvas[data-scene-space-output]',
             callback='paintObject(ctx, object, world, tools)',
             optional_coverage='paintCoverage(maskCtx, object, world, tools) -> {substrate:[r,g,b]} or null',
-            surface_tools='tools.surface',local_coordinates=True,
+            surface_tools='tools.surface',geometry_tools='tools.geometry (frozen artwork API3 only)',local_coordinates=True,
             camera_owner='host',source_files=['scene.html','scene.css','scene.js']),
         instructions=[
             'Create the complete worlds and all camera decisions once for the entire film, before painting. Reuse a small appropriate number of stable worlds across shots; storyboard scene boundaries do not require new worlds.',
@@ -105,6 +105,7 @@ def _author_guidance(frames, budget):
             'World space.bounds must cover every layer view at all allowed camera positions. Use explicit depth, stable object IDs, parent-local transforms and anchors. Grid and named points assist layout; do not infer depth from image Y.',
             'Choose movement, still cameras and local dynamics from the goal. No compulsory pan, zoom, fog, birds, three-layer layout or black foreground. Keep a fixed principal viewing direction; no orbit or unseen backside reconstruction.',
             'Write each object painter once in the existing three source files. Register window.__sceneSpaceArtwork.paintObject(ctx,object,world,tools) and canvas[data-scene-space-output]. Optional paintCoverage separates solid silhouette from ink transparency; tools.surface supplies bounded local form fields. Paint in object-local coordinates; the host owns transforms, layers, masks, cache resolution and absolute-frame camera seeking.',
+            'When the frozen capability offers tools.geometry, shared XYZ triangle meshes and fixed orthographic projection can plan connected bases, ridges, shoulders and front feet before brushwork. Keep this authored geometry in scene.js, project the same body for inter-part depth visibility, and reuse its handles. This helper adds neither an orbit camera nor a new pixel backend or source-observed reconstruction.',
             'Keep visible light sources and depicted light/shadow orientation coherent with the camera. Match form rendering to the requested medium: for ink brushwork, build the mass through organized ink deposits and varied brush contacts; continuous surface shading is optional and cannot substitute for the painting style.',
             'This admitted compositor caches static object painters only: layer cache_policy must be static. Local animation uses the plan absolute-frame transform and opacity tracks, not per-frame painter mutation.',
             'Do not load a fourth source file or a remote scene asset. Do not animate cameras with requestAnimationFrame, wall-clock time or accumulated state. Recipe references are inert identity metadata, never permission to fetch or execute code.',

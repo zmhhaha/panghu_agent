@@ -1,0 +1,1070 @@
+{
+  "schema": "video.scene-space-shared-geometry-native-validation.v1",
+  "date": "2026-11-23",
+  "platform": "Windows native Chrome",
+  "scope": "actual_native_browser_nearest_triangle_depth_silhouette_and_existing_host_regressions",
+  "artwork_api_revision": 3,
+  "runtime_revision": "scene-space-compositor-3",
+  "source_digests": {
+    "video_workbench/scene_space_renderer.py": "313507fadfafab9dd0dab49b52e0af5bcd1cc649fab97aaf1bfd7b21f64d8652",
+    "video_workbench/scene_space_host.mjs": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+    "video_workbench/motion_renderer/scene_space_runtime.mjs": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+    "video_workbench/motion_renderer/scene_space_geometry.mjs": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+    "video_workbench/motion_renderer/scene_space_geometry_budget.mjs": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+    "tests/video_workbench/test_scene_space_renderer.py": "86c48824eb4aeb3162ded2e49c2c622284dec83733f76a915b51b5e87ea74e7a",
+    "tests/video_workbench/scene_space_browser_probe.mjs": "338c65bcd5d41354edc2759c10ba3a163c4abdb102083eddcf108e7d795d4646"
+  },
+  "test_runs": [
+    {
+      "command": "python -m pytest tests/video_workbench/test_scene_space_renderer.py -q (native browser configured)",
+      "passed": 36,
+      "skipped": 0,
+      "seconds": 70.56,
+      "scope": "full_suite_before_one_negative_usage_receipt_case_was_added"
+    },
+    {
+      "command": "python -m pytest tests/video_workbench/test_scene_space_renderer.py -q",
+      "passed": 34,
+      "skipped": 3,
+      "seconds": 6.64,
+      "scope": "final_non_native_suite_including_new_negative_usage_receipt_rejection"
+    }
+  ],
+  "unique_renderer_test_cases_executed": 37,
+  "native_test_functions": 3,
+  "native_browser_cases": 16,
+  "native_rendered_cases": 13,
+  "expected_rejections": 3,
+  "geometry_pixel_check": {
+    "excludes": [
+      "connected_terrain_quality",
+      "camera_orbit",
+      "artistic_acceptance"
+    ],
+    "fractional_coverage": {
+      "cache_density": 1.3,
+      "interior_column_pixels": 471,
+      "interior_rgb": [
+        180,
+        40,
+        80
+      ],
+      "transform_translation": [
+        200.25,
+        30.25
+      ],
+      "uniform_interior": true
+    },
+    "pixels": {
+      "far": [
+        30,
+        90,
+        180
+      ],
+      "near": [
+        180,
+        40,
+        80
+      ],
+      "outside": [
+        30,
+        90,
+        150
+      ]
+    },
+    "scope": "actual_nearest_triangle_depth_and_mesh_silhouette_in_static_canvas_cache",
+    "source_fixture": "two_overlapping_disconnected_triangles_in_one_indexed_mesh"
+  },
+  "old_native_pixel_samples": [
+    {
+      "name": "video",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "still",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "mask",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "ink",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "ink-paint",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "font",
+      "sample_pixel_digests_unchanged": false,
+      "comparison_inputs_match": false,
+      "reason": "Optional font asset differs; source identity matches, so font screenshot is excluded from identical-input comparison.",
+      "previous_font_asset_sha256": "aa4560dd8fe5645745fed3ffa301c3ca4d6c03cbd738145b613303961ba733b8",
+      "current_font_asset_sha256": "d79c55e68b1131eea0cc1c47be4f572d964f28c682e143db2ad09c1e4cb07a3f"
+    },
+    {
+      "name": "legacy",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "solid",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "gradient",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "opacity-mask",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    },
+    {
+      "name": "form-wash",
+      "sample_pixel_digests_unchanged": true,
+      "comparison_inputs_match": true
+    }
+  ],
+  "resources": {
+    "max_retained_numeric_bytes": 16777216,
+    "max_numeric_work_bytes": 1048576,
+    "max_reserved_handles": 32,
+    "helper_creates_canvas": false,
+    "numeric_quota_is_not_total_js_or_native_memory_measurement": true
+  },
+  "historical_compatibility": {
+    "versions": [
+      1,
+      2
+    ],
+    "evidence": "synthetic_stored_format_lookup_receipts",
+    "old_host_rerendered": false,
+    "old_tasks_rebound": false
+  },
+  "container_image_tested": false,
+  "deployed": false,
+  "model_calls": 0,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "artistic_acceptance": false,
+  "cases": [
+    {
+      "name": "video",
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "5ab6fe6e2a5975c38bae759e8ff0c4312aaeb8ccb57078e98a5e9085e3537a73",
+      "captured_frames": 96,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "b026862a1f20023368391be4cacbde090700569c491598faec5160094c3989fb"
+          },
+          {
+            "frame": 48,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          },
+          {
+            "frame": 0,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "1ed617616e8616526c4c13985b6bd149d729a900a0629cb750a9ca5334b8255f",
+        "bytes": 32828
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 103,
+        "cache_hits": 515,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 96,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 7,
+      "video_streams": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720,
+          "frame_count": 96,
+          "fps": "24/1"
+        }
+      ],
+      "full_decode_passed": true
+    },
+    {
+      "name": "still",
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "404c1c90c5799eeb9c89950602ac4d25f4d004441c611879a9221e2778ae9a81",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+        "bytes": 4472
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 7
+    },
+    {
+      "name": "mask",
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "5393478b7f864509082b5335d8fffb57b07068bb1d324ca10442901f7360389f",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2",
+        "bytes": 4449
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "3ff36ae9f7a8fac2db3d409a02a138bc9f8a755b995ce344553a5ce0398d19e5",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 7
+    },
+    {
+      "name": "ink",
+      "source_sha256": "d70aaddc531b1832a3d8d28ae5bfd1a640cc3db1ab8090f558f69344ae26e87f",
+      "scene_space_sha256": "a2ed4fc6dfa163d5eafd54c90e287767292ef8a6c81381e708b437fad96238a7",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+        "bytes": 4472
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 7
+    },
+    {
+      "name": "ink-paint",
+      "source_sha256": "93bd6259b2ed7ae0e5dbe130efd777bc456db953dce7ddddf5c12b7ae32f187e",
+      "scene_space_sha256": "e07bbcc92055c610e10f91ba7f0c5b232644a3b6ef4c3372a4ff012556d057e9",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788",
+        "bytes": 16164
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "b2aa3eb715a6b146703ae496d3fba8327dbb95e15eb00d7d0e0f90ba4fbec5e5",
+        "objects_painted": 1,
+        "frames_composited": 4,
+        "cache_hits": 4,
+        "cache_pixels": 168480,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 96,
+          "start_frame": 95
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 3
+    },
+    {
+      "name": "font",
+      "source_sha256": "e7bc6ffd2791e6f5918912721c897f64d8a506b5a73b3e238c14cbf0f90388ab",
+      "scene_space_sha256": "f6f8beed4fb8b2e03eeb9e93efd6225cadd07c8fd12be2b9b96948d3df54e9a9",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "6f964552fe30a5bd151eb69f6c49ca2581823bbf1cd89d990372087038d7e1de"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "6f964552fe30a5bd151eb69f6c49ca2581823bbf1cd89d990372087038d7e1de",
+        "bytes": 8259
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 7
+    },
+    {
+      "name": "legacy",
+      "source_sha256": "30e489a833c7be197a1c11cc1b3f0894ed04854d256c6e1b6e3ecd091c67c9fd",
+      "scene_space_sha256": "efcec35681adac81f5467b2bdc0a59a5145f69584447e3d377b1e4e62e2610bb",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "7c03793d68bac7b0ecaf37759d6357644377edd917f94c2e6fe5ba2fa96de5f1"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "7c03793d68bac7b0ecaf37759d6357644377edd917f94c2e6fe5ba2fa96de5f1",
+        "bytes": 4401
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 4
+    },
+    {
+      "name": "solid",
+      "source_sha256": "ef83c3f077f72c1de9b788c7676fcee4cbd9647f2d55f6a6aaa9e8bbcc90df7e",
+      "scene_space_sha256": "75a1fab3435659c85d0ef89ea896da2e9dd896a2b6132e5cfae48dd14e293137",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "0e4ef60b4742b6deaa76eb7317b0d07a05556c61dfa4aa5f8d624654bc68c8b3"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "0e4ef60b4742b6deaa76eb7317b0d07a05556c61dfa4aa5f8d624654bc68c8b3",
+        "bytes": 13419
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 5
+    },
+    {
+      "name": "gradient",
+      "source_sha256": "7c297c3d37ac39ebb7533fc0740844ba7df6b438884a0880d997fc2d1fdf11ff",
+      "scene_space_sha256": "0e2b00f1b90010fd5153a91e9eb7850d7841acf31ff3b512d2f1203a9b74b90a",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "c734a077b1abe71ccf3a316f50fb24b16313138e07bb09f7d1f5af841051fa0c"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "c734a077b1abe71ccf3a316f50fb24b16313138e07bb09f7d1f5af841051fa0c",
+        "bytes": 13956
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 5
+    },
+    {
+      "name": "opacity-mask",
+      "source_sha256": "ef83c3f077f72c1de9b788c7676fcee4cbd9647f2d55f6a6aaa9e8bbcc90df7e",
+      "scene_space_sha256": "3a66b40688b4414b2f0eab3ddd3521387d3a41ec0ea1d24b164c6994927cf3d8",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "a46225ba912c9c5b6002aa52a045ed7d245ec38e218cbe89d21860bff77d1d9b"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "a46225ba912c9c5b6002aa52a045ed7d245ec38e218cbe89d21860bff77d1d9b",
+        "bytes": 8149
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "aabc2f902b32be6eeabfc16da0c77ef35e425b69cea285a7c5fd0156d2bd04c2",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 5
+    },
+    {
+      "name": "form-wash",
+      "source_sha256": "d7eabee36782cbd5d6bfcf0af446041085bd03410470791a87510a4d703a00e3",
+      "scene_space_sha256": "036923f92ec2013a00d3bff2660f75472bc59781c59d2f62ecf712246080bab2",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "106033227133215d5cb48e09e1893d2f1b41c6c166b3e4eb5f0abec745b2f896"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "106033227133215d5cb48e09e1893d2f1b41c6c166b3e4eb5f0abec745b2f896",
+        "bytes": 118589
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1,
+          "paintSurfaceWash": 1
+        },
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 5760,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 5
+    },
+    {
+      "name": "async",
+      "captured_frames": 0,
+      "expected_rejection": "scene_space_async_coverage_not_admitted"
+    },
+    {
+      "name": "options",
+      "captured_frames": 0,
+      "expected_rejection": "scene_space_coverage_options_invalid"
+    },
+    {
+      "name": "resize",
+      "captured_frames": 0,
+      "expected_rejection": "scene_space_coverage_resized_cache"
+    },
+    {
+      "name": "mesh-depth",
+      "source_sha256": "73fee43d672cbd18661b6435f5acf0ad98fa4984fbaebaaa2b36f4ed15010c9f",
+      "scene_space_sha256": "d9b25a259b93e022ef5e6916e704494e2a101c23236db21bca75e25dfdb7e872",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "c95fad77036870a2f9b501d9cfeb3e3ccb20d94bdedd3f13e6057fa413db2881"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "c95fad77036870a2f9b501d9cfeb3e3ccb20d94bdedd3f13e6057fa413db2881",
+        "bytes": 4797
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createMesh": 1,
+          "projectMesh": 1,
+          "projectPoint": 2,
+          "sampleProjection": 18750,
+          "paintCoverage": 1
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 1,
+          "projections_created": 1,
+          "handles_reserved": 2,
+          "numeric_bytes_reserved": 225216,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 5
+    },
+    {
+      "name": "fractional-coverage",
+      "source_sha256": "73fee43d672cbd18661b6435f5acf0ad98fa4984fbaebaaa2b36f4ed15010c9f",
+      "scene_space_sha256": "9cbbe46c774fc7299907549b12a82cd21b611edf9c541960ba2565534b1ec6b9",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "e6c677b87dc82821fd97173d537b95f2543d1dd49ea1bdf276cffd08e564a9ae"
+          }
+        ]
+      },
+      "output": {
+        "sha256": "e6c677b87dc82821fd97173d537b95f2543d1dd49ea1bdf276cffd08e564a9ae",
+        "bytes": 9790
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "b9711d862d48e9ba83796c6ecff57f06c1636d45d3a6ce74e631705a2f4544d4",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1428600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createMesh": 1,
+          "projectMesh": 1,
+          "projectPoint": 2,
+          "paintCoverage": 1
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 1,
+          "projections_created": 1,
+          "handles_reserved": 2,
+          "numeric_bytes_reserved": 225216,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "native_contexts": 5
+    }
+  ],
+  "old_native_comparable_cases": 10,
+  "old_native_comparable_pixel_samples_all_unchanged": true
+}

@@ -1,7 +1,8 @@
 // Release-owned compositor. Data carries geometry; already admitted scene code
 // supplies painters. No recipe_ref, URL, script or external resource is resolved.
 import * as surfaceTools from './scene_space_surface.mjs';
-export const SCENE_SPACE_RUNTIME_REVISION='scene-space-compositor-2';
+import * as geometryTools from './scene_space_geometry.mjs';
+export const SCENE_SPACE_RUNTIME_REVISION='scene-space-compositor-3';
 const check=(ok,code='scene_space_runtime_invalid')=>{if(!ok)throw Error(code);};
 const copy=value=>JSON.parse(JSON.stringify(value));
 const finite=value=>typeof value==='number'&&Number.isFinite(value);
@@ -69,12 +70,16 @@ export function createSceneSpaceRenderer({canvas,binding,paintObject,paintCovera
  const caches=new Map(),worlds=new Map(plan.worlds.map(w=>[w.id,w]));let disposed=false;
  const metrics={schema:'video.scene-space-compositor-observation.v1',plan_sha256:binding.frozen.plan_sha256,
   objects_painted:0,frames_composited:0,cache_hits:0,cache_pixels:0,peak_work_pixels:binding.scratch.pixels+viewport.width*viewport.height,
-  coverage_callbacks:0,coverage_objects:0,coverage_peak_pixels:0,coverage_contexts:0,surface_helper_calls:{},
+  coverage_callbacks:0,coverage_objects:0,coverage_peak_pixels:0,coverage_contexts:0,surface_helper_calls:{},geometry_helper_calls:{},
   recipes_executed:0,scope:'host_compositor_execution_not_visual_acceptance',runtime_revision:SCENE_SPACE_RUNTIME_REVISION};
  const helperApi=Object.freeze(Object.fromEntries(Object.entries(surfaceTools).map(([name,value])=>[name,
   typeof value==='function'?(...args)=>{const count=(metrics.surface_helper_calls[name]??0)+1;
    check(Number.isSafeInteger(count),'scene_space_surface_call_count_exceeded');metrics.surface_helper_calls[name]=count;
-   return value(...args);}:value]))),tools=Object.freeze({surface:helperApi});
+   return value(...args);}:value])));
+ const geometryApi=Object.freeze(Object.fromEntries(Object.entries(geometryTools).map(([name,value])=>[name,
+  typeof value==='function'?(...args)=>{const count=(metrics.geometry_helper_calls[name]??0)+1;
+   check(Number.isSafeInteger(count),'scene_space_geometry_call_count_exceeded');metrics.geometry_helper_calls[name]=count;
+   return value(...args);}:value]))),tools=Object.freeze({surface:helperApi,geometry:geometryApi});
  let coverageCanvas,coverageContext;
  for(const row of binding.object_caches){const world=worlds.get(row.world_id),obj=world.objects.find(o=>o.id===row.object_id);
   check(obj&&Number.isInteger(row.width)&&Number.isInteger(row.height)&&row.width>0&&row.height>0);
@@ -139,7 +144,8 @@ export function createSceneSpaceRenderer({canvas,binding,paintObject,paintCovera
  function dispose(){if(disposed)return;disposed=true;for(const surface of caches.values()){surface.width=0;surface.height=0;}
   caches.clear();scratch.width=0;scratch.height=0;metrics.cache_pixels=0;}
  return Object.freeze({renderFrame,seek:seconds=>{check(finite(seconds));return renderFrame(binding.frame_range.start_frame+Math.round(seconds*24));},
-  get observation(){return copy({...metrics,surface_field_usage:surfaceTools.surfaceResourceUsage()});},dispose});
+  get observation(){return copy({...metrics,surface_field_usage:surfaceTools.surfaceResourceUsage(),
+   geometry_resource_usage:geometryTools.geometryResourceUsage()});},dispose});
 }
 
 // Same upper semantics for adapters. These helpers grant no engine, native

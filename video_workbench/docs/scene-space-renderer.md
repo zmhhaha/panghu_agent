@@ -2,8 +2,9 @@
 
 阶段 2 新增独立的 `SceneSpaceRenderer` 和 `scene_space_host.mjs`。图片、视频学习和
 效果渲染在收到独立 `scene_space` 计划时选择新路线；没有计划的旧调用继续使用原宿主。
-历史操作只查其原输入和宿主字节，不将旧任务改为新场景。新宿主、公共合成器和
-计划 sidecar 分别以 SHA-256 固定，source 仍保持原有文件与 strategy 合同。
+历史操作只查其原输入和宿主字节，不将旧任务改为新场景。新宿主、公共合成器、
+局部体面与共享几何 helper 及预算模块和计划 sidecar 分别以 SHA-256 固定，source
+仍保持原有文件与 strategy 合同。
 
 ## 绘画与镜头分工
 
@@ -29,10 +30,10 @@ FontFace，避免缓存首帧文字的回退字体。宿主根据全片最大投
 初版运行准入仅支持 `cache_policy: static`；`dynamic` 和 `none` 会在昂贵绘画前拒绝。
 公共世界仍可以描述其他策略，不能用描述本身扩大本宿主的运行能力。
 
-### 实体覆盖与局部体面工具（绘画 API 第 2 版）
+### 实体覆盖与局部体面工具（绘画 API 第 3 版）
 
-新的冻结能力包含 `artwork_api_revision: 2`、体面 helper 和其 canonical 预算模块的
-独立 SHA。世界、计划及方法的 v1 字段没有增加；对象轮廓、山脊、谷线及笔墨参数
+新的冻结能力包含 `artwork_api_revision: 3`、体面和共享几何 helper 及其 canonical
+预算模块的独立 SHA。世界、计划及方法的 v1 字段没有增加；对象轮廓、山脊、谷线及笔墨参数
 仍保存在作者源代码的对象局部数据表中。第四参数 `tools.surface` 提供版本固定的
 局部 2.5D 工具，具体 API 见 `scene_space_surface.mjs`。它们表达作者生成的体面假设，
 不是从来源单图观测到的标定三维几何或物理光照。
@@ -69,6 +70,53 @@ raise API。普通作者 JS、浏览器 allocator 和 Canvas native 开销仍受
 预演记录 `coverage_callbacks`、`coverage_objects`、临时蒙版峰值像素、helper 调用
 计数和数值缓冲预留。它们证明执行及资源边界，不等同轮廓、体面或水墨艺术质量通过。
 旧操作仍使用自身保存的宿主、请求及证据做只读恢复，不补写新 helper 计量。
+
+### 共享 XYZ 山体与固定投影
+
+`tools.geometry` 在绘画前将同一份作者定义的 XYZ 网格转换为深度、法线、表面走势和
+实体轮廓指引。`createTerrainMesh` 根据 XZ 网格及高度表创建连通的三角地形，供共根、
+重叠的峰群使用；它是高度场表面，不能表达悬挑洞穴或声称封闭体积。
+`createMesh` 可直接接收顶点与三角形索引。拓扑只报告连通分量，不代替封闭流形验证。
+
+```javascript
+const g = tools.geometry;
+const mesh = g.createTerrainMesh({
+  bounds: {x: -3, z: -2, width: 6, depth: 4},
+  grid: {columns: 3, rows: 3},
+  heights: [0, .2, 0, .3, 2.5, .8, 0, .6, 0]
+});
+const projection = g.projectMesh(mesh, {
+  width: 256, height: 192,
+  camera: {position: [6, 5, 8], target: [0, 1, 0], viewHeight: 6}
+});
+const sample = g.sampleProjection(projection, x, y, {bounds: object.bounds});
+// sample.covered/depth/position/normal/flow/flow_valid/triangle 指导自定笔墨。
+// 在 paintCoverage 回调中，用相同投影建立实体遮挡：
+g.paintCoverage(maskCtx, projection, {bounds: object.bounds});
+```
+
+相机为固定正交视点，CPU 深度检测保留每个投影像素最近的三角形；笔墨仍由作者的
+Canvas 回调画出。`projectPoint` 可检查 XYZ 点投影及其可见性，避免把背后结构画到
+前面；`sampleProjection` 只返回采样像素中心的可见表面。`paintCoverage` 把扫描行
+轮廓合成一个路径后填充一次，尊重调用方变换、裁切和 alpha，避免非整数缓存密度下
+逐行填充的 alpha 细缝。低分辨率投影边界仍可能有阶梯，不能把采样指引当成最终笔触。
+
+新宿主仍一次画好对象缓存，再用原计划的平移、推拉和视差复用。此扩展不授予
+Three.js 新后端准入，不从参考单图重建真实三维，也不增加绕山、旋转相机或显露
+原视点背面等能力。若每座峰各画一个缓存，其相互穿插仍需作者安排；需要逐面深度
+判定的共根峰群应放在同一份网格及投影中绘制。详见 `scene-shared-geometry.md`。
+
+几何 helper 不创建 Canvas。每页面 realm 累计数值缓冲上限为 16 MiB，单次数值
+工作空间预留 1 MiB，网格与投影合计最多 32 次 handle 预留；失败预留不退款。
+不同 URL fragment 共享 canonical 预算。单网格最多 16,384 顶点、32,768 三角形，
+地形网格每轴最多 128 点；单投影边长最多 1,024、总像素最多 262,144，三角形包围盒
+累计像素测试最多 33,554,432 次。预检另留几何数值额度 17 MiB，不增加原生 Canvas
+上下文；数值额度不声称覆盖所有 JS/native 内存，容器内存与执行时限仍独立约束。
+
+预演记录 `geometry_helper_calls` 与 `geometry_resource_usage`（成功网格/投影数、
+已预留 handles 和数值字节及上限）。新请求同时固定 helper 与预算字节，读取结果
+复核挂载文件、回执和计量。历史 API 第 1、2 版结果按各自保存的格式只读查阅，
+不会重绑为第 3 版；兼容性测试使用旧格式的合成回执，并不声称重新执行旧宿主。
 
 渲染输入将源码身份、冻结计划、全片对象分辨率、最大缓存像素、临时表面、执行帧
 范围和宿主/runtime 摘要共同固定。不同执行区间引用同一份全片缓存分辨率与绝对帧，
@@ -149,3 +197,12 @@ wash 实测明暗范围为 130，所测网格节点两侧 RGB 最大跳变为 2�
 场景的采样像素摘要保持一致。源码摘要、实际像素和各场景记录见
 `evidence/scene-space-coverage-native-20261123.json`。这些记录验证此组样例的覆盖、
 连续明暗及重复求值，不代替山水画艺术评价或其他网格、镜头、光照配置的检验。
+
+同日的共享 XYZ 几何扩展验证了 34 项合同/预算/恢复回归和 3 组真实浏览器验收。
+浏览器共 16 个场景：13 个实际输出、3 个预期拒绝。新样例用同一索引网格中的两块
+前后重叠三角面验证最近面取舍、点可见性、投影采样及真实轮廓覆盖；另一场景以
+1.3 倍缓存密度和小数位移检查连续 471 个内部像素，未见扫描行 alpha 缝。
+10 个与前次输入一致的旧场景采样摘要保持一致；字体场景使用了不同字体资产，
+只比较其加载与重复求值检查，不将其截图纳入相同输入比较。证据、实际像素和
+测试批次边界见 `evidence/scene-space-shared-geometry-native-20261123.json`。
+本组几何样例刻意采用两个不连通三角面以隔离深度检测，不证明共根地形的艺术质量。

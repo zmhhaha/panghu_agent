@@ -11,11 +11,12 @@ import os
 
 import pytest
 
-from agent_service.contracts import ServiceError, canonical_bytes
+from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles.video_animation_create import source_sha256
 from video_workbench.scene_space_plan import compile_evaluator, freeze_plan
 from video_workbench.scene_space_renderer import (
     HOST,RUNTIME,SURFACE_RUNTIME,SURFACE_BUDGET,SURFACE_WORK_BYTES,SURFACE_RETAINED_BYTES,MAX_SURFACE_FIELDS,
+    GEOMETRY_RUNTIME,GEOMETRY_BUDGET,GEOMETRY_WORK_BYTES,GEOMETRY_RETAINED_BYTES,MAX_GEOMETRY_HANDLES,
     SceneSpaceRenderer,prepare_scene_render,render_capability,
 )
 from video_workbench import animation_method_renderer as execution
@@ -88,12 +89,17 @@ def test_binding_bounds_resolution_before_any_painter_runs(plan):
     assert render['schema']=='video.scene-space-render-binding.v1'
     assert render['runtime_sha256']==hashlib.sha256(RUNTIME.read_bytes()).hexdigest()
     assert render['surface_runtime_sha256']==hashlib.sha256(SURFACE_RUNTIME.read_bytes()).hexdigest()
-    assert render['artwork_api_revision']==2
+    assert render['artwork_api_revision']==3
+    assert render['geometry_runtime_sha256']==hashlib.sha256(GEOMETRY_RUNTIME.read_bytes()).hexdigest()
+    assert render['geometry_budget_sha256']==hashlib.sha256(GEOMETRY_BUDGET.read_bytes()).hexdigest()
     assert render['coverage']['max_mask_pixels']==max(row['pixels'] for row in render['object_caches'])
     assert render['native_context_budget']==len(render['object_caches'])+3
     assert render['surface_budget_sha256']==hashlib.sha256(SURFACE_BUDGET.read_bytes()).hexdigest()
     assert render['surface_retained_bytes']==SURFACE_RETAINED_BYTES
-    assert render['temporary_bytes']==4*(render['scratch']['pixels']+1280*720+render['coverage']['max_mask_pixels'])+SURFACE_WORK_BYTES+SURFACE_RETAINED_BYTES
+    assert render['geometry_retained_bytes']==GEOMETRY_RETAINED_BYTES
+    assert render['geometry_work_bytes']==GEOMETRY_WORK_BYTES
+    assert render['temporary_bytes']==(4*(render['scratch']['pixels']+1280*720+render['coverage']['max_mask_pixels'])
+        +SURFACE_WORK_BYTES+SURFACE_RETAINED_BYTES+GEOMETRY_WORK_BYTES+GEOMETRY_RETAINED_BYTES)
     assert render['total_cached_pixels']==sum(row['pixels'] for row in render['object_caches'])
     assert len(render['object_caches'])==len(plan['worlds'][0]['objects'])
     assert all(row['width']>0 and row['height']>0 for row in render['object_caches'])
@@ -125,7 +131,7 @@ def test_coverage_and_surface_work_are_preflighted_before_source_execution(monke
 def test_surface_dependency_is_pinned_in_the_request_and_frozen_capability(renderer,plan):
     cap=render_capability()
     assert cap['surface_runtime_sha256']==hashlib.sha256(SURFACE_RUNTIME.read_bytes()).hexdigest()
-    assert cap['artwork_api_revision']==2
+    assert cap['artwork_api_revision']==3
     document=dict(constraints=dict(width=1280,height=720,scene_space_capability=deepcopy(cap)),assets={})
     binding=renderer.validate_request('surface-pin',source(),document,scene_space=plan)
     assert binding['request']['surface_runtime_sha256']==cap['surface_runtime_sha256']
@@ -257,7 +263,8 @@ def synthetic_execution(calls):
         raw=image.getvalue();(work/'output.png').write_bytes(raw)
         receipt=dict(schema='video.scene-space-render-receipt.v1',status='rendered',
             request_identity=request['identity'],request_sha256=hashlib.sha256(canonical_bytes(request)).hexdigest(),
-            **{k:request[k] for k in ('host_sha256','scene_runtime_sha256','surface_runtime_sha256','surface_budget_sha256','artwork_api_revision','sidecar_sha256','image_digest')},
+            **{k:request[k] for k in ('host_sha256','scene_runtime_sha256','surface_runtime_sha256','surface_budget_sha256',
+                'geometry_runtime_sha256','geometry_budget_sha256','artwork_api_revision','sidecar_sha256','image_digest')},
             output_sha256=hashlib.sha256(raw).hexdigest(),output_bytes=len(raw),captured_frames=1,
             measured_render_seconds=.25,sample_frames=[],
             checks=dict(repeat_passed=True,reverse_passed=True,reload_passed=True),
@@ -265,8 +272,11 @@ def synthetic_execution(calls):
                 dict(kind='2d',connected=index==0,visible=index==0,width=1280,height=720) for index in range(len(sidecar['object_caches'])+2)]),
             project_runtime=dict(core_sha256=request['hyperframes_core_sha256'],project_sha256=request['project_sha256'],core_seek_count=1),
             scene_space_observation=dict(plan_sha256=sidecar['frozen']['plan_sha256'],recipes_executed=0,
-                objects_painted=len(sidecar['object_caches']),runtime_revision='scene-space-compositor-2',
-                surface_runtime_sha256=request['surface_runtime_sha256'],surface_budget_sha256=request['surface_budget_sha256'],artwork_api_revision=2,
+                objects_painted=len(sidecar['object_caches']),runtime_revision='scene-space-compositor-3',
+                surface_runtime_sha256=request['surface_runtime_sha256'],surface_budget_sha256=request['surface_budget_sha256'],artwork_api_revision=3,
+                geometry_runtime_sha256=request['geometry_runtime_sha256'],geometry_budget_sha256=request['geometry_budget_sha256'],
+                geometry_helper_calls={},geometry_resource_usage=dict(meshes_created=0,projections_created=0,handles_reserved=0,
+                    numeric_bytes_reserved=0,max_handles=MAX_GEOMETRY_HANDLES,max_total_bytes=GEOMETRY_RETAINED_BYTES),
                 coverage_callbacks=0,coverage_objects=0,coverage_contexts=0,coverage_peak_pixels=0,surface_helper_calls={},
                 surface_field_usage=dict(fields_created=0,fields_reserved=0,numeric_bytes_reserved=0,
                     max_fields=MAX_SURFACE_FIELDS,max_total_field_bytes=SURFACE_RETAINED_BYTES)))
@@ -318,6 +328,8 @@ def test_changed_bound_source_is_rejected_after_render(renderer,plan,monkeypatch
 @pytest.mark.parametrize('name,error',[
     ('scene_space_surface.mjs','surface_runtime_changed'),
     ('scene_space_surface_budget.mjs','surface_budget_changed'),
+    ('scene_space_geometry.mjs','geometry_runtime_changed'),
+    ('scene_space_geometry_budget.mjs','geometry_budget_changed'),
 ])
 def test_changed_surface_helper_is_rejected_even_after_a_successful_render(renderer,plan,monkeypatch,name,error):
     calls=[];monkeypatch.setattr(execution,'execute_method_render',synthetic_execution(calls))
@@ -334,6 +346,89 @@ def test_direct_author_offer_pins_its_surface_helper_before_claim(renderer,plan)
     with pytest.raises(ServiceError,match='frozen_surface_runtime_changed'):
         renderer.validate_request('direct-helper-drift',source(),dict(constraints=constraints,assets=constraints['assets']),scene_space=plan)
     assert renderer.lookup('direct-helper-drift') is None
+
+
+def test_geometry_dependencies_and_budget_are_bound_before_claim(renderer,plan):
+    cap=render_capability()
+    assert cap['artwork_extensions']['geometry']=='tools.geometry'
+    assert cap['geometry_runtime_sha256']==hashlib.sha256(GEOMETRY_RUNTIME.read_bytes()).hexdigest()
+    assert cap['geometry_budget_sha256']==hashlib.sha256(GEOMETRY_BUDGET.read_bytes()).hexdigest()
+    assert cap['limits']['max_geometry_retained_bytes']==GEOMETRY_RETAINED_BYTES
+    assert cap['limits']['max_geometry_work_bytes']==GEOMETRY_WORK_BYTES
+    for key in ['geometry_runtime_sha256','geometry_budget_sha256']:
+        changed=deepcopy(cap);changed[key]='0'*64
+        document=dict(constraints=dict(width=1280,height=720,scene_space_capability=changed),assets={})
+        with pytest.raises(ServiceError,match='frozen_runtime_changed'):
+            renderer.validate_request('geometry-cap-'+key,source(),document,scene_space=plan)
+        constraints=renderer.authoring_constraints();constraints.update(width=1280,height=720)
+        constraints['runtime_identity'][key]='0'*64
+        with pytest.raises(ServiceError,match='frozen_geometry_runtime_changed'):
+            renderer.validate_request('geometry-offer-'+key,source(),dict(constraints=constraints,assets=constraints['assets']),scene_space=plan)
+    assert not renderer.root.exists()
+
+
+@pytest.mark.parametrize('change,error',[
+    ('receipt','geometry_receipt_changed'),('usage','geometry_consumption_unproven'),
+    ('negative-meshes','geometry_consumption_unproven'),
+])
+def test_geometry_receipt_and_resource_usage_are_verified(renderer,plan,monkeypatch,change,error):
+    calls=[];execute=synthetic_execution(calls)
+    def corrupt(directory):
+        execute(directory)
+        p=directory/'work/render-receipt.json';receipt=json.loads(p.read_bytes())
+        if change=='receipt':receipt['geometry_budget_sha256']='0'*64
+        elif change=='negative-meshes':
+            receipt['scene_space_observation']['geometry_resource_usage'].update(meshes_created=-1,projections_created=1)
+        else:receipt['scene_space_observation']['geometry_resource_usage']['handles_reserved']=MAX_GEOMETRY_HANDLES+1
+        p.write_bytes(canonical_bytes(receipt))
+    monkeypatch.setattr(execution,'execute_method_render',corrupt)
+    with pytest.raises(ServiceError,match=error):
+        renderer.render('geometry-proof-'+change,source(),dict(constraints=dict(width=1280,height=720),assets={}),scene_space=plan)
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('revision',[1,2])
+def test_historical_v1_v2_formats_remain_readable_without_geometry_rebinding(renderer,plan,monkeypatch,revision):
+    """Inert historical-format fixture; no claim of running old host pixels."""
+    calls=[];execute=synthetic_execution(calls)
+    def legacy_format(directory):
+        execute(directory)
+        binding=json.loads((directory/'binding.json').read_bytes());request=binding['request'];sidecar=binding['scene_space']
+        geometry_keys=['geometry_runtime_sha256','geometry_budget_sha256','geometry_work_bytes','geometry_retained_bytes','geometry_max_handles']
+        for obj in [request,sidecar]:
+            for key in geometry_keys:obj.pop(key,None)
+            obj['artwork_api_revision']=revision
+        sidecar['temporary_bytes']-=GEOMETRY_RETAINED_BYTES+GEOMETRY_WORK_BYTES
+        receipt_path=directory/'work/render-receipt.json';receipt=json.loads(receipt_path.read_bytes());obs=receipt['scene_space_observation']
+        for obj in [receipt,obs]:
+            obj.pop('geometry_runtime_sha256',None);obj.pop('geometry_budget_sha256',None);obj['artwork_api_revision']=revision
+        obs.pop('geometry_helper_calls');obs.pop('geometry_resource_usage');obs['runtime_revision']='scene-space-compositor-'+str(revision)
+        for name in ['scene_space_geometry.mjs','scene_space_geometry_budget.mjs']:(directory/'input'/name).unlink()
+        if revision==1:
+            surface_keys=['surface_runtime_sha256','surface_budget_sha256','artwork_api_revision']
+            for obj in [request,sidecar,receipt,obs]:
+                for key in surface_keys:obj.pop(key,None)
+            for key in ['surface_work_bytes','surface_retained_bytes','surface_max_fields','coverage','native_context_budget']:sidecar.pop(key,None)
+            sidecar['temporary_bytes']-=SURFACE_WORK_BYTES+SURFACE_RETAINED_BYTES
+            for key in ['surface_helper_calls','surface_field_usage','coverage_callbacks','coverage_objects','coverage_contexts','coverage_peak_pixels']:obs.pop(key,None)
+            for name in ['scene_space_surface.mjs','scene_space_surface_budget.mjs']:(directory/'input'/name).unlink()
+        sidecar.pop('sha256');sidecar['sha256']=digest(sidecar)
+        request['sidecar_sha256']=hashlib.sha256(canonical_bytes(sidecar)).hexdigest()
+        request.pop('identity');request['identity']=digest(request);binding['request_sha256']=digest(request)
+        receipt.update(request_identity=request['identity'],request_sha256=binding['request_sha256'],sidecar_sha256=request['sidecar_sha256'])
+        outcome_path=directory/'render-outcome.json';outcome=json.loads(outcome_path.read_bytes())
+        outcome.update(request_identity=request['identity'],request_sha256=binding['request_sha256'])
+        (directory/'binding.json').write_bytes(canonical_bytes(binding));(directory/'input/request.json').write_bytes(canonical_bytes(request))
+        (directory/'input/scene-space.json').write_bytes(canonical_bytes(sidecar));receipt_path.write_bytes(canonical_bytes(receipt));outcome_path.write_bytes(canonical_bytes(outcome))
+        with renderer.owner._connect(write=True) as db:
+            db.execute('UPDATE '+execution._TABLE+' SET binding=?,binding_sha256=? WHERE operation_id=?',
+                (canonical_bytes(binding),digest(binding),binding['operation_id']));db.commit()
+    monkeypatch.setattr(execution,'execute_method_render',legacy_format)
+    operation='old-format-'+str(revision)
+    result=renderer.render(operation,source(),dict(constraints=dict(width=1280,height=720),assets={}),scene_space=plan)
+    assert result['technical_passed'] and result['stop_proven']
+    assert renderer.lookup(operation)==result and len(calls)==1
+    assert 'geometry_resource_usage' not in result['runtime']['scene_space']
 
 
 def test_expected_request_is_checked_before_any_claim_or_execution(renderer,plan,monkeypatch):
@@ -634,3 +729,83 @@ def test_native_browser_independent_coverage_and_surface_tools(renderer,tmp_path
     (tmp_path/'coverage-pixel-check.json').write_bytes(canonical_bytes(dict(
         scope='actual_coverage_shape_gradient_local_mask_and_single_application_of_object_layer_alpha',pixels=pixels,
         source_reference='same_faint_pigment_and_background_for_each_case',artistic_acceptance=False)))
+
+
+def test_native_browser_shared_mesh_depth_and_silhouette(renderer,tmp_path):
+    """Real pixels use one mesh's nearest face, not component draw order."""
+    required=['SCENE_SPACE_BROWSER','SCENE_SPACE_PLAYWRIGHT_PACKAGE','SCENE_SPACE_HYPERFRAMES_DIST']
+    if not all(os.environ.get(name) for name in required):pytest.skip('Native browser acceptance not configured')
+    node=shutil.which('node');ffmpeg=shutil.which('ffmpeg');ffprobe=shutil.which('ffprobe')
+    if not all((node,ffmpeg,ffprobe)):pytest.skip('Native Node/FFmpeg required')
+    from PIL import Image
+    art=source()
+    art['files']['scene.js']='''let projection;
+window.__sceneSpaceArtwork={paintObject(ctx,object,world,tools){
+ const b=object.bounds;
+ if(object.id==='background'){ctx.fillStyle='rgb(30,90,150)';ctx.fillRect(0,0,b.width,b.height);return;}
+ if(!Object.isFrozen(tools)||!Object.isFrozen(tools.geometry))throw Error('geometry_tools_not_frozen');
+ const g=tools.geometry,mesh=g.createMesh({
+  vertices:[[-2,-2,0],[2,-2,0],[0,2,0],[-.8,-.8,2],[.8,-.8,2],[0,.8,2]],
+  triangles:[[0,1,2],[3,4,5]]});
+ projection=g.projectMesh(mesh,{width:150,height:125,
+  camera:{position:[0,0,10],target:[0,0,0],viewHeight:5}});
+ const near=g.projectPoint(projection,[0,0,2],{bounds:b}),far=g.projectPoint(projection,[0,0,0],{bounds:b});
+ if(!near.visible||far.visible||near.triangle!==1||far.triangle!==1)throw Error('nearest_face_visibility_failed');
+ if(world.style==='fractional-coverage-test'){ctx.fillStyle='rgb(180,40,80)';ctx.fillRect(b.x,b.y,b.width,b.height);return;}
+ for(let row=0;row<125;row++)for(let col=0;col<150;col++){
+  const x=b.x+(col+.5)*4,y=b.y+(row+.5)*4,sample=g.sampleProjection(projection,x,y,{bounds:b});
+  if(!sample.covered)continue;
+  if(!sample.position.every(Number.isFinite)||!sample.normal.every(Number.isFinite))throw Error('mesh_guide_invalid');
+  ctx.fillStyle=sample.triangle===1?'rgb(180,40,80)':'rgb(30,90,180)';ctx.fillRect(x-2,y-2,4,4);
+ }
+},paintCoverage(ctx,object,world,tools){
+ if(object.id!=='pale-mountain')return null;
+ const report=tools.geometry.paintCoverage(ctx,projection,{bounds:object.bounds});
+ if(report.covered_pixels!==projection.covered_pixels)throw Error('mesh_silhouette_mismatch');
+ return {substrate:[240,235,220]};
+}};'''
+    art['source_sha256']=source_sha256({key:art[key] for key in ('engine','strategy','files')})
+    cases=[]
+    for name in ['mesh-depth','fractional-coverage']:
+        value=coverage_plan()
+        if name=='fractional-coverage':
+            world=value['worlds'][0];world['style']='fractional-coverage-test'
+            world['objects'][-1]['transform'].update(x=200.25,y=30.25,scale_x=1.3,scale_y=1.3)
+        binding=renderer.validate_request('shared-'+name,art,dict(constraints=dict(width=1280,height=720),assets={}),scene_space=value)
+        path=tmp_path/(name+'.json');path.write_bytes(canonical_bytes(binding))
+        cases.append(dict(name=name,binding=str(path),output=str(tmp_path/name),assets={}))
+    config=dict(playwright_package=os.environ[required[1]],browser=os.environ[required[0]],
+        hyperframes_dist=os.environ[required[2]],host=str(HOST),scene_runtime=str(RUNTIME),
+        engine_runtime=str(ROOT/'video_workbench/motion_renderer/engine_runtime.mjs'),
+        project_runtime=str(ROOT/'video_workbench/motion_renderer/hyperframes_project.mjs'),
+        ffmpeg=ffmpeg,ffprobe=ffprobe,cases=cases,
+        output=str(tmp_path/'geometry-summary.json'))
+    path=tmp_path/'geometry-config.json';path.write_bytes(canonical_bytes(config))
+    subprocess.run([node,str(Path(__file__).with_name('scene_space_browser_probe.mjs')),str(path)],check=True,timeout=120)
+    results={row['name']:row for row in json.loads((tmp_path/'geometry-summary.json').read_bytes())['results']}
+    for name,result in results.items():
+        assert all(result['checks'][key] for key in ['repeat_passed','reverse_passed','reload_passed'])
+        observation=result['scene_space_observation']
+        assert observation['artwork_api_revision']==3 and observation['runtime_revision']=='scene-space-compositor-3'
+        assert observation['geometry_runtime_sha256']==hashlib.sha256(GEOMETRY_RUNTIME.read_bytes()).hexdigest()
+        assert observation['geometry_budget_sha256']==hashlib.sha256(GEOMETRY_BUDGET.read_bytes()).hexdigest()
+        assert observation['geometry_helper_calls']==dict(createMesh=1,projectMesh=1,projectPoint=2,paintCoverage=1,
+            **(dict(sampleProjection=150*125) if name=='mesh-depth' else {}))
+        usage=observation['geometry_resource_usage']
+        assert usage['meshes_created']==1 and usage['projections_created']==1 and usage['handles_reserved']==2
+        assert 0<usage['numeric_bytes_reserved']<=GEOMETRY_RETAINED_BYTES
+        assert observation['surface_helper_calls']=={} and observation['surface_field_usage']['fields_created']==0
+        assert observation['objects_painted']==2 and observation['coverage_objects']==1
+    with Image.open(tmp_path/'mesh-depth/output.png') as image:
+        rgb=image.convert('RGB')
+        pixels=dict(near=rgb.getpixel((500,350)),far=rgb.getpixel((400,450)),outside=rgb.getpixel((300,350)))
+    assert pixels==dict(near=(180,40,80),far=(30,90,180),outside=(30,90,150))
+    with Image.open(tmp_path/'fractional-coverage/output.png') as image:
+        rgb=image.convert('RGB');column=[rgb.getpixel((590,y)) for y in range(120,591)]
+    assert set(column)=={(180,40,80)}  # One union fill has no AA row seams at density 1.3.
+    (tmp_path/'geometry-pixel-check.json').write_bytes(canonical_bytes(dict(
+        scope='actual_nearest_triangle_depth_and_mesh_silhouette_in_static_canvas_cache',pixels=pixels,
+        fractional_coverage=dict(cache_density=1.3,transform_translation=[200.25,30.25],
+            interior_column_pixels=len(column),interior_rgb=list(column[0]),uniform_interior=True),
+        source_fixture='two_overlapping_disconnected_triangles_in_one_indexed_mesh',
+        excludes=['connected_terrain_quality','camera_orbit','artistic_acceptance'])))

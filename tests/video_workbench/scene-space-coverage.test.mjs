@@ -44,10 +44,10 @@ test('capture drains and verifies a document before navigation retires its scrip
  const chromium={async launch(){return{async newContext(){return context;},async close(){}};}};
  const request={schema:'video.scene-space-render-request.v1',engine:'canvas',static:true,
   scene_runtime_sha256:'runtime',source_sha256:'source',project:{},constraints:{width:1280,height:720},
-  surface_runtime_sha256:sha,surface_budget_sha256:sha,artwork_api_revision:2,
+  surface_runtime_sha256:sha,surface_budget_sha256:sha,geometry_runtime_sha256:sha,geometry_budget_sha256:sha,artwork_api_revision:3,
   drawing_libraries:{'ink-landscape':library},max_frame_bytes:1024,project_sha256:'project'};
  const binding={schema:'video.scene-space-render-binding.v1',backend:'canvas',runtime_sha256:'runtime',
-  surface_runtime_sha256:sha,surface_budget_sha256:sha,artwork_api_revision:2,
+  surface_runtime_sha256:sha,surface_budget_sha256:sha,geometry_runtime_sha256:sha,geometry_budget_sha256:sha,artwork_api_revision:3,
   source_sha256:'source',frame_range:{start_frame:0,end_frame:1},object_caches:[{}],total_cached_pixels:144,
   frozen:{plan:{viewport:{width:1280,height:720}}}};
  const engineRuntime={browserLaunchArgs:()=>[],async installEngineGuard(){},async verifyPageEngine(){return{engine:'canvas'};}};
@@ -56,7 +56,8 @@ test('capture drains and verifies a document before navigation retires its scrip
  try{
   const result=await captureSceneSpace({chromium,request,binding,root,engineRuntime,projectRuntime,
    resources:new Map([['/assets/ink-landscape.mjs',Buffer.from(source)],['/runtime/scene_space_surface.mjs',Buffer.from(source)],
-    ['/runtime/scene_space_surface_budget.mjs',Buffer.from(source)]])});
+    ['/runtime/scene_space_surface_budget.mjs',Buffer.from(source)],['/runtime/scene_space_geometry.mjs',Buffer.from(source)],
+    ['/runtime/scene_space_geometry_budget.mjs',Buffer.from(source)]])});
   assert.deepEqual(events,['navigate:1','collect:1','source:1','navigate:2','collect:2','source:2']);
   assert.deepEqual(result.drawing_library_observation.api_execution.functions,[{
    function_name:'renderCanvas',start_offset:7,end_offset:source.length,call_count:4}]);

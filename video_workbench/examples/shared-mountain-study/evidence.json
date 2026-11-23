@@ -1,0 +1,683 @@
+{
+  "schema": "video.shared-mountain-fixed-view-native-study.v1",
+  "date": "2026-11-23",
+  "scope": "actual_desktop_browser_static_pixels_not_container_or_artistic_acceptance",
+  "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+  "cases": [
+    {
+      "name": "mesh",
+      "source_sha256": "9b163af86fb091efae2caea64caa5e60720157caac016b9b02e9d8b4817b13b2",
+      "scene_space_sha256": "a0ff6bda40eb226315d6dd1e7a5d5c45698e687c49dc8d637c6f935e199334a9",
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "606083afcecf848ad7ecd41353709cb905bbfeec10f4c99db9657b7d0bf9d785"
+          }
+        ]
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "objects_painted": 10,
+        "frames_composited": 4,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 10,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "sampleProjection": 235600,
+          "projectPoint": 759
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 2,
+          "projections_created": 2,
+          "handles_reserved": 4,
+          "numeric_bytes_reserved": 3798576,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "engine_observation": {
+        "engine": "canvas",
+        "revision": "animation-engine-runtime-1",
+        "contexts": [
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": true,
+            "visible": true
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 0,
+            "height": 0,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 54,
+            "height": 54,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 112,
+            "height": 76,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 185,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 250,
+            "height": 190,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 710,
+            "height": 210,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 0,
+            "height": 0,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 145,
+            "height": 135,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 95,
+            "height": 102,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 240,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": false,
+            "visible": false
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/assets/ink-landscape.mjs",
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_geometry.mjs",
+        "/runtime/scene_space_geometry_budget.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ]
+    },
+    {
+      "name": "clay",
+      "source_sha256": "ac50e6b8854d69543c43c43864ef8d47081a29bc3a9bde58d4b98f410f92b9b6",
+      "scene_space_sha256": "a94905f3d07e5bf306e45351c9b8b0fc91bf95b1af49d81b06d4b6a8a215721d",
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "842e43c49e57fcb5d7dfb64592abcb079dfd26219766802c912eaf257afdace3"
+          }
+        ]
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "objects_painted": 10,
+        "frames_composited": 4,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 10,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "sampleProjection": 235600
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 2,
+          "projections_created": 2,
+          "handles_reserved": 4,
+          "numeric_bytes_reserved": 3798576,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "engine_observation": {
+        "engine": "canvas",
+        "revision": "animation-engine-runtime-1",
+        "contexts": [
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": true,
+            "visible": true
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 0,
+            "height": 0,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 54,
+            "height": 54,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 112,
+            "height": 76,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 185,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 250,
+            "height": 190,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 710,
+            "height": 210,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 0,
+            "height": 0,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 145,
+            "height": 135,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 95,
+            "height": 102,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 240,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": false,
+            "visible": false
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/assets/ink-landscape.mjs",
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_geometry.mjs",
+        "/runtime/scene_space_geometry_budget.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ]
+    },
+    {
+      "name": "legacy",
+      "source_sha256": "6261944f5f92ee201a04565bb18b72c3f827b340417e78fcf549aec55b49f7a9",
+      "scene_space_sha256": "dafb89625288b0b142dafcb010d6da06ee390a4bfbcdfa5865a97539d3bf2c2d",
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "4a10eb47c386fea97991d4ff787d560e9eb3340e61fb9f7a1dcbf79c9a8304e8"
+          }
+        ]
+      },
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "objects_painted": 10,
+        "frames_composited": 4,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 0,
+          "projections_created": 0,
+          "handles_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "engine_observation": {
+        "engine": "canvas",
+        "revision": "animation-engine-runtime-1",
+        "contexts": [
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": true,
+            "visible": true
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 54,
+            "height": 54,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 112,
+            "height": 76,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 185,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 185,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 570,
+            "height": 330,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 250,
+            "height": 190,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 250,
+            "height": 190,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 250,
+            "height": 190,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 250,
+            "height": 190,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 710,
+            "height": 210,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 145,
+            "height": 135,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 95,
+            "height": 102,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 240,
+            "connected": false,
+            "visible": false
+          },
+          {
+            "kind": "2d",
+            "width": 1280,
+            "height": 720,
+            "connected": false,
+            "visible": false
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/assets/ink-landscape.mjs",
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_geometry.mjs",
+        "/runtime/scene_space_geometry_budget.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ]
+    }
+  ],
+  "source_files_sha256": {
+    "scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
+    "scene.js": "6b1c97a6b09cc97809bf4c6fa0dcebf66244ba06d7b9b606626fc86949e897ae"
+  },
+  "source_strategy": {
+    "description": "Two shared XYZ terrain surfaces connect each mountain group through common ridges, saddles, shoulders and front feet. Fixed orthographic depth projection guides visible Canvas brush contacts and independent coverage. Seven layers and ten objects reuse the existing one-frame composition; clay is a separate structural diagnostic mode.",
+    "tradeoffs": "Authored heightfields are spatial hypotheses, not reconstructed closed volumes. Projection is fixed-view; no orbit camera is admitted. Dense crossed hatching and bright saddle shoulders remain artistic limitations. Helper numeric storage excludes author arrays, Canvas and browser RSS."
+  },
+  "legacy_pixels_unchanged": true,
+  "legacy_comparison": "same_legacy_source_and_pixel_result_on_same_desktop_platform",
+  "structure": {
+    "main_mass": {
+      "vertices": 6853,
+      "triangles": 13376,
+      "connected_components_asserted": 1
+    },
+    "right_mass": {
+      "vertices": 3477,
+      "triangles": 6720,
+      "connected_components_asserted": 1
+    },
+    "geometry": "two_heightfield_surfaces_one_component_each_not_closed_volume",
+    "projection": "fixed_orthographic_depth_buffer_smaller_depth_is_nearer",
+    "painting": "visible_surface_contacts_no_normal_shaded_ink_underpainting",
+    "diagnostic": "clay_uses_normal_shading_only_as_separate_structure_diagnostic"
+  },
+  "resource_scope": {
+    "helper_numeric_bytes_reserved": 3798576,
+    "helper_handles_reserved": 4,
+    "helper_retained_limit": 16777216,
+    "helper_work_reservation": 1048576,
+    "author_typed_arrays_bytes": 9659600,
+    "author_arrays_in_helper_budget": false,
+    "browser_rss_measured": false
+  },
+  "visual_review": {
+    "images_viewed": true,
+    "structural_result": "shared_saddles_shoulders_and_front_feet_visible",
+    "remaining": [
+      "Dense crossed hatching still reads as procedural linework.",
+      "Some saddle shoulders remain bright and staircase-like.",
+      "Foreground bank and pine painting are retained from the previous study."
+    ],
+    "artistic_acceptance": false
+  },
+  "new_external_model_calls": 0,
+  "adopted": false,
+  "wikiskill_published": false,
+  "formal_picture_runs_modified": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "artifacts": [
+    {
+      "path": "D:\\codex-work\\operations\\shared-mountain-integration-20261123\\locked-native-summary.json",
+      "sha256": "7a40a1fe2f4b601890384035b3aebaac846b1a5915ae882b63501c2a65f64563"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\shared-mountain-integration-20261123\\final-native-legacy-summary.json",
+      "sha256": "0197be414bd1dc88bde6b70b1deaef830225735daf80f9e3a00aec4348533d3a"
+    }
+  ]
+}
