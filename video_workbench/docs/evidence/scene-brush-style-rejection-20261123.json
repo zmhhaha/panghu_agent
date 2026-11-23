@@ -1,0 +1,134 @@
+{
+  "schema": "video.scene-brush-style-rejection-study.v1",
+  "date": "2026-11-23",
+  "prior_application_revision": "11281f0d8db4caeb79d90cb8a8cf848bd0e3ef21",
+  "prior_result": "coverage_and_form_technical_pass_but_user_rejected_artwork",
+  "user_issues": [
+    "Visible sun and depicted front lighting conflict.",
+    "Mountain silhouettes are unattractive.",
+    "Foreground looks like machine shading with pencil-like texture, not brush construction."
+  ],
+  "source_causes": [
+    "A fixed left-front LIGHT is independent of the depicted upper-right sun.",
+    "Foreground bank uses a five-stop smooth gradient before thin scattered lines.",
+    "The form variant maps normals to continuous wash and then adds narrow strokes."
+  ],
+  "scope": "manual_code_native_browser_still_research_not_completed_picture_learning",
+  "code_changes": "shared_author_guidance_only_no_new_host_or_library_runtime",
+  "cases": [
+    {
+      "id": "preview-1",
+      "source_sha256": "e7262767494d9706a9b319c8d09dec388761e8e1e762ee7d325dc92bceb55fac",
+      "png_sha256": "210b1743123e97dfe74877798ec2d45ac7c14f4813b054e99c1a38a6a960bc06",
+      "source_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-1/source.json",
+      "png_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-1/brush/output.png",
+      "technical_checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "210b1743123e97dfe74877798ec2d45ac7c14f4813b054e99c1a38a6a960bc06"
+          }
+        ]
+      },
+      "artistic_acceptance": false,
+      "excluded": true,
+      "reason": "Wide contact polygons made hard ribbons and repetitive fringes."
+    },
+    {
+      "id": "preview-2",
+      "source_sha256": "a0b5eb4450c51e2825ff92aec181c2df2cd696b03283e3d53ef2900d478ccc16",
+      "png_sha256": "f26c3518ea8ef677e63f0b250f73281731901d69b26dd475984fa67f00ed8497",
+      "source_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-2/source.json",
+      "png_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-2/brush/output.png",
+      "technical_checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "f26c3518ea8ef677e63f0b250f73281731901d69b26dd475984fa67f00ed8497"
+          }
+        ]
+      },
+      "artistic_acceptance": false,
+      "excluded": true,
+      "reason": "Raster ink process retained broad bands and worm-like dry marks."
+    },
+    {
+      "id": "preview-3",
+      "source_sha256": "457621ea963a85e4a8797086cef9d262b07290be147b2c853b3a73cae7d20241",
+      "png_sha256": "359a9713787cf4f4a6a0e4e8930dfc63de118dda0d07da8a54a58efd3456e027",
+      "source_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-3/source.json",
+      "png_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-3/brush/output.png",
+      "technical_checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "359a9713787cf4f4a6a0e4e8930dfc63de118dda0d07da8a54a58efd3456e027"
+          }
+        ]
+      },
+      "artistic_acceptance": false,
+      "excluded": true,
+      "reason": "Fine fibers were hair-like and wet ink masses were disconnected."
+    },
+    {
+      "id": "preview-4",
+      "source_sha256": "16f5bf9496e9d280a3485d45c44dd1f41d144936778b44c351fabcb4f89617d4",
+      "png_sha256": "36c8574630524d6808a0691f9fecb6088c7d234d667b9b8279f7abf0c633bfdf",
+      "source_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-4/source.json",
+      "png_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-4/brush/output.png",
+      "technical_checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "36c8574630524d6808a0691f9fecb6088c7d234d667b9b8279f7abf0c633bfdf"
+          }
+        ]
+      },
+      "artistic_acceptance": false,
+      "excluded": true,
+      "reason": "Dense wet fibers formed overlapping dark brush-shaped blocks."
+    },
+    {
+      "id": "preview-5",
+      "source_sha256": "7e7ddcdf783110849c760dadcff9d9db4c98910e642b4772bd2f8080c3a1be12",
+      "png_sha256": "f36af9a25f41f8d68b16b77ee97ebf4b7e57b007679a9d9eb34dc22a145e8c11",
+      "source_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-5/source.json",
+      "png_path": "D:/codex-work/operations/scene-brush-painting-20261123/preview-5/brush/output.png",
+      "technical_checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "f36af9a25f41f8d68b16b77ee97ebf4b7e57b007679a9d9eb34dc22a145e8c11"
+          }
+        ]
+      },
+      "artistic_acceptance": false,
+      "excluded": true,
+      "reason": "Lower density improved tone, but paper-like overlaps, hair-like interiors and worm marks remain; coherent backlight and rock structure are not established."
+    }
+  ],
+  "new_external_model_calls": 0,
+  "render_seconds": null,
+  "render_seconds_scope": "native_probe_did_not_record_per_operation_total_do_not_invent_usage",
+  "adopted": false,
+  "deployed": false,
+  "wikiskill_published": false,
+  "formal_picture_runs_modified": false,
+  "artistic_acceptance": false,
+  "conclusion": "The reported problems remain unresolved in the experimental full-scene paintings. Retain only the guidance correction; do not promote a prototype as a successful brush landscape."
+}
