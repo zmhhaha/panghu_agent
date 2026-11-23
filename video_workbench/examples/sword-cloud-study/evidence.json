@@ -1,0 +1,278 @@
+{
+  "schema": "video.sword-cloud-native-study.v1",
+  "date": "2026-11-23",
+  "scope": "manual_code_native_browser_still_pending_user_art_review",
+  "source_sha256": "0ab04ab93d5f23ab63b93321f6f2df54861e64f3e8d9107129132afa9e2652ae",
+  "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+  "png_sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a",
+  "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
+  "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+  "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+  "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+  "checks": {
+    "repeat_passed": true,
+    "reverse_passed": true,
+    "reload_passed": true,
+    "samples": [
+      {
+        "frame": 0,
+        "sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a"
+      }
+    ]
+  },
+  "observation": {
+    "schema": "video.scene-space-compositor-observation.v1",
+    "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+    "objects_painted": 10,
+    "frames_composited": 4,
+    "cache_hits": 40,
+    "cache_pixels": 1890993,
+    "peak_work_pixels": 2764800,
+    "coverage_callbacks": 10,
+    "coverage_objects": 2,
+    "coverage_peak_pixels": 921600,
+    "coverage_contexts": 1,
+    "surface_helper_calls": {},
+    "recipes_executed": 0,
+    "scope": "host_compositor_execution_not_visual_acceptance",
+    "runtime_revision": "scene-space-compositor-2",
+    "surface_field_usage": {
+      "fields_created": 0,
+      "fields_reserved": 0,
+      "numeric_bytes_reserved": 0,
+      "max_fields": 64,
+      "max_total_field_bytes": 16777216
+    },
+    "frame_range": {
+      "end_frame": 1,
+      "start_frame": 0
+    },
+    "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+    "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+    "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+    "artwork_api_revision": 2
+  },
+  "native_contexts": 15,
+  "source_files_sha256": {
+    "scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
+    "scene.js": "7d39795857365056c77be327508ec2acdbe9ec13d6e9e756fc8e8191bf888067"
+  },
+  "source_layout": "seven_layers_ten_objects_with_separate_cloud_object_static_one_frame",
+  "new_external_model_calls": 0,
+  "render_seconds": null,
+  "render_seconds_scope": "native_probe_does_not_measure_complete_controller_operation",
+  "upstream": {
+    "repository": "https://github.com/LingDong-/shan-shui-inf",
+    "revision": "9f754d2b2e73495db7883d4d4055a7b0903b0454",
+    "license": "MIT",
+    "scope": "small_Canvas_adaptation_of_stroke_and_point_grid_texture_not_original_scene_generator"
+  },
+  "visual_review": {
+    "images_viewed": true,
+    "visible_improvements": [
+      "Sharper asymmetric sword peaks with grouped descending ink contacts replace normal shading and large overlapping face blocks.",
+      "Pine needles form clusters, the near-bank edge joins with local breaks, and distant ridges are irregular.",
+      "Local foot coverage and a separate cloud layer divide depth."
+    ],
+    "remaining": [
+      "Some long internal lines remain too dense and parallel, with curtain-like feet.",
+      "Diagonal white gaps in the near bank remain rhythmically repeated."
+    ],
+    "artistic_acceptance": false
+  },
+  "adopted": false,
+  "deployed": false,
+  "wikiskill_published": false,
+  "formal_learning_runs_modified": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "artifacts": [
+    {
+      "path": "D:/codex-work/operations/sword-cloud-20261123/final/brush/output.png",
+      "sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-20261123/final/source.json",
+      "sha256": "16ab09dbb02e2f2880c30f2ed0b2989a47ba2ad3f16cae1601e2c84e9acf7983"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-20261123/final/binding.json",
+      "sha256": "0542fc1e573b93b8b762b5e2b83ae3678a1f0b360564d7c9baac4602788cf3b6"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-20261123/final/plan.json",
+      "sha256": "350ee57652a60bbf7641613acd3c97e1544e0b169f0ae1b40be5cc0f6df9cd97"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-20261123/final-summary.json",
+      "sha256": "0d847db08101b46b122de1e6c6dec128fbdd7b9256641b968d8cef5a2c771e6c"
+    }
+  ],
+  "engine_observation": {
+    "engine": "canvas",
+    "revision": "animation-engine-runtime-1",
+    "contexts": [
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 720,
+        "connected": true,
+        "visible": true
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 720,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 54,
+        "height": 54,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 112,
+        "height": 76,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 185,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 570,
+        "height": 330,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 250,
+        "height": 190,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 710,
+        "height": 210,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 145,
+        "height": 135,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 95,
+        "height": 102,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 240,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 720,
+        "connected": false,
+        "visible": false
+      }
+    ]
+  },
+  "drawing_api_execution": {
+    "schema": "video.learning-drawing-api-execution.v1",
+    "scope": "v8_executed_functions_not_visual_application",
+    "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+    "functions": [
+      {
+        "function_name": "ease",
+        "start_offset": 20739,
+        "end_offset": 20781,
+        "call_count": 90522
+      },
+      {
+        "function_name": "finite3",
+        "start_offset": 20783,
+        "end_offset": 20939,
+        "call_count": 94598
+      },
+      {
+        "function_name": "seedValue2",
+        "start_offset": 21220,
+        "end_offset": 21375,
+        "call_count": 4076
+      },
+      {
+        "function_name": "hash",
+        "start_offset": 21681,
+        "end_offset": 21938,
+        "call_count": 181044
+      },
+      {
+        "function_name": "createNoise1D",
+        "start_offset": 21939,
+        "end_offset": 22426,
+        "call_count": 4076
+      },
+      {
+        "function_name": "freeze",
+        "start_offset": 100030,
+        "end_offset": 100232,
+        "call_count": 6014
+      },
+      {
+        "function_name": "getTechniqueReading",
+        "start_offset": 224144,
+        "end_offset": 224242,
+        "call_count": 200
+      },
+      {
+        "function_name": "entry",
+        "start_offset": 227948,
+        "end_offset": 229304,
+        "call_count": 200
+      }
+    ]
+  }
+}
