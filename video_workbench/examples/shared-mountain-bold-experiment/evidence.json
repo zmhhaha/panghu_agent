@@ -1,0 +1,348 @@
+{
+  "schema": "video.shared-mountain-bold-rejected-experiment.v1",
+  "date": "2026-11-23",
+  "decision": "keep_version_35_all_four_trials_not_adopted",
+  "evidence_scope": "actual_desktop_chrome_static_pixels_no_arm_container_or_artistic_acceptance",
+  "baseline": {
+    "source_sha256": "1b6693b620f576dacf2b328367999a00458b8440f3f86ff825e996b153734be0",
+    "native_png_sha256": "afd67d5d25fb39cb0199e3e2627eb01f452053b4ffb0bae2e6dc62a2ac4f91cb",
+    "image": "baseline-35.png",
+    "source": "shared-mountain-unity-study",
+    "rerendered_this_round": false
+  },
+  "trials": [
+    {
+      "number": 1,
+      "title": "黑墨域填充",
+      "finding": "黑域覆盖过广，主山变成剪影；穿山云带像白绳。",
+      "adopted": false,
+      "artistic_acceptance": false,
+      "source_sha256": "ec45ede3a5a22a3f2cff9ca69e583886cebeeb8632e3b35434617d027dac659a",
+      "png_sha256": "59bd2f3b394b6ae19befab75d8d2e8979380b16e3776c0bf549aa52a69897536",
+      "image": "trials/01.png",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "59bd2f3b394b6ae19befab75d8d2e8979380b16e3776c0bf549aa52a69897536"
+          }
+        ]
+      },
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "objects_painted": 10,
+        "frames_composited": 4,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 10,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "sampleProjection": 235600,
+          "projectPoint": 140
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 2,
+          "projections_created": 2,
+          "handles_reserved": 4,
+          "numeric_bytes_reserved": 3798576,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "source_snapshot_saved": false,
+      "source_scope": "Native summary and actual pixels retained; isolated source snapshot was not saved."
+    },
+    {
+      "number": 2,
+      "title": "黑白岩面与浓淡",
+      "finding": "有了亮面，但出现矢量灰阶岩面，毛笔质感不足。",
+      "adopted": false,
+      "artistic_acceptance": false,
+      "source_sha256": "1cba3d862343ec8f2a1589940bc20c2b01dd11bd4db74926e0e5ab9321be0809",
+      "png_sha256": "d1f14de115936322c498b0846275e5e94081606c546263416defb2ce1d2f9dab",
+      "image": "trials/02.png",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "d1f14de115936322c498b0846275e5e94081606c546263416defb2ce1d2f9dab"
+          }
+        ]
+      },
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "objects_painted": 10,
+        "frames_composited": 4,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 10,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "sampleProjection": 235600,
+          "projectPoint": 140
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 2,
+          "projections_created": 2,
+          "handles_reserved": 4,
+          "numeric_bytes_reserved": 3798576,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "source_snapshot_saved": false,
+      "source_scope": "Native summary and actual pixels retained; isolated source snapshot was not saved."
+    },
+    {
+      "number": 3,
+      "title": "墨域裁切宽笔",
+      "finding": "墨面由宽笔叠成，但黑瓣和纸白割裂山骨，配山像浮片。",
+      "adopted": false,
+      "artistic_acceptance": false,
+      "source_sha256": "9ddd29dfe49a9a53f8b50d98d1d21d201092e5d029cb035816254b6f25e5a941",
+      "png_sha256": "f641d2d010d08296fcb2d5fe61bc8d4af138002685688991a06d9bbeb61b7725",
+      "image": "trials/03.png",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "f641d2d010d08296fcb2d5fe61bc8d4af138002685688991a06d9bbeb61b7725"
+          }
+        ]
+      },
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "objects_painted": 10,
+        "frames_composited": 4,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 10,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "sampleProjection": 235600,
+          "projectPoint": 144
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 2,
+          "projections_created": 2,
+          "handles_reserved": 4,
+          "numeric_bytes_reserved": 3798576,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "source_snapshot_saved": true,
+      "source_snapshot": "sources/03-source.json"
+    },
+    {
+      "number": 4,
+      "title": "以35版为基线的宽笔对照",
+      "finding": "保留旧笔路仍不足，宽笔块面、竖条与峰尖空壳增多。",
+      "adopted": false,
+      "artistic_acceptance": false,
+      "source_sha256": "5ae730f9afb1a512465f5a17e95fc2552f78285571ebef7ef0d99a1afd8ec9cf",
+      "png_sha256": "71122fc91303c7718462b5905b1f111082684f9e69f06fc1db0516075b5cf919",
+      "image": "trials/04.png",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "71122fc91303c7718462b5905b1f111082684f9e69f06fc1db0516075b5cf919"
+          }
+        ]
+      },
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "objects_painted": 10,
+        "frames_composited": 4,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 10,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {},
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "sampleProjection": 235600,
+          "projectPoint": 140
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-3",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "geometry_resource_usage": {
+          "meshes_created": 2,
+          "projections_created": 2,
+          "handles_reserved": 4,
+          "numeric_bytes_reserved": 3798576,
+          "max_handles": 32,
+          "max_total_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "artwork_api_revision": 3
+      },
+      "source_snapshot_saved": true,
+      "source_snapshot": "sources/04-source.json"
+    }
+  ],
+  "plan_file_sha256": "21ef5296f64ce8bce2993e2a16cfa591714608bcee3bee04646338343e2162ae",
+  "plan_unchanged": true,
+  "geometry_and_camera_unchanged": true,
+  "runtime_unchanged": true,
+  "artist_field_alpha_changed": true,
+  "change_scope": "Screen-Y foot fade was removed in trials; raw projection depth/normal/position/flow geometry was retained.",
+  "color_grade_scope": "Same constant RGB channel factors applied to caches and coverage paper, approximately a subtle constant multiply with 8-bit rounding; no new runtime blend capability.",
+  "model_calls": 0,
+  "native_render_invocations": 4,
+  "measured_desktop_render_seconds": null,
+  "desktop_timing_scope": "Native probes did not measure a complete controller study; rendering cost is not zero.",
+  "arm_render_jobs": 0,
+  "new_study_ledgers": 0,
+  "builds": 0,
+  "deployments": 0,
+  "effect_adopted": false,
+  "wikiskill_published": false,
+  "learning_defaults_modified": false,
+  "artistic_acceptance": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "source_snapshot_scope": "Exact isolated source bundles retained for trials 3 and 4 only; trials 1/2 retain native summaries and pixels.",
+  "independent_visual_review": true,
+  "limits": "These multi-variable failures do not establish that broad ink painting or color grading is intrinsically ineffective.",
+  "artifacts": {
+    "baseline-35.png": "afd67d5d25fb39cb0199e3e2627eb01f452053b4ffb0bae2e6dc62a2ac4f91cb",
+    "comparison.png": "14cc9eefcc10109c97ad0c4da0f8b5113c62f6841e5cf3a1632819bc040ed29e",
+    "trials/01.png": "59bd2f3b394b6ae19befab75d8d2e8979380b16e3776c0bf549aa52a69897536",
+    "trials/02.png": "d1f14de115936322c498b0846275e5e94081606c546263416defb2ce1d2f9dab",
+    "trials/03.png": "f641d2d010d08296fcb2d5fe61bc8d4af138002685688991a06d9bbeb61b7725",
+    "trials/04.png": "71122fc91303c7718462b5905b1f111082684f9e69f06fc1db0516075b5cf919"
+  }
+}
