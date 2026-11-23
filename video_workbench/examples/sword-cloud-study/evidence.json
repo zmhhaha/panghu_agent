@@ -1,10 +1,10 @@
 {
-  "schema": "video.sword-cloud-native-study.v1",
+  "schema": "video.sword-cloud-micro-native-study.v1",
   "date": "2026-11-23",
-  "scope": "manual_code_native_browser_still_pending_user_art_review",
-  "source_sha256": "0ab04ab93d5f23ab63b93321f6f2df54861e64f3e8d9107129132afa9e2652ae",
+  "scope": "same_composition_manual_code_micro_refinement_pending_user_review",
+  "source_sha256": "252051e53abd6d1f94b13ce186420743f6bb152d5928b2cf0b076f6f1114a359",
   "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
-  "png_sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a",
+  "png_sha256": "3ff7e3c1b1312268bed688516cca26bb30a616cc82366d6cec83d6bf89b588e0",
   "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
   "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
   "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
@@ -16,7 +16,7 @@
     "samples": [
       {
         "frame": 0,
-        "sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a"
+        "sha256": "3ff7e3c1b1312268bed688516cca26bb30a616cc82366d6cec83d6bf89b588e0"
       }
     ]
   },
@@ -52,10 +52,10 @@
     "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
     "artwork_api_revision": 2
   },
-  "native_contexts": 15,
+  "native_contexts": 16,
   "source_files_sha256": {
     "scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
-    "scene.js": "7d39795857365056c77be327508ec2acdbe9ec13d6e9e756fc8e8191bf888067"
+    "scene.js": "f1b43ecb3935dd9609009509c994654a691cc23baef6faf8eb5d2d188030cdf1"
   },
   "source_layout": "seven_layers_ten_objects_with_separate_cloud_object_static_one_frame",
   "new_external_model_calls": 0,
@@ -69,14 +69,15 @@
   },
   "visual_review": {
     "images_viewed": true,
-    "visible_improvements": [
-      "Sharper asymmetric sword peaks with grouped descending ink contacts replace normal shading and large overlapping face blocks.",
-      "Pine needles form clusters, the near-bank edge joins with local breaks, and distant ridges are irregular.",
-      "Local foot coverage and a separate cloud layer divide depth."
+    "changes": [
+      "Sparse short broken folds and cavity ink interrupt selected vertical mountain contacts; bright seam fragments are shortened and weakened.",
+      "Only the right-hand bank-to-cloud contact is softened, retaining the foreground frame crop and root support.",
+      "Pine clusters use eccentric centres, nonuniform needle directions and back-pale/front-dark overlap."
     ],
+    "lighting_scope": "Existing upper-right backlit intent retained; no unrelated left-front light or mandatory left-white/right-black rule.",
     "remaining": [
-      "Some long internal lines remain too dense and parallel, with curtain-like feet.",
-      "Diagonal white gaps in the near bank remain rhythmically repeated."
+      "Long descending texture still dominates the overall peak style.",
+      "Pine clusters remain a procedural approximation."
     ],
     "artistic_acceptance": false
   },
@@ -89,24 +90,28 @@
   "whole_video_watched": false,
   "artifacts": [
     {
-      "path": "D:/codex-work/operations/sword-cloud-20261123/final/brush/output.png",
-      "sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a"
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/brush/output.png",
+      "sha256": "3ff7e3c1b1312268bed688516cca26bb30a616cc82366d6cec83d6bf89b588e0"
     },
     {
-      "path": "D:/codex-work/operations/sword-cloud-20261123/final/source.json",
-      "sha256": "16ab09dbb02e2f2880c30f2ed0b2989a47ba2ad3f16cae1601e2c84e9acf7983"
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/source.json",
+      "sha256": "9bf018e0cac38bf8ddb1b7de2e9102db2cb219bbd941bbd36c7df4577e3038a4"
     },
     {
-      "path": "D:/codex-work/operations/sword-cloud-20261123/final/binding.json",
-      "sha256": "0542fc1e573b93b8b762b5e2b83ae3678a1f0b360564d7c9baac4602788cf3b6"
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/binding.json",
+      "sha256": "27c50fdf4040e2920347061e9ac2965fa77b402cd1a55bb9ed59f28cb9411ded"
     },
     {
-      "path": "D:/codex-work/operations/sword-cloud-20261123/final/plan.json",
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/plan.json",
       "sha256": "350ee57652a60bbf7641613acd3c97e1544e0b169f0ae1b40be5cc0f6df9cd97"
     },
     {
-      "path": "D:/codex-work/operations/sword-cloud-20261123/final-summary.json",
-      "sha256": "0d847db08101b46b122de1e6c6dec128fbdd7b9256641b968d8cef5a2c771e6c"
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final-summary.json",
+      "sha256": "a9dcd4f84e8e220b5c33e571359b9dd4a910782397000fa4a4d1adeecb70f970"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/detail-comparison.png",
+      "sha256": "79daa685b44f6dca3f8c3d79675f60c7068869d525ab35e0f2a24c201cc2954b"
     }
   ],
   "engine_observation": {
@@ -192,6 +197,13 @@
       },
       {
         "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
         "width": 145,
         "height": 135,
         "connected": false,
@@ -229,31 +241,31 @@
         "function_name": "ease",
         "start_offset": 20739,
         "end_offset": 20781,
-        "call_count": 90522
+        "call_count": 90882
       },
       {
         "function_name": "finite3",
         "start_offset": 20783,
         "end_offset": 20939,
-        "call_count": 94598
+        "call_count": 94960
       },
       {
         "function_name": "seedValue2",
         "start_offset": 21220,
         "end_offset": 21375,
-        "call_count": 4076
+        "call_count": 4078
       },
       {
         "function_name": "hash",
         "start_offset": 21681,
         "end_offset": 21938,
-        "call_count": 181044
+        "call_count": 181764
       },
       {
         "function_name": "createNoise1D",
         "start_offset": 21939,
         "end_offset": 22426,
-        "call_count": 4076
+        "call_count": 4078
       },
       {
         "function_name": "freeze",
@@ -274,5 +286,9 @@
         "call_count": 200
       }
     ]
-  }
+  },
+  "previous_source_sha256": "0ab04ab93d5f23ab63b93321f6f2df54861e64f3e8d9107129132afa9e2652ae",
+  "previous_png_sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a",
+  "composition_unchanged": true,
+  "user_feedback_on_previous_version": "Positive feedback on peak shape, cloud division, foreground dry texture and distant ridges; further micro refinement requested, no effect adoption requested."
 }

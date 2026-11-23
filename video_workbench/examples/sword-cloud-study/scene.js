@@ -74,10 +74,50 @@ function mountain(ctx,o){const d=RECIPES[o.id],shapes=shapesFor(o.id),W=o.bounds
    InkPath.paintInkStroke(c,s.grid[col].slice(start,end),{seed:seed+col*313,width:1.6,opacity:.36,dryness:.62,noise:.85,ink:INK});}
   const edge=s.outline;for(let e=2;e<edge.length-5;e+=9){if(e%4===0)continue;
    InkPath.paintInkStroke(c,edge.slice(e,e+7),{seed:seed+e*41,width:1.25,opacity:.28+r.dark*.25,dryness:.46,noise:.65,ink:INK});}
+  rockFractures(c,r,seed,i);
   c.restore();c.globalCompositeOperation='destination-in';fadePeak(c,r,seed,W,H);c.globalCompositeOperation='source-over';ctx.drawImage(buffer,0,0);
  });buffer.width=0;buffer.height=0;
 }
 function coverage(ctx,o){const d=RECIPES[o.id],shapes=shapesFor(o.id);d.peaks.forEach((r,i)=>{ctx.save();ctx.clip(polygon(shapes[i].outline));fadePeak(ctx,r,d.seed+i*419,o.bounds.width,o.bounds.height);ctx.restore();});}
+function rockFractures(ctx,r,seed,index){const random=randomFor(seed+1081);
+ // A few local seams turn across the descending grain. Their height, span and
+ // bearing vary; they are not full-width bars repeated across every summit.
+ const seams=r.h>170?[
+  {t:.29+(index%3)*.035,u:-.12,len:.13,slope:-.07},
+  {t:.54-(index%2)*.055,u:.08,len:.17,slope:.10},
+  ...(index%3===0?[{t:.73,u:-.20,len:.15,slope:-.12}]:[])
+ ]:[{t:.43+(index%3)*.09,u:-.06,len:.16,slope:.09}];
+ for(let j=0;j<seams.length;j++){const f=seams[j],x=r.x+r.w*f.u,y=r.y+r.h*f.t,L=Math.max(9,r.w*f.len);
+  const pts=[[x-L*.48,y,.12],[x-L*.22,y-1.2,.75],[x-L*.17,y+1.4,.8],
+   [x+L*.09,y+.6,.65],[x+L*.22,y+L*f.slope+2.0,.7],[x+L*.48,y+L*f.slope+2.8,.05]];
+  // A broken paper-colour fissure interrupts existing pigment while the
+  // object's solid coverage remains intact. The lower contact is dry ink.
+  for(const part of [pts.slice(0,3),pts.slice(3)])InkPath.paintInkStroke(ctx,part,
+   {seed:seed+j*719+part.length,width:.9+random()*.5,opacity:.16,dryness:.68,noise:.95,ink:'#c4c6b7'});
+  const lip=pts.map(([px,py,p])=>[px,py+1.4+random()*.5,p]);
+  InkPath.paintInkStroke(ctx,lip,{seed:seed+j*733+3,width:1.6+random()*1.1,opacity:.58,dryness:.65,noise:.94,ink:'#151b15'});
+  // Concentrated scorched contacts sit in a handful of cavities, not a new
+  // global front-light gradient or a field of evenly scattered black dots.
+  if(j===1||r.h<170){const q=lip[1];for(let k=0;k<3;k++){
+   const dx=(random()-.5)*5,dy=random()*3;
+   InkPath.paintInkStroke(ctx,[[q[0]+dx,q[1]+dy,.8],[q[0]+dx+1+random()*2,q[1]+dy+2,.05]],
+    {seed:seed+j*743+k,width:1.4+random()*1.6,opacity:.88,dryness:.56,noise:.9,ink:'#0e150f'});}}
+ }
+}
+function nearBank(ctx,W,H){const buffer=makeCanvas(W,H),c=buffer.getContext('2d');
+ InkNature.paintDryBank(c,{width:W,height:H,seed:812});
+ // The lower frame crop remains a strong foreground. Soften only the right
+ // contact where the shore recedes into cloud, never the whole image bottom.
+ const shore=[[481,110],[527,128],[575,146],[616,169],[666,197],[710,224]];
+ const yAt=x=>{let i=1;while(i<shore.length-1&&shore[i][0]<x)i++;const a=shore[i-1],b=shore[i],t=sat((x-a[0])/(b[0]-a[0]));return a[1]*(1-t)+b[1]*t;};
+ c.globalCompositeOperation='destination-in';const n=ink.createNoise1D(8991);
+ for(let x=0;x<W;x+=2){c.save();c.beginPath();c.rect(x,0,2,H);c.clip();
+  if(x<530){c.fillStyle='#000';}else{const mix=sat((x-530)/150)*(.42+.58*sat(n(x*.035)+.5)),top=yAt(x)+n(x*.06)*3;
+   const g=c.createLinearGradient(0,top-1,0,top+4+mix*4);
+   g.addColorStop(0,`rgba(0,0,0,${1-mix*.42})`);g.addColorStop(1,'#000');c.fillStyle=g;}
+  c.fillRect(x,0,2,H);c.restore();}
+ c.globalCompositeOperation='source-over';ctx.drawImage(buffer,0,0);buffer.width=0;buffer.height=0;
+}
 function paper(ctx,W,H){ctx.fillStyle=PAPER;ctx.fillRect(0,0,W,H);const r=randomFor(631907);
  for(let i=0;i<22000;i++){ctx.fillStyle=i%4?'rgba(113,93,65,.024)':'rgba(255,255,248,.10)';ctx.fillRect(r()*W,r()*H,.35+r()*.8,.3+r()*.9);}}
 function distant(ctx,W,H){const n=ink.createNoise1D(138),n2=ink.createNoise1D(76),n3=ink.createNoise1D(962),outline=[];
@@ -106,7 +146,7 @@ function birds(ctx){const placements=[[12,25,7],[42,19,6],[67,9,7],[92,1,5],[49,
  for(const [x,y,w]of placements){InkPath.paintInkStroke(ctx,[[x-w,y,.05],[x-w*.4,y-2,.8],[x,y+1,.5],[x+w*.5,y-1,.8],[x+w,y,.02]],{width:1.25,opacity:.8,dryness:.25,noise:.4,seed:x*191,ink:'#343a30'});}}
 window.__sceneSpaceArtwork={paintObject(ctx,o){const W=o.bounds.width,H=o.bounds.height;
  if(RECIPES[o.id])mountain(ctx,o);else if(o.id==='paper')paper(ctx,W,H);else if(o.id==='far-ridge')distant(ctx,W,H);
- else if(o.id==='bank')InkNature.paintDryBank(ctx,{width:W,height:H,seed:812});
+ else if(o.id==='bank')nearBank(ctx,W,H);
  else if(o.id==='pine-a')InkNature.paintInkPine(ctx,{x:38,y:123,height:116,seed:93,lean:22});
  else if(o.id==='pine-b')InkNature.paintInkPine(ctx,{x:23,y:89,height:84,seed:552,lean:11});
  else if(o.id==='cloud-ribbons')clouds(ctx);else if(o.id==='sun')sun(ctx);else if(o.id==='birds')birds(ctx);},
@@ -277,42 +317,65 @@ function paintInkPine(ctx,{x=0,y=0,height=120,seed=1,lean=18}={}){
  const r=randomFor(seed),h=height,s=h/120;
  const trunk=[[x,y,1],[x+lean*.11-2*s,y-h*.20,.91],[x+lean*.48+3*s,y-h*.42,.73],
   [x+lean*.49-2*s,y-h*.64,.52],[x+lean*.84+2*s,y-h*.82,.29],[x+lean,y-h,.025]];
- ctx.save();stroke(ctx,trunk,5.2*s,.93,seed);
- // A second broken, dry contact on one side gives bark without parallel hair.
- contact(ctx,trunk.slice(0,5),2.2*s,.48,.63,seed+11,'#4b4d3d');
- stroke(ctx,[[x,y-3*s,.9],[x-9*s,y+2*s,.5],[x-17*s,y+4*s,.02]],3*s,.88,seed+2);
- stroke(ctx,[[x+1*s,y-3*s,.7],[x+9*s,y+1*s,.45],[x+15*s,y+3*s,.02]],2.5*s,.85,seed+3);
- // Explicit unequal boughs; no equal-spaced bilateral branch ladder.
+ // Branch endpoints, roots and crown envelope stay with the established tree.
  const boughs=[{t:.26,dir:-1,span:35,up:4},{t:.43,dir:1,span:43,up:13},
   {t:.60,dir:-1,span:31,up:5},{t:.72,dir:1,span:26,up:10},{t:.87,dir:-1,span:19,up:3}];
+ const branches=[],clusters=[];
  for(let j=0;j<boughs.length;j++){
   const b=boughs[j],cx=x+lean*(b.t*.9)+Math.sin(b.t*10)*1.5*s,cy=y-h*b.t;
   const ex=cx+b.dir*b.span*s,ey=cy-b.up*s;
-  const bendX=cx+b.dir*b.span*.44*s,bendY=cy+(r()-.65)*5*s;
-  stroke(ctx,[[cx,cy,.78],[bendX,bendY,.59],[ex,ey,.025]],(2.3-j*.2)*s,.91,seed+j*29);
-  const clusters=2+(j<2?1:0);
-  for(let c=0;c<clusters;c++){
-   const u=.36+c*.25+(r()-.5)*.11,bx=cx+(ex-cx)*u,by=cy+(ey-cy)*u-2*s;
-   const twx=bx+b.dir*(6+r()*6)*s,twy=by-(3+r()*4)*s;
-   stroke(ctx,[[bx,by,.5],[twx,twy,.02]],1.1*s,.82,seed+j*73+c);
-   // Each fan has its own centre, spread and sparse outside. The directions
-   // overlap as a small cloud instead of repeating comb teeth along a stem.
-   for(let fan=0;fan<2;fan++){
-    const ox=twx+(fan?b.dir*5:0)*s,oy=twy-(fan?2:0)*s;
-    // The compact ink centre binds the needles into a foliage cloud. Needles
-    // open out of it, rather than remaining a row of disconnected hair fans.
-    contact(ctx,[[ox-4*s,oy+1*s,.65],[ox+2*s,oy-1*s,1],[ox+8*s,oy,.06]],3.5*s,.83,.24,seed+j*67+c*13+fan*5);
-    const count=10+Math.floor(r()*7),start=-Math.PI*.97+r()*.35,spread=1.3+r()*.85;
-    for(let k=0;k<count;k++){
-     const a=start+spread*(k+r()*.6)/count,len=(4+r()*8)*(j>2?.8:1)*s;
-     const dx=Math.cos(a)*len,dy=Math.sin(a)*len;
-     stroke(ctx,[[ox+(r()-.5)*2*s,oy,.5],[ox+dx*.53+dy*.1,oy+dy*.55,.65],[ox+dx,oy+dy,.02]],
-      (.57+r()*.65)*s,.63+r()*.30,seed+j*313+c*37+fan*17+k);
-    }
-   }
+  branches.push({points:[[cx,cy,.78],[cx+b.dir*b.span*.44*s,cy+(r()-.65)*5*s,.59],[ex,ey,.025]],width:(2.3-j*.2)*s,id:j});
+  const count=2+(j<2?1:0);
+  for(let c=0;c<count;c++){
+   const local=randomFor(seed+j*607+c*79+41),u=.34+c*.26+(local()-.5)*.10;
+   const bx=cx+(ex-cx)*u,by=cy+(ey-cy)*u-2*s;
+   const tx=bx+b.dir*(6+local()*5)*s,ty=by-(3+local()*3.5)*s;
+   clusters.push({bx,by,tx,ty,dir:b.dir,j,c,id:seed+j*607+c*79});
   }
  }
- ctx.restore();
+ function foliage(q,front){
+  const local=randomFor(q.id+(front?1901:937)),scale=q.j>2?.79:1;
+  // Rear tufts sit slightly higher/sideways. Their grey remains visible through
+  // a few irregular openings; the darker near core and needles overlap them.
+  const ox=q.tx+(front?(local()-.5)*2.6:-q.dir*(1.5+local()*2.2))*s;
+  const oy=q.ty+(front?(local()-.5)*1.8:-(2+local()*2))*s;
+  const base=-1.58+q.dir*(.12+local()*.24),bias=local()>.45?.63:.36;
+  const color=front?'#20271f':'#717768',alpha=front?.82:.40;
+  // Unequal, offset short contacts bind the tuft; no symmetric two-fan stamp.
+  const reach=(front?7.4:6.2)*s*scale;
+  contact(ctx,[[ox-reach*.58,oy+1.1*s,.42],[ox-reach*.05,oy-1.3*s,.95],
+   [ox+reach*.43,oy-.15*s,.70],[ox+reach*.72,oy+.6*s,.04]],
+   (front?3.4:2.8)*s,alpha,front?.28:.39,q.id+(front?53:11),color);
+  if(front&&q.c%2===0)contact(ctx,[[ox-2*s,oy-.6*s,.35],[ox+.6*s,oy-2.9*s,.8],
+   [ox+3.5*s,oy-1.6*s,.03]],2.3*s,.64,.36,q.id+124,color);
+  const count=front?10+Math.floor(local()*5):6+Math.floor(local()*4);
+  const gap=base+(local()-.5)*.65;
+  for(let k=0;k<count;k++){
+   const lobe=local()<bias?-.48:.43;
+   let a=base+lobe+(local()-.5)*.78;
+   // The opening is local to this tuft, not a repeated missing wedge.
+   if(k%4===1&&Math.abs(a-gap)<.16)continue;
+   const short=local()<.28;
+   const len=(short?2.8+local()*2.2:4.5+Math.pow(local(),.8)*5.5)*s*scale;
+   const sx=ox+(local()-.5)*(front?5.4:4.0)*s,sy=oy+(local()-.5)*2.7*s;
+   const dx=Math.cos(a)*len,dy=Math.sin(a)*len,bend=(local()-.5)*1.8*s;
+   stroke(ctx,[[sx,sy,.40+local()*.25],[sx+dx*.50+Math.sin(a)*bend,sy+dy*.52,.55+local()*.24],
+    [sx+dx,sy+dy,.015]],(.45+Math.pow(local(),1.25)*.77)*s,
+    front?.65+local()*.28:.32+local()*.20,q.id+(front?2000:1000)+k*17,color);
+  }
+ }
+ ctx.save();
+ try{
+  // Fore/background drawing order supplies real overlap within this flat tree.
+  clusters.forEach(q=>foliage(q,false));
+  stroke(ctx,trunk,5.2*s,.93,seed);
+  contact(ctx,trunk.slice(0,5),2.2*s,.48,.63,seed+11,'#4b4d3d');
+  stroke(ctx,[[x,y-3*s,.9],[x-9*s,y+2*s,.5],[x-17*s,y+4*s,.02]],3*s,.88,seed+2);
+  stroke(ctx,[[x+1*s,y-3*s,.7],[x+9*s,y+1*s,.45],[x+15*s,y+3*s,.02]],2.5*s,.85,seed+3);
+  branches.forEach(b=>stroke(ctx,b.points,b.width,.91,seed+b.id*29));
+  clusters.forEach(q=>stroke(ctx,[[q.bx,q.by,.5],[q.tx,q.ty,.02]],1.1*s,.82,q.id+73));
+  clusters.forEach(q=>foliage(q,true));
+ }finally{ctx.restore();}
 }
 
 const SHORE=[[0,24],[34,15],[67,13],[103,21],[128,25],[170,29],[218,36],[258,45],[303,60],
