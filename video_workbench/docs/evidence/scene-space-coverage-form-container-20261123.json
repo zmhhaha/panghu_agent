@@ -1,0 +1,293 @@
+{
+  "schema": "video.scene-space-coverage-form-container-validation.v1",
+  "date": "2026-11-23",
+  "application_revision": "11281f0d8db4caeb79d90cb8a8cf848bd0e3ef21",
+  "executor_image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:8a8b921a4433c60f630cf800f6e41dbb017f4a7d9d656cc412eb205f9a45c4e8",
+  "renderer_image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+  "scope": "same_layout_new_manual_code_diagnostic_not_original_learning_run_success",
+  "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+  "artwork_api_revision": 2,
+  "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
+  "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+  "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+  "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+  "geometry": {
+    "world_layout_changed": false,
+    "object_extents_changed": false,
+    "camera_changed": false,
+    "form_variant_local_outline_changed": true,
+    "form_is_authored_2_5d": true
+  },
+  "cases": [
+    {
+      "artistic_acceptance": false,
+      "case_id": "baseline",
+      "checks": {
+        "reload_passed": true,
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "cf1d255a23e5f4267b6abdf44821e8cc22d920bd3c0dd89e1970daf1f16290b4"
+          }
+        ]
+      },
+      "error": null,
+      "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
+      "measured_controller_seconds": 21.95495745074004,
+      "model_calls": 0,
+      "operation_id": "scene-coverage-form-study-20261123-final-baseline",
+      "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+      "png_sha256": "cf1d255a23e5f4267b6abdf44821e8cc22d920bd3c0dd89e1970daf1f16290b4",
+      "reserved_seconds": 180,
+      "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+      "scene_space_observation": {
+        "artwork_api_revision": 2,
+        "cache_hits": 36,
+        "cache_pixels": 1583793,
+        "coverage_callbacks": 0,
+        "coverage_contexts": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "frames_composited": 4,
+        "objects_painted": 9,
+        "peak_work_pixels": 1843200,
+        "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+        "recipes_executed": 0,
+        "runtime_revision": "scene-space-compositor-2",
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "schema": "video.scene-space-compositor-observation.v1",
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216,
+          "numeric_bytes_reserved": 0
+        },
+        "surface_helper_calls": {},
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+      },
+      "schema": "video.scene-coverage-form-case.v1",
+      "scope": "same_layout_manual_source_study_not_original_picture_run_success",
+      "source_sha256": "6261944f5f92ee201a04565bb18b72c3f827b340417e78fcf549aec55b49f7a9",
+      "status": "rendered",
+      "stop_proven": true,
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "technical_passed": true
+    },
+    {
+      "artistic_acceptance": false,
+      "case_id": "coverage",
+      "checks": {
+        "reload_passed": true,
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "7b69f41be1916abf7594edafd8dd311fa25630d0427dd873be100a80709d7a24"
+          }
+        ]
+      },
+      "error": null,
+      "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
+      "measured_controller_seconds": 21.304060825146735,
+      "model_calls": 0,
+      "operation_id": "scene-coverage-form-study-20261123-final-coverage",
+      "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+      "png_sha256": "7b69f41be1916abf7594edafd8dd311fa25630d0427dd873be100a80709d7a24",
+      "reserved_seconds": 180,
+      "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+      "scene_space_observation": {
+        "artwork_api_revision": 2,
+        "cache_hits": 36,
+        "cache_pixels": 1583793,
+        "coverage_callbacks": 9,
+        "coverage_contexts": 1,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "frames_composited": 4,
+        "objects_painted": 9,
+        "peak_work_pixels": 2764800,
+        "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+        "recipes_executed": 0,
+        "runtime_revision": "scene-space-compositor-2",
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "schema": "video.scene-space-compositor-observation.v1",
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216,
+          "numeric_bytes_reserved": 0
+        },
+        "surface_helper_calls": {},
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+      },
+      "schema": "video.scene-coverage-form-case.v1",
+      "scope": "same_layout_manual_source_study_not_original_picture_run_success",
+      "source_sha256": "9f81d8f239a9372a42a1219a64a384e9f8e70f6b31bd27eca69cb0b24d35383c",
+      "status": "rendered",
+      "stop_proven": true,
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "technical_passed": true
+    },
+    {
+      "artistic_acceptance": false,
+      "case_id": "form",
+      "checks": {
+        "reload_passed": true,
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "9018962445354eaef8cc954b18ef48def70a1e405368e2290d27376b99d96491"
+          }
+        ]
+      },
+      "error": null,
+      "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
+      "measured_controller_seconds": 22.755126027856022,
+      "model_calls": 0,
+      "operation_id": "scene-coverage-form-study-20261123-final-form",
+      "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+      "png_sha256": "9018962445354eaef8cc954b18ef48def70a1e405368e2290d27376b99d96491",
+      "reserved_seconds": 180,
+      "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+      "scene_space_observation": {
+        "artwork_api_revision": 2,
+        "cache_hits": 36,
+        "cache_pixels": 1583793,
+        "coverage_callbacks": 9,
+        "coverage_contexts": 1,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "frames_composited": 4,
+        "objects_painted": 9,
+        "peak_work_pixels": 2764800,
+        "plan_sha256": "13c5dc24abd8ed7166829aaebeb5f14d85389e38848fd3f4ef6fc3d95c8e1006",
+        "recipes_executed": 0,
+        "runtime_revision": "scene-space-compositor-2",
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "schema": "video.scene-space-compositor-observation.v1",
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "surface_field_usage": {
+          "fields_created": 11,
+          "fields_reserved": 11,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216,
+          "numeric_bytes_reserved": 1892352
+        },
+        "surface_helper_calls": {
+          "createSurfaceField": 11,
+          "paintSurfaceWash": 11,
+          "sampleSurface": 12500
+        },
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+      },
+      "schema": "video.scene-coverage-form-case.v1",
+      "scope": "same_layout_manual_source_study_not_original_picture_run_success",
+      "source_sha256": "257adaba6ed7ba71482fbd6d55fbe7eec8cf63ffa0aaf3e8e313796cd6b24c55",
+      "status": "rendered",
+      "stop_proven": true,
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "technical_passed": true
+    }
+  ],
+  "usage": {
+    "new_model_calls": 0,
+    "measured_controller_seconds": 66.0141443037428,
+    "measured_study_seconds": 66.1816032640636,
+    "maximum_case_seconds": 180,
+    "maximum_total_seconds": 540,
+    "reservations_all_settled": true,
+    "ledger_status": "usage_unknown",
+    "baseline_model_tokens": null,
+    "can_start_export": false,
+    "scope": "three_preview_operations_only_original_unknown_usage_retained"
+  },
+  "legacy_control": {
+    "png_identical_to_previous_diagnostic": true,
+    "previous_png_sha256": "cf1d255a23e5f4267b6abdf44821e8cc22d920bd3c0dd89e1970daf1f16290b4"
+  },
+  "visual_review": {
+    "actual_container_images_viewed": true,
+    "coverage": "Distant ridge no longer crosses the solid light faces; silhouette exterior remains visible.",
+    "form": "Asymmetric outlines, branching ridges/valleys and form-following marks improve volume; no visible regular grid seams.",
+    "limitations": [
+      "Form variant also changes local shape; do not attribute all improvement to normals.",
+      "Smooth tonal wash, hard contour corners and uniform fine lines still look sculptural; traditional ink quality is not accepted.",
+      "Foreground tree/bank style was retained."
+    ],
+    "artistic_acceptance": false
+  },
+  "formal_picture_runs_modified": false,
+  "wikiskill_published": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "deployment": {
+    "status": "deployed_and_verified",
+    "scope": "learning_executor_only",
+    "health_passed": true,
+    "live_artwork_api_revision": 2,
+    "live_runtime_hashes_matched": true,
+    "production_scene_queue_enabled": false,
+    "source_overlays": false,
+    "rollout_ready": true,
+    "image_only_target_spec_verified": true,
+    "deployments_checked": 89,
+    "unchanged_other_deployments": 88,
+    "diagnostic_controller_removed": true
+  },
+  "artifacts": [
+    {
+      "path": "D:/codex-work/operations/scene-coverage-form-20261123/release/study-evidence/study-result.json",
+      "sha256": "1b17c45e2aa146d1d1414a86b6417e094ba445c4370c368893ede93adfd5ed5d"
+    },
+    {
+      "path": "D:/codex-work/operations/scene-coverage-form-20261123/release/study-evidence/ledger-after.json",
+      "sha256": "fbce8a5ab087ad2492c4734077fcb897fc267a69d8680d1e7ae0a53b07dba51c"
+    },
+    {
+      "path": "D:/codex-work/operations/scene-coverage-form-20261123/comparison.png",
+      "sha256": "1f52c315963db7e0a679848128e320c90a82e9a7e14e6eca3c58ed02a2e18a51"
+    },
+    {
+      "path": "D:/codex-work/operations/scene-coverage-form-20261123/release/deployed.json",
+      "sha256": "90b864e3920e669c3ede907423843c4cecc330361eb02ed838091212a7a60f5e"
+    },
+    {
+      "path": "D:/codex-work/operations/scene-coverage-form-20261123/release/evidence/release-verification.json",
+      "sha256": "2713f34687dfd780c374f1d514a00b909102263aaf1196542a513d33a5481f88"
+    }
+  ],
+  "observation_metrics_scope": "first_observed_page_instance_reload_reinitializes_its_own_caches_and_fields",
+  "retained_record_verification": {
+    "active": [],
+    "before_after_deployment_equal": true,
+    "deployment_tables": 12,
+    "live_matches_deployment_after": true,
+    "original_table_subset_unchanged": true,
+    "original_tables": 10
+  }
+}
