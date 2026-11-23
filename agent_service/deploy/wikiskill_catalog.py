@@ -11,6 +11,7 @@ import re
 
 from agent_service.catalog import CATALOG_KEYS
 from agent_service.compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
+    COMPILATION_EVIDENCE_ENVIRONMENT_NAME, COMPILATION_CHECKED_ENVIRONMENT_NAME,
     compilation_input_environment_revision, verified_compilation_input_extension)
 from agent_service.contracts import digest
 from agent_service.deploy.animation_review_catalog import _model, _pool
@@ -23,8 +24,9 @@ from agent_service.worker_entry import HostConfig, PI_ADAPTER_REVISION, host_pol
 
 
 PROFILES = ('video.animation-wikiskill-compile.v1', 'video.joint-plan.v2',
-            'video.animation-wikiskill-compile.v2')
-COMPILER_PROFILES = (PROFILES[0], PROFILES[2])
+            'video.animation-wikiskill-compile.v2', 'video.animation-wikiskill-compile.v3',
+            'video.animation-wikiskill-compile.v4')
+COMPILER_PROFILES = (PROFILES[0], PROFILES[2], PROFILES[3], PROFILES[4])
 
 
 def role(profile):
@@ -33,8 +35,12 @@ def role(profile):
         from agent_service.profiles import video_animation_wikiskill as module
     elif profile == PROFILES[1]:
         from agent_service.profiles import video_joint_plan_skills as module
-    else:
+    elif profile == PROFILES[2]:
         from agent_service.profiles import video_animation_wikiskill_v2 as module
+    elif profile == PROFILES[3]:
+        from agent_service.profiles import video_animation_wikiskill_v3 as module
+    else:
+        from agent_service.profiles import video_animation_wikiskill_v4 as module
     return module
 
 
@@ -81,9 +87,12 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
             dict(name=row['path'], sha256=row['sha256']) for row in manifests[module.BUNDLE_REVISION]['local_files']]))
     skills = 'skill_read' in handler.required_tools
     compilation_input = 'read_compilation_input' in handler.required_tools
+    compilation_environment = (COMPILATION_CHECKED_ENVIRONMENT_NAME if profile == PROFILES[4]
+        else COMPILATION_EVIDENCE_ENVIRONMENT_NAME if profile == PROFILES[3]
+        else COMPILATION_INPUT_ENVIRONMENT_NAME)
     if compilation_input:
-        verified_compilation_input_extension()
-    environment_data = dict(name=(COMPILATION_INPUT_ENVIRONMENT_NAME if compilation_input
+        verified_compilation_input_extension(compilation_environment)
+    environment_data = dict(name=(compilation_environment if compilation_input
             else SKILL_TOOLS_ENVIRONMENT_NAME if skills else 'tools-pi-wikiskill-evidence'),
         tools=list(handler.required_tools), capabilities=[handler.output_schema],
         image_digest=worker_image.rsplit('@', 1)[1],
@@ -92,7 +101,9 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
         else skill_tools_environment_revision(environment_data) if skills
         else 'evidence-' + digest(environment_data))
     environment = ToolEnvironment.model_validate(environment_data)
-    prefix = ('wikiskill-compile-v2' if profile == PROFILES[2]
+    prefix = ('wikiskill-compile-v4' if profile == PROFILES[4]
+        else 'wikiskill-compile-v3' if profile == PROFILES[3]
+        else 'wikiskill-compile-v2' if profile == PROFILES[2]
         else 'wikiskill-compile' if profile == PROFILES[0] else 'joint-plan-skills')
     binding_data = dict(id=prefix + '-pi', revision='v1', profile=profile, profile_revision='1',
         engine='pi', adapter_revision=PI_ADAPTER_REVISION,
@@ -138,7 +149,9 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
         before_sha256=digest(before), after_sha256=digest(merged),
         combination_sha256=fingerprint, binding_id=binding.id, binding_revision=binding.revision,
         worker_pool_id=name, worker_host_config_map=name,
-        acceptance_suite=('video.animation-wikiskill-compile-contract.v2' if profile == PROFILES[2]
+        acceptance_suite=('video.animation-wikiskill-compile-contract.v4' if profile == PROFILES[4]
+            else 'video.animation-wikiskill-compile-contract.v3' if profile == PROFILES[3]
+            else 'video.animation-wikiskill-compile-contract.v2' if profile == PROFILES[2]
             else 'video.animation-wikiskill-compile-contract.v1' if profile == PROFILES[0]
             else 'video.joint-plan-contract.v2'), source_pool_id=source_pool_id,
         route_enabled=False, pool_enabled=False, acceptance_created=False,

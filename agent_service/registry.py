@@ -20,7 +20,7 @@ from .catalog_limits import (CATALOG_READER_MAX_BYTES, CONTRACT_RECORD_LIMIT, HI
                              validate_catalog_budget)
 
 Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify', 'read_inputs',
-               'skill_search', 'skill_read', 'read_compilation_input']
+               'skill_search', 'skill_read', 'read_compilation_input', 'check_compilation_output']
 OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
     'ppt-generate-output.v1', 'ppt-revise-output.v1', 'ppt-prepare-output.v1',
     'research-output.v1', 'research-revision-output.v1', 'research-plan-output.v1',
@@ -38,7 +38,9 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-animation-film-module-output.v1',
     'video-animation-manim-recipe-output.v1',
     'video-joint-plan-output.v1', 'video-resource-plan-output.v1',
-    'video-animation-collaboration-output.v1']
+    'video-animation-collaboration-output.v1',
+    'video-picture-learning-author-output.v1', 'video-picture-learning-review-output.v1',
+    'video-reference-learning-author-output.v1', 'video-reference-learning-review-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -176,11 +178,27 @@ class ToolEnvironment(_Record):
 
     @model_validator(mode='after')
     def fixed_input_reader(self):
-        if 'read_compilation_input' in self.tools:
+        if self.name == 'tools-pi-reference-learning':
+            from .reference_learning_tools import environment_revision
+            if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
+                    or not set(self.capabilities) <= {'video-reference-learning-author-output.v1',
+                                                     'video-reference-learning-review-output.v1'}
+                    or self.revision != environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Reference learning requires its fixed extension identity and exact tool scope')
+        elif self.name == 'tools-pi-picture-learning':
+            from .picture_learning_tools import environment_revision
+            if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
+                    or not set(self.capabilities) <= {'video-picture-learning-author-output.v1',
+                                                     'video-picture-learning-review-output.v1'}
+                    or self.revision != environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Picture learning requires its fixed extension identity and exact tool scope')
+        elif 'read_compilation_input' in self.tools:
             from .compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
-                compilation_input_environment_revision)
-            if (self.name != COMPILATION_INPUT_ENVIRONMENT_NAME
-                    or set(self.tools) != {'read_compilation_input', 'write'}
+                COMPILATION_EVIDENCE_ENVIRONMENT_NAME, COMPILATION_CHECKED_ENVIRONMENT_NAME,
+                compilation_input_environment_revision, compilation_tools)
+            if (self.name not in {COMPILATION_INPUT_ENVIRONMENT_NAME, COMPILATION_EVIDENCE_ENVIRONMENT_NAME,
+                                 COMPILATION_CHECKED_ENVIRONMENT_NAME}
+                    or set(self.tools) != compilation_tools(self.name)
                     or self.revision != compilation_input_environment_revision(self.model_dump(mode='json'))):
                 raise ValueError('Compilation reader requires its fixed extension identity and tool scope')
         elif {'skill_search', 'skill_read'} & set(self.tools):

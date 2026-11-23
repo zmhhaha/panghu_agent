@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>图片学习库 · Video Service</title>
+  <link rel="stylesheet" href="./method-gallery.css">
+  <link rel="stylesheet" href="./picture-library.css">
+  <script type="module" src="./picture-library.mjs"></script>
+</head>
+<body>
+  <div id="picture-library-app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="动画实验室首页"><span class="brand-icon" aria-hidden="true">◈</span><span><span class="eyebrow">VIDEO SERVICE · 开发者</span><strong>动画实验室</strong></span></a>
+      <nav class="workspace-nav" aria-label="开发者工作台"><a href="./">效果库</a><a href="./picture-library.html" aria-current="page">图片学习</a><a href="./video-library.html">视频学习</a><a href="./knowledge.html">知识库</a></nav>
+    </header>
+    <main class="workspace">
+      <div class="workspace-actionbar">
+        <div class="library-sync" aria-label="图片学习进度"><p id="picture-sync" class="small muted" role="status">正在读取图片学习库…</p><button id="picture-refresh" class="button secondary" type="button">手动刷新</button></div>
+        <button id="picture-new" class="button primary" type="button" disabled>新建图片学习</button>
+      </div>
+      <p id="picture-message" class="message" role="status" aria-live="polite" hidden></p>
+      <section id="picture-pending" class="panel" hidden aria-labelledby="picture-pending-title">
+        <h2 id="picture-pending-title">原提交结果待核对</h2><p class="muted">这次请求已保存在本浏览器。刷新只读取状态；重送会使用相同请求编号和内容，不另开一项实验。</p>
+        <button id="picture-pending-retry" class="button secondary" type="button">重送原请求</button>
+      </section>
+      <section id="picture-home" aria-labelledby="picture-title">
+        <div class="page-heading"><div><p class="eyebrow">观察参考 · 真实绘制 · 比较学习</p><h1 id="picture-title">图片学习库</h1><p class="muted">先把一帧做好。从视频链接按需取帧，或上传参考图，学习造型、笔触、材质或光影；保留绘制源码和实际渲染结果。</p></div><span id="picture-count" class="count"></span></div>
+        <p id="picture-availability" class="muted" role="status"></p>
+        <div class="gallery-tools"><label class="search-label" for="picture-search">查找学习项目<input id="picture-search" type="search" placeholder="名称或学习目标" autocomplete="off"></label></div>
+        <div id="picture-cards" class="gallery-grid" aria-live="polite"></div>
+        <div id="picture-empty" class="empty-state" hidden><span aria-hidden="true">▧</span><h2>从一张想学会的图开始</h2><p>可以追求整体画面相似，也可以指定重点技法。每次实验先复现，再在预算允许时换内容验证一次。</p><button id="picture-empty-new" class="button primary" type="button">提交参考图</button></div>
+      </section>
+      <section id="picture-detail" hidden aria-label="学习项目详情"></section>
+      <section id="picture-animation-panel" class="panel experiment-form" hidden aria-labelledby="picture-animation-title">
+        <div class="panel-heading"><h2 id="picture-animation-title">从选定图片创作动画</h2><button id="picture-animation-close" class="button secondary" type="button">返回图片详情</button></div>
+        <p class="muted">沿用这份图片的绘制源码和技法，新建关联的原创动画项目。原图片与历史保持，动作、节奏和声音将另行制作验证。</p>
+        <form id="picture-animation-form">
+          <label for="picture-animation-goal">希望画面如何动起来<textarea id="picture-animation-goal" name="goal" rows="4" maxlength="8000" required placeholder="描述希望呈现的变化、运动、节奏和收束。"></textarea></label>
+          <div class="form-row"><label for="picture-animation-duration">动画时长（秒）<input id="picture-animation-duration" name="duration_seconds" type="number" min="1" max="60" value="8" required></label><label for="picture-animation-rounds">最多探索轮数<input id="picture-animation-rounds" name="max_rounds" type="number" min="1" max="8" value="1" required></label><label for="picture-animation-minutes">时间上限（分钟）<input id="picture-animation-minutes" name="max_minutes" type="number" min="1" max="60" value="15" required></label></div>
+          <label class="checkbox-label"><input id="picture-animation-wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>
+          <button id="picture-animation-submit" class="button primary" type="submit">新建关联动画</button>
+        </form>
+      </section>
+      <section id="picture-form-panel" class="panel experiment-form" hidden aria-labelledby="picture-form-title">
+        <div class="panel-heading"><div><p class="eyebrow">一次有边界的图片学习</p><h2 id="picture-form-title">新建图片学习</h2></div><button id="picture-form-close" class="button secondary" type="button">返回图片学习库</button></div>
+        <form id="picture-form">
+          <p id="picture-form-note" class="message" hidden></p>
+          <div id="picture-new-fields">
+            <label for="picture-name">学习项目名称<input id="picture-name" name="title" maxlength="200" required placeholder="例如：学习山石的皴擦与留白"></label>
+            <label for="picture-goal">这次重点学什么<textarea id="picture-goal" name="goal" rows="4" maxlength="8000" required placeholder="说明想复现的造型、笔触、材质、光影或构图技法，以及不需要照搬的内容。"></textarea></label>
+            <label for="picture-reference-source">参考来源<select id="picture-reference-source" name="reference_source"><option value="video-url">从视频链接取帧</option><option value="upload">上传参考图片</option><option value="saved">选择已保存参考</option></select></label>
+            <div id="picture-url-fields">
+              <label for="picture-source-url">源视频链接<input id="picture-source-url" name="source_url" type="url" maxlength="2000" placeholder="https://www.bilibili.com/video/…" required></label>
+              <label for="picture-timestamp">截图时间（秒）<input id="picture-timestamp" name="timestamp_seconds" type="number" min="0" step="any" value="0" required></label>
+              <p class="small muted">开始实验后按需从源站读取这一帧，不长期保存整条参考视频。填写链接本身不代表已观察，实际取到的画质会记录在项目中。</p>
+              <details class="form-details"><summary>只学习画面中的局部（可选）</summary><p class="small muted">使用 0–1 的画面比例。全部留空表示完整画面；填写时需要完整指定四项。</p><div class="form-row"><label for="picture-crop-x">左侧位置<input id="picture-crop-x" name="crop_x" type="number" min="0" max="1" step="any" placeholder="0"></label><label for="picture-crop-y">顶部位置<input id="picture-crop-y" name="crop_y" type="number" min="0" max="1" step="any" placeholder="0"></label><label for="picture-crop-width">宽度<input id="picture-crop-width" name="crop_width" type="number" min="0" max="1" step="any" placeholder="1"></label><label for="picture-crop-height">高度<input id="picture-crop-height" name="crop_height" type="number" min="0" max="1" step="any" placeholder="1"></label></div></details>
+            </div>
+            <div id="picture-upload-fields" hidden><label for="picture-reference">参考图片<input id="picture-reference" type="file" accept="image/png,image/jpeg"><span class="small muted">上传实际 PNG / JPEG 图片，最大 8 MB。参考比例与输出画幅可以不同。</span></label></div>
+            <div id="picture-saved-fields" hidden><label for="picture-saved-reference">已保存参考<select id="picture-saved-reference" name="reference_id"><option value="">请选择参考</option></select></label></div>
+            <div id="picture-reference-preview" class="upload-preview" hidden></div>
+            <div class="form-row picture-dimensions"><label for="picture-width">输出宽度（像素）<input id="picture-width" name="width" type="number" min="320" max="1920" step="1" value="1280" required></label><label for="picture-height">输出高度（像素）<input id="picture-height" name="height" type="number" min="180" max="1080" step="1" value="720" required></label></div>
+            <label for="picture-criteria">可观察的标准（可选，每行一项）<textarea id="picture-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：山体由皴擦形成体积，而不是重复的带状墨块。留空时由 Agent 根据目标拟定。"></textarea></label>
+          </div>
+          <label id="picture-feedback-label" for="picture-feedback" hidden>用于下一次实验的意见<textarea id="picture-feedback" name="feedback" rows="4" maxlength="8000" placeholder="描述当前画面具体哪里不理想，以及本次希望尝试的方向。"></textarea></label>
+          <details id="picture-learning-options" class="form-details"><summary>创作能力与学习方式</summary>
+            <fieldset><legend>画面创作（可多选）</legend>
+              <label class="checkbox-label"><input id="picture-creation-html-svg" type="checkbox"><span>HTML/SVG</span></label>
+              <label class="checkbox-label"><input id="picture-creation-canvas" type="checkbox"><span>Canvas 2D</span></label>
+              <label class="checkbox-label"><input id="picture-creation-three" type="checkbox"><span>Three.js</span></label>
+              <label class="checkbox-label"><input id="picture-creation-manim" type="checkbox"><span>Manim</span></label>
+              <p class="small muted">Agent 从所选能力中按目标选择或组合；留空则按已准入能力自主选择。不可用的能力会停用。</p>
+              <p id="picture-manim-help" class="small muted"></p>
+            </fieldset>
+            <label class="checkbox-label"><input id="picture-allow-probes" type="checkbox" checked><span>允许按需制作内部技法小样</span></label>
+            <label class="checkbox-label"><input id="picture-allow-collaboration" type="checkbox" checked><span>允许按需分工创作</span></label>
+            <p class="small muted">Agent 只在有助于目标时安排，最多 2 个内部小样、2–3 个部件，按依赖顺序执行。创作、渲染、评审与整合共用本次预算；关闭后直接创作完整作品。</p>
+          </details>
+          <label class="checkbox-label" for="picture-use-wikiskill"><input id="picture-use-wikiskill" name="use_wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>
+          <p id="picture-skill-help" class="small muted">本次固定所用版本。关闭后仍提供绘制工具与渲染规范，不注入已发布的技法；本次形成的方法可用于换内容验证。</p>
+          <details id="picture-budget-fields" class="form-details"><summary>本次预算</summary><div class="form-row"><label for="picture-rounds">最多探索轮数<input id="picture-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="picture-minutes">时间上限（分钟）<input id="picture-minutes" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><p class="small muted">预算覆盖创作、渲染、评审和换内容验证。预算不足时优先保存复现进展；之后可继续发起实验。</p></details>
+          <div class="form-footer"><p class="small muted">运行中只能查看或停止。新意见在下一次实验生效；不会自动发布知识。</p><button id="picture-submit" class="button primary" type="submit">开始图片学习</button></div>
+        </form>
+      </section>
+    </main>
+    <footer class="page-footer">图片结果只支持对应范围内的静态结论。源码可继续开发；运动与声音需要之后实际制作和验证。<a href="./picture-api.openapi.json">结构化 JSON API</a></footer>
+  </div>
+</body>
+</html>

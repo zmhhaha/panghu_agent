@@ -7,9 +7,12 @@ import re
 from urllib.parse import quote, unquote
 
 from .animation_creation_http import CreationAPIClient, CreationTransportError, _require, _json, MAX_ARTIFACT, MAX_JSON
+from .picture_learning_http import PictureLabClient
+from .video_learning_http import VideoLabClient
 
 PREFIX = '/api/method-lab'
 MAX_WIKISKILL_JSON = 18 * 1024 * 1024
+MAX_PROMPT_INSPECTION_JSON = 6 * 1024 * 1024
 
 
 def _identifier(value, *, encoded=False):
@@ -42,13 +45,49 @@ def _send_wikiskill(handler, value, status=200):
     handler._send(raw, status, raw=True, mime='application/json; charset=utf-8')
 
 
+def prompt_inspection_bytes(value):
+    """Keep frozen input content exact and out of ordinary detail polling."""
+    try:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                         allow_nan=False, separators=(',', ':')).encode('utf-8')
+    except (TypeError, ValueError, UnicodeError):
+        raise CreationTransportError('animation_method_prompt_inspection_invalid', 502) from None
+    _require(len(raw) <= MAX_PROMPT_INSPECTION_JSON,
+             'animation_method_prompt_inspection_too_large', 413)
+    return raw
+
+
+def _send_prompt_inspection(handler, value):
+    handler._send(prompt_inspection_bytes(value), raw=True, mime='application/json; charset=utf-8')
+
+
 def _wikiskill(service):
     coordinator = getattr(service, 'wikiskill', None)
     _require(coordinator is not None, 'animation_wikiskill_unavailable', 503)
     return coordinator
 
 
-class MethodLabClient(CreationAPIClient):
+class MethodLabClient(PictureLabClient, VideoLabClient):
+    def _prompt_inspection_read(self, owner, path):
+        raw, mime = self._request(owner, 'GET', path, artifact=True,
+                                  response_limit=MAX_PROMPT_INSPECTION_JSON)
+        _require(mime == 'application/json', 'animation_method_prompt_inspection_invalid', 502)
+        try:
+            value = _json(raw)
+        except (ValueError, TypeError, UnicodeError):
+            raise CreationTransportError('animation_method_prompt_inspection_invalid', 502) from None
+        _require(type(value) is dict, 'animation_method_prompt_inspection_invalid', 502)
+        return value
+
+    def prompt_inspection(self, owner, commission_id):
+        return self._prompt_inspection_read(owner, PREFIX + '/commissions/' +
+            quote(_identifier(commission_id), safe='') + '/prompt-inspection')
+
+    def operation_input(self, owner, commission_id, operation_id):
+        return self._prompt_inspection_read(owner, PREFIX + '/commissions/' +
+            quote(_identifier(commission_id), safe='') + '/operations/' +
+            quote(_identifier(operation_id), safe='') + '/input')
+
     def _wikiskill_read(self, owner, suffix):
         raw, mime = self._request(owner, 'GET', PREFIX + '/knowledge/library' + suffix,
                                   artifact=True, response_limit=MAX_WIKISKILL_JSON)
@@ -103,7 +142,7 @@ class MethodLabClient(CreationAPIClient):
         return self._request(owner, 'POST', PREFIX + '/commissions', body)
 
     def action(self, owner, commission_id, action, body):
-        _require(action in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'})
+        _require(action in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer', 'adopt'})
         return self._request(owner, 'POST', PREFIX + '/commissions/' +
                              quote(commission_id, safe='') + '/' + action, body)
 
@@ -139,6 +178,9 @@ class MethodLabClient(CreationAPIClient):
 
     def method_version(self, owner, method_version_id):
         return self._request(owner, 'GET', PREFIX + '/methods/' + quote(_identifier(method_version_id), safe=''))
+
+    def method_scene_space(self,owner,method_version_id):
+        return self._request(owner,'GET',PREFIX+'/methods/'+quote(_identifier(method_version_id),safe='')+'/scene-space')
 
     def accept_validation(self, owner, validation_id, body):
         return self._request(owner, 'POST', PREFIX + '/validations/' + quote(_identifier(validation_id), safe='') + '/accept', body)
@@ -188,6 +230,9 @@ def route_private(handler, owner, method, path, body=None):
         if len(pieces) == 3 and pieces[0] == 'methods' and pieces[2] == 'readiness':
             _send_bounded(handler, service.publication_readiness(owner, _identifier(pieces[1], encoded=True)))
             return True
+        if len(pieces)==3 and pieces[0]=='methods' and pieces[2]=='scene-space':
+            _send_bounded(handler,service.get_method_scene_space(owner,_identifier(pieces[1],encoded=True)))
+            return True
         if pieces == ['methods', 'published']:
             catalogue = getattr(service, 'published_catalogue', None)
             value = catalogue(owner) if callable(catalogue) else dict(methods=service.methods.list_methods(owner, published_only=True))
@@ -201,6 +246,15 @@ def route_private(handler, owner, method, path, body=None):
             return True
         if len(pieces) == 2 and pieces[0] == 'commissions':
             handler._send(service.get(owner, pieces[1]))
+            return True
+        if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] == 'prompt-inspection':
+            _send_prompt_inspection(handler,
+                service.prompt_inspection(owner, _identifier(pieces[1], encoded=True)))
+            return True
+        if (len(pieces) == 5 and pieces[0] == 'commissions' and pieces[2] == 'operations'
+                and pieces[4] == 'input'):
+            _send_prompt_inspection(handler, service.operation_input(owner,
+                _identifier(pieces[1], encoded=True), _identifier(pieces[3], encoded=True)))
             return True
         if len(pieces) == 5 and pieces[0] == 'commissions' and pieces[2] == 'candidates':
             _require(pieces[4] in {'media', 'source'})
@@ -247,7 +301,7 @@ def route_private(handler, owner, method, path, body=None):
                 owner, _identifier(pieces[1], encoded=True), body))
             return True
         if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] in {
-                'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'}:
+                'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer', 'adopt'}:
             handler._send(getattr(service, pieces[2])(owner, pieces[1], body))
             # Developer opinions are metadata, never a reason to schedule Agent
             # work. Only execution-affecting actions wake the coordinator.

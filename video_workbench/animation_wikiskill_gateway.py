@@ -31,7 +31,7 @@ def stopped_job(job, *, profile, revision='1'):
 
 
 class AnimationWikiSkillGateway(_AnimationGateway):
-    profile = 'video.animation-wikiskill-compile.v2'
+    profile = 'video.animation-wikiskill-compile.v4'
     input_name, result_name = INPUT_NAME, RESULT_NAME
     input_role = 'animation_wikiskill_input'
     business_prefix, idempotency_prefix = 'animation-wikiskill:', 'wikiskill-'
@@ -59,7 +59,8 @@ class AnimationWikiSkillGateway(_AnimationGateway):
                 'animation_wikiskill_input_ref_duplicate', 502)
         return refs
 
-    def prepare_submission(self, operation_id, document, deadline_at, input_refs=None):
+    def prepare_submission(self, operation_id, document, deadline_at, input_refs=None, *,
+                           collection_reserve_seconds=0):
         key = self._operation_key(operation_id)
         raw = self._document_bytes(document)
         expected = {self.input_name: hashlib.sha256(raw).hexdigest(),
@@ -76,12 +77,17 @@ class AnimationWikiSkillGateway(_AnimationGateway):
                 'animation_wikiskill_input_refs_invalid')
             names.add(ref['path'])
             ids.add(ref['input_id'])
-        route = self.preflight(deadline_at)
-        remaining = deadline_at - time.time()
+        require(type(collection_reserve_seconds) is int and collection_reserve_seconds in {0, 250},
+            'animation_wikiskill_publication_timing_invalid', 409)
+        # Only the publisher's new timing marker supplies this reserve. The
+        # public Agent request and the compiler's existing 900s route stay fixed.
+        execution_deadline = deadline_at - collection_reserve_seconds
+        route = self.preflight(execution_deadline)
+        remaining = execution_deadline - time.time()
         require(remaining > 0, 'animation_wikiskill_deadline_expired', 409)
         request = dict(api_version='1', profile=self.profile, profile_revision=self.profile_revision,
             business_ref=self.business_prefix + operation_id, task=dict(input_sha256=hashlib.sha256(raw).hexdigest()),
-            inputs=[dict(row) for row in input_refs], execution_deadline_at=deadline_at,
+            inputs=[dict(row) for row in input_refs], execution_deadline_at=execution_deadline,
             timeout_seconds=min(900, route['max_timeout_seconds'], math.ceil(remaining)))
         def admit():
             response = self._remote(self.client.submit, request, idempotency_key=key)

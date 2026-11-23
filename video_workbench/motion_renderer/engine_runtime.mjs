@@ -1,12 +1,13 @@
 // Shared trusted host support. These guards measure native contexts; author
 // declarations and screenshots alone cannot establish which engine executed.
 export const ENGINE_RUNTIME_REVISION='animation-engine-runtime-1';
+export const MAX_CANVAS_CONTEXTS=500;
 export const THREE_VERSION='0.170.0';
 export const THREE_ASSET_SHA256='08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7';
 export const THREE_LICENSE_SHA256='4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454';
 export function engineSpec(engine){
  if(!['html-svg','canvas','three'].includes(engine))throw Error('creative_engine_not_admitted');
- return {engine,revision:ENGINE_RUNTIME_REVISION,
+ return {engine,revision:ENGINE_RUNTIME_REVISION,max_contexts:MAX_CANVAS_CONTEXTS,
   contexts:engine==='html-svg'?[]:engine==='canvas'?['2d']:['2d','webgl2'],
   asset_names:engine==='three'?['three.module.min.js']:[],
   ...(engine==='three'?{three:THREE_VERSION,three_sha256:THREE_ASSET_SHA256,
@@ -21,7 +22,7 @@ export function browserLaunchArgs(engine){
 }
 export async function installEngineGuard(context,engine){
  const spec=engineSpec(engine);
- await context.addInitScript(({engine,contexts,revision})=>{
+ await context.addInitScript(({engine,contexts,revision,max_contexts})=>{
   const native=HTMLCanvasElement.prototype.getContext,seen=new Map();
   const boxOf=Element.prototype.getBoundingClientRect,styleOf=window.getComputedStyle;
   const widthOf=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'width').get;
@@ -35,7 +36,7 @@ export async function installEngineGuard(context,engine){
     if(!contexts.includes(kind))throw Error('creative_engine_not_admitted');
     const value=native.call(this,kind,kind==='webgl2'?{...options,preserveDrawingBuffer:true}:options);
     if(value&&!seen.has(value)){
-     if(seen.size>=16)throw Error('creative_context_budget');
+     if(seen.size>=max_contexts)throw Error('creative_context_budget');
      seen.set(value,{canvas:this,kind});
     }
     return value;
@@ -99,7 +100,7 @@ export async function verifyPageEngine(page,engine,{requireContext=true}={}){
  if(evidence.engine!==engine||evidence.revision!==ENGINE_RUNTIME_REVISION)
   throw Error('creative_engine_guard_mismatch');
  const contexts=evidence.contexts;
- if(!Array.isArray(contexts)||contexts.length>16)throw Error('creative_context_budget');
+ if(!Array.isArray(contexts)||contexts.length>MAX_CANVAS_CONTEXTS)throw Error('creative_context_budget');
  if(engine==='html-svg'&&contexts.length)throw Error('creative_engine_not_admitted');
  if(engine==='canvas'&&contexts.some(row=>row.kind!=='2d'))throw Error('creative_engine_not_admitted');
  if(engine==='three'&&contexts.some(row=>row.kind==='webgl2'&&(!row.software||row.context_lost||row.gl_error!==0)))

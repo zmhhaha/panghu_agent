@@ -1,0 +1,278 @@
+{
+  "schema": "video.picture-learning-render-validation.v1",
+  "date": "2026-11-18",
+  "source_revision": "70aa9065e4904bbc4c16ec1fa11768cce842ab81",
+  "operation_guard_revision": "7abec1d898d5b11431f89c11ec95df57563c5655",
+  "renderer_files_unchanged_between_revisions": [
+    "video_workbench/picture_learning_renderer.py",
+    "video_workbench/picture_learning_host.mjs",
+    "video_workbench/motion_renderer/engine_runtime.mjs",
+    "video_workbench/motion_renderer/hyperframes_project.mjs"
+  ],
+  "executor_image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:c533a680dc457ff9208e6700a173ef5258d297b86ee1f25af1dc21410a87eec2",
+  "renderer_image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+  "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+  "real_render_acceptance": {
+    "remote_directory": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output",
+    "local_directory": "D:\\codex-work\\archives\\video-service\\20261118\\picture-learning-render-acceptance",
+    "elapsed_seconds": 18.1655286969617,
+    "summary_sha256": "6179aa6925fa2f7bb872668ea162e75b0c549df78fae025506603745afa35646",
+    "summary_file_sha256": "7a1096e8d7c1afda7dfc5640de0085329835251071176c4368e24a82b63a3268",
+    "cases": [
+      {
+        "archive_comparison": {
+          "actual_png_sha256": "46dc89107546748c60bd44410349b41756711a18088d74fde030df73b7d123dd",
+          "exact_pixels": true,
+          "mean_absolute_rgb": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "original_png_sha256": "46dc89107546748c60bd44410349b41756711a18088d74fde030df73b7d123dd",
+          "scope": "pixel_comparison_to_existing_archived_render_not_new_artistic_acceptance"
+        },
+        "name": "archived-ink",
+        "operation_id": "picture-png-acceptance-20261118-r1-archived-ink",
+        "result": {
+          "evidence_scope": "static_only",
+          "evidence_sha256": "d75f75a8196d942693d40f7fb3bbaa0a66ef2fd751d22b6ee61fb69ba8fba203",
+          "height": 906,
+          "mime": "image/png",
+          "picture_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/5de38c7b0cd9ff7d0fc18883d100bd5762b842f68ce7aabe02004ceb7c5d71f3/work/output.png",
+          "receipt_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/5de38c7b0cd9ff7d0fc18883d100bd5762b842f68ce7aabe02004ceb7c5d71f3/work/render-receipt.json",
+          "runtime": {
+            "engine": "canvas",
+            "engine_observation": {
+              "contexts": [
+                {
+                  "connected": true,
+                  "height": 906,
+                  "kind": "2d",
+                  "visible": true,
+                  "width": 1800
+                },
+                {
+                  "connected": false,
+                  "height": 906,
+                  "kind": "2d",
+                  "visible": false,
+                  "width": 1800
+                },
+                {
+                  "connected": false,
+                  "height": 906,
+                  "kind": "2d",
+                  "visible": false,
+                  "width": 1800
+                },
+                {
+                  "connected": false,
+                  "height": 26,
+                  "kind": "2d",
+                  "visible": false,
+                  "width": 24
+                }
+              ],
+              "engine": "canvas",
+              "revision": "animation-engine-runtime-1"
+            },
+            "evidence_scope": "static_only",
+            "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+            "image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+            "project_runtime": "hyperframes-core-project-1"
+          },
+          "sha256": "46dc89107546748c60bd44410349b41756711a18088d74fde030df73b7d123dd",
+          "source_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/5de38c7b0cd9ff7d0fc18883d100bd5762b842f68ce7aabe02004ceb7c5d71f3/source.json",
+          "status": "rendered",
+          "stop_proven": true,
+          "technical_passed": true,
+          "width": 1800
+        },
+        "source_sha256": "8921a3a3ae87a174b6e8145822adccc67612e3b0336d524275c59fa158c6cae7"
+      },
+      {
+        "name": "canvas-fixture",
+        "operation_id": "picture-png-acceptance-20261118-r1-canvas-fixture",
+        "result": {
+          "evidence_scope": "static_only",
+          "evidence_sha256": "1c6a01e9f3553dba680e560b4c3ecd4dd6ec8db9278676d0f59444bebdb062dc",
+          "height": 360,
+          "mime": "image/png",
+          "picture_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/8e8d2721d5a08b6b2e0e2d2f1c610b9249df5f4ca34eef49c4b5b2864dfaf917/work/output.png",
+          "receipt_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/8e8d2721d5a08b6b2e0e2d2f1c610b9249df5f4ca34eef49c4b5b2864dfaf917/work/render-receipt.json",
+          "runtime": {
+            "engine": "canvas",
+            "engine_observation": {
+              "contexts": [
+                {
+                  "connected": true,
+                  "height": 360,
+                  "kind": "2d",
+                  "visible": true,
+                  "width": 640
+                }
+              ],
+              "engine": "canvas",
+              "revision": "animation-engine-runtime-1"
+            },
+            "evidence_scope": "static_only",
+            "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+            "image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+            "project_runtime": "hyperframes-core-project-1"
+          },
+          "sha256": "1d4820cf9dc2e6e1170e237bfe4d7096c6636fa7d8a6d0f7da2d0ba803b7bf32",
+          "source_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/8e8d2721d5a08b6b2e0e2d2f1c610b9249df5f4ca34eef49c4b5b2864dfaf917/source.json",
+          "status": "rendered",
+          "stop_proven": true,
+          "technical_passed": true,
+          "width": 640
+        },
+        "source_sha256": "0a0364116590d43a6437a341974e714c3c1b35269c0d07348d148b4849aa6977"
+      },
+      {
+        "name": "three-fixture",
+        "operation_id": "picture-png-acceptance-20261118-r1-three-fixture",
+        "result": {
+          "evidence_scope": "static_only",
+          "evidence_sha256": "90e8fb50ddcfde53f2df7ddd4f89515dc1de4e578b6546c1f5c66add39476bc2",
+          "height": 360,
+          "mime": "image/png",
+          "picture_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/17b8012567945209111d6e5adfc2346846f1019777f93c146421985e6e685c2b/work/output.png",
+          "receipt_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/17b8012567945209111d6e5adfc2346846f1019777f93c146421985e6e685c2b/work/render-receipt.json",
+          "runtime": {
+            "engine": "three",
+            "engine_observation": {
+              "contexts": [
+                {
+                  "connected": true,
+                  "context_lost": false,
+                  "gl_error": 0,
+                  "height": 360,
+                  "kind": "webgl2",
+                  "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 10.0.0) (0x0000C0DE)), SwiftShader driver)",
+                  "software": true,
+                  "visible": true,
+                  "width": 640
+                }
+              ],
+              "engine": "three",
+              "revision": "animation-engine-runtime-1"
+            },
+            "evidence_scope": "static_only",
+            "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+            "image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+            "project_runtime": "hyperframes-core-project-1"
+          },
+          "sha256": "9fcfd9a4789357b12fda5e357dd3dae99addd644832a55d788d3559f0fc06ee1",
+          "source_path": "/root/video-releases/picture-learning-20261118/render-acceptance-r1/output/picture-renders/operations/17b8012567945209111d6e5adfc2346846f1019777f93c146421985e6e685c2b/source.json",
+          "status": "rendered",
+          "stop_proven": true,
+          "technical_passed": true,
+          "width": 640
+        },
+        "source_sha256": "73f02b8af05366b8c305d1eae96393d7391f1e22986a40a356819f1e489fc4fa"
+      }
+    ]
+  },
+  "exact_author_result_render": {
+    "remote_directory": "/root/video-releases/picture-learning-20261118/candidate-picture-author-r1/render-proof",
+    "local_directory": "D:\\codex-work\\archives\\video-service\\20261118\\picture-learning-author-candidate",
+    "proof": {
+      "artifact_sha256": {
+        "picture.png": "3f8dfde7ab3ac9394e39d6d10066f90e4237fd7c6954ccc62f41413a1bacd798",
+        "receipt.json": "d0aec2d9cd009196195bf81337e6bc367dde2968584087f2e818dcb55cb4634b",
+        "source.json": "b442fcf1b711d29e5988bb60282ff37c8d5eb70072688f578d28355a3117a86b"
+      },
+      "artistic_acceptance": false,
+      "input_sha256": "afe958b6ee616f52d6088973fcbb0e661ea315a2455dddc007898dc6af0e4694",
+      "model_jobs": 0,
+      "operation_id": "picture-author-candidate-20261118-r1",
+      "render": {
+        "evidence_scope": "static_only",
+        "evidence_sha256": "6baca11fb948bc598dec8daefed0ecb9e09a67ac846677d70543a8e0fe2356aa",
+        "height": 360,
+        "mime": "image/png",
+        "picture_path": "/root/video-releases/picture-learning-20261118/candidate-picture-author-r1/render-proof/renders/operations/2bf7df30c0b2764ebbea7fce7225125bfe0d5556b9c40575d4e8ade14eec9ffb/work/output.png",
+        "receipt_path": "/root/video-releases/picture-learning-20261118/candidate-picture-author-r1/render-proof/renders/operations/2bf7df30c0b2764ebbea7fce7225125bfe0d5556b9c40575d4e8ade14eec9ffb/work/render-receipt.json",
+        "runtime": {
+          "engine": "canvas",
+          "engine_observation": {
+            "contexts": [
+              {
+                "connected": true,
+                "height": 360,
+                "kind": "2d",
+                "visible": true,
+                "width": 640
+              },
+              {
+                "connected": false,
+                "height": 360,
+                "kind": "2d",
+                "visible": false,
+                "width": 640
+              }
+            ],
+            "engine": "canvas",
+            "revision": "animation-engine-runtime-1"
+          },
+          "evidence_scope": "static_only",
+          "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+          "image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+          "project_runtime": "hyperframes-core-project-1"
+        },
+        "sha256": "3f8dfde7ab3ac9394e39d6d10066f90e4237fd7c6954ccc62f41413a1bacd798",
+        "source_path": "/root/video-releases/picture-learning-20261118/candidate-picture-author-r1/render-proof/renders/operations/2bf7df30c0b2764ebbea7fce7225125bfe0d5556b9c40575d4e8ade14eec9ffb/source.json",
+        "status": "rendered",
+        "stop_proven": true,
+        "technical_passed": true,
+        "width": 640
+      },
+      "result_sha256": "5bf66316725186dd05a476c06ff5ae07dcd90c760d9b8b292b2161eb68f54041",
+      "schema": "video.picture-author-candidate-render-proof.v1",
+      "scope": "actual_render_of_exact_stopped_author_source_not_artistic_or_migration_acceptance",
+      "sha256": "59e2debf056f4aae2f696671ef2d8a9d1b12373cbb5e6b18b3aa32f7b5176c65",
+      "source_sha256": "a57473412e49c3ecae950f57f9ca126c52e5900c89ea738b767bc1f8a418a580",
+      "source_unchanged": true
+    },
+    "file_sha256": {
+      "picture-learning-input.json": "afe958b6ee616f52d6088973fcbb0e661ea315a2455dddc007898dc6af0e4694",
+      "picture-learning-result.json": "5bf66316725186dd05a476c06ff5ae07dcd90c760d9b8b292b2161eb68f54041",
+      "picture.png": "3f8dfde7ab3ac9394e39d6d10066f90e4237fd7c6954ccc62f41413a1bacd798",
+      "proof.json": "4d7bc25aeee1c90644114be051ee409b21aacf0d9b9a3c42ff80085afd51f013",
+      "receipt.json": "d0aec2d9cd009196195bf81337e6bc367dde2968584087f2e818dcb55cb4634b",
+      "source.json": "b442fcf1b711d29e5988bb60282ff37c8d5eb70072688f578d28355a3117a86b"
+    }
+  },
+  "operation_guard_tests": {
+    "command": "python -m pytest tests/video_workbench/test_picture_learning_service.py -q -p no:cacheprovider --basetemp D:/codex-work/tmp/video-service/picture-learning-source-only-fix -k \"source_only or adopted_default or technical_retry\"",
+    "passed": 3,
+    "deselected": 18,
+    "elapsed_seconds": 12.79,
+    "test_cases": [
+      "test_source_only_failed_candidate_cannot_be_continued_or_adopted",
+      "test_adopted_default_does_not_follow_new_candidates",
+      "test_technical_retry_restores_render_without_reauthoring"
+    ],
+    "checks": [
+      "source-only continue returns409picture_learning_baseline_not_rendered",
+      "source-only adoption returns409picture_learning_candidate_not_rendered",
+      "normal rendered adoption and source-preserving render-stage retry remain functional",
+      "no additional author submission on rejected source-only action"
+    ]
+  },
+  "scope": {
+    "evidence_scope": "static_only",
+    "model_jobs_started_by_renderer_acceptance": 0,
+    "author_reference_transport": "separate_candidate_agent_receipt_not_asserted_here",
+    "independent_review": "not_asserted_in_this_receipt",
+    "artistic_acceptance": false,
+    "motion_verified": false,
+    "audio_verified": false,
+    "transfer_verified": false,
+    "wikiskill_published": false,
+    "production_data_mutated": false,
+    "deployment_verified": "separate_record"
+  },
+  "sha256": "d841b7330a3c4f1c72c07554846e0c3139e40109bbeb3b3196f869cf29745302"
+}

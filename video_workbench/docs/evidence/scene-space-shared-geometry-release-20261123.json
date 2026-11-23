@@ -1,0 +1,338 @@
+{
+  "capability": {
+    "admitted": true,
+    "artwork_api": "window.__sceneSpaceArtwork",
+    "artwork_api_revision": 3,
+    "artwork_extensions": {
+      "coverage": "paintCoverage(ctx,object,world,tools) -> null | {substrate:[r,g,b]}",
+      "coverage_scope": "independent_object_coverage_not_pigment_opacity",
+      "geometry": "tools.geometry",
+      "geometry_scope": "authored_shared_xyz_mesh_and_fixed_orthographic_projection_not_observed_3d",
+      "surface": "tools.surface",
+      "surface_scope": "authored_object_local_2_5d_hypothesis_not_observed_3d"
+    },
+    "audio_modes": [
+      "silent"
+    ],
+    "cache_policies": [
+      "static"
+    ],
+    "clock": "absolute_frame",
+    "engines": [
+      "canvas"
+    ],
+    "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+    "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+    "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+    "limits": {
+      "duration_frames": 7200,
+      "fps": 24,
+      "height": 720,
+      "max_contexts": 500,
+      "max_font_faces": 64,
+      "max_geometry_handles": 32,
+      "max_geometry_pixels": 262144,
+      "max_geometry_raster_side": 1024,
+      "max_geometry_raster_work": 33554432,
+      "max_geometry_retained_bytes": 16777216,
+      "max_geometry_triangles": 32768,
+      "max_geometry_vertices": 16384,
+      "max_geometry_work_bytes": 1048576,
+      "max_raster_side": 8192,
+      "max_sidecar_bytes": 16777216,
+      "max_surface_fields": 64,
+      "max_surface_retained_bytes": 16777216,
+      "max_surface_work_bytes": 2097152,
+      "width": 1280
+    },
+    "other_backend_scope": "matrix_adapters_not_render_admission",
+    "plan_schema": "video.scene-space-plan.v1",
+    "reuse_scope": "within_film",
+    "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+    "schema": "video.scene-space-render-capability.v1",
+    "source_files": [
+      "scene.html",
+      "scene.js",
+      "scene.css"
+    ],
+    "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+    "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+    "world_schema": "video.scene-world.v1"
+  },
+  "controller_container_exists": false,
+  "deployment_scope": {
+    "changed": [
+      "video-animation-creation/video-animation-creation"
+    ],
+    "deployments_checked": 89,
+    "image_only_target_spec_verified": true,
+    "unchanged_other_deployments": 88
+  },
+  "executor_image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:a587a7f224d55e004d37f19c75b640371bf02b1f349deacc30a84a7a5b467d3d",
+  "health": true,
+  "production_scene_queue_enabled": false,
+  "retained": {
+    "active": [],
+    "before_after_deployment_equal": true,
+    "deployment_tables": 14,
+    "live_matches_deployment_after": true,
+    "original_table_subset_unchanged": true,
+    "original_tables": 12
+  },
+  "revision": "bbb263faf64f79457b7afab8d8556205e8c34b86",
+  "rollout_ready": true,
+  "runtime_sources_verified": true,
+  "schema": "video.shared-mountain-integration-release-verification.v1",
+  "source_verification_file": "deploy--executor-runtime-verification.json",
+  "status": "passed",
+  "study": {
+    "actual_render_seconds": 48.888402197510004,
+    "artistic_acceptance": false,
+    "cases": [
+      {
+        "case_id": "legacy",
+        "measured_controller_seconds": 22.92200193181634,
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "png_sha256": "cf1d255a23e5f4267b6abdf44821e8cc22d920bd3c0dd89e1970daf1f16290b4",
+        "scene_space_observation": {
+          "artwork_api_revision": 3,
+          "cache_hits": 40,
+          "cache_pixels": 1890993,
+          "coverage_callbacks": 0,
+          "coverage_contexts": 0,
+          "coverage_objects": 0,
+          "coverage_peak_pixels": 0,
+          "frame_range": {
+            "end_frame": 1,
+            "start_frame": 0
+          },
+          "frames_composited": 4,
+          "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+          "geometry_helper_calls": {},
+          "geometry_resource_usage": {
+            "handles_reserved": 0,
+            "max_handles": 32,
+            "max_total_bytes": 16777216,
+            "meshes_created": 0,
+            "numeric_bytes_reserved": 0,
+            "projections_created": 0
+          },
+          "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+          "objects_painted": 10,
+          "peak_work_pixels": 1843200,
+          "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+          "recipes_executed": 0,
+          "runtime_revision": "scene-space-compositor-3",
+          "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+          "schema": "video.scene-space-compositor-observation.v1",
+          "scope": "host_compositor_execution_not_visual_acceptance",
+          "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+          "surface_field_usage": {
+            "fields_created": 0,
+            "fields_reserved": 0,
+            "max_fields": 64,
+            "max_total_field_bytes": 16777216,
+            "numeric_bytes_reserved": 0
+          },
+          "surface_helper_calls": {},
+          "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+        },
+        "source_sha256": "6261944f5f92ee201a04565bb18b72c3f827b340417e78fcf549aec55b49f7a9",
+        "stop_proven": true,
+        "technical_passed": true
+      },
+      {
+        "case_id": "clay",
+        "measured_controller_seconds": 13.006739323958755,
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "png_sha256": "088df7048adec2d479214fea4b045a8a25824ec1a72e4d46c1258abffc92a320",
+        "scene_space_observation": {
+          "artwork_api_revision": 3,
+          "cache_hits": 40,
+          "cache_pixels": 1890993,
+          "coverage_callbacks": 10,
+          "coverage_contexts": 1,
+          "coverage_objects": 2,
+          "coverage_peak_pixels": 921600,
+          "frame_range": {
+            "end_frame": 1,
+            "start_frame": 0
+          },
+          "frames_composited": 4,
+          "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+          "geometry_helper_calls": {
+            "createTerrainMesh": 2,
+            "projectMesh": 2,
+            "sampleProjection": 235600
+          },
+          "geometry_resource_usage": {
+            "handles_reserved": 4,
+            "max_handles": 32,
+            "max_total_bytes": 16777216,
+            "meshes_created": 2,
+            "numeric_bytes_reserved": 3798576,
+            "projections_created": 2
+          },
+          "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+          "objects_painted": 10,
+          "peak_work_pixels": 2764800,
+          "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+          "recipes_executed": 0,
+          "runtime_revision": "scene-space-compositor-3",
+          "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+          "schema": "video.scene-space-compositor-observation.v1",
+          "scope": "host_compositor_execution_not_visual_acceptance",
+          "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+          "surface_field_usage": {
+            "fields_created": 0,
+            "fields_reserved": 0,
+            "max_fields": 64,
+            "max_total_field_bytes": 16777216,
+            "numeric_bytes_reserved": 0
+          },
+          "surface_helper_calls": {},
+          "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+        },
+        "source_sha256": "ac50e6b8854d69543c43c43864ef8d47081a29bc3a9bde58d4b98f410f92b9b6",
+        "stop_proven": true,
+        "technical_passed": true
+      },
+      {
+        "case_id": "ink",
+        "measured_controller_seconds": 12.95966094173491,
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "png_sha256": "4e6ebacdcc91b26081095080fdb3a860ab2bc0f537e6b98b16c8ff5c5a7b6f28",
+        "scene_space_observation": {
+          "artwork_api_revision": 3,
+          "cache_hits": 40,
+          "cache_pixels": 1890993,
+          "coverage_callbacks": 10,
+          "coverage_contexts": 1,
+          "coverage_objects": 2,
+          "coverage_peak_pixels": 921600,
+          "frame_range": {
+            "end_frame": 1,
+            "start_frame": 0
+          },
+          "frames_composited": 4,
+          "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+          "geometry_helper_calls": {
+            "createTerrainMesh": 2,
+            "projectMesh": 2,
+            "projectPoint": 759,
+            "sampleProjection": 235600
+          },
+          "geometry_resource_usage": {
+            "handles_reserved": 4,
+            "max_handles": 32,
+            "max_total_bytes": 16777216,
+            "meshes_created": 2,
+            "numeric_bytes_reserved": 3798576,
+            "projections_created": 2
+          },
+          "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+          "objects_painted": 10,
+          "peak_work_pixels": 2764800,
+          "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+          "recipes_executed": 0,
+          "runtime_revision": "scene-space-compositor-3",
+          "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+          "schema": "video.scene-space-compositor-observation.v1",
+          "scope": "host_compositor_execution_not_visual_acceptance",
+          "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+          "surface_field_usage": {
+            "fields_created": 0,
+            "fields_reserved": 0,
+            "max_fields": 64,
+            "max_total_field_bytes": 16777216,
+            "numeric_bytes_reserved": 0
+          },
+          "surface_helper_calls": {},
+          "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+        },
+        "source_sha256": "9b163af86fb091efae2caea64caa5e60720157caac016b9b02e9d8b4817b13b2",
+        "stop_proven": true,
+        "technical_passed": true
+      }
+    ],
+    "controller_study_wall_seconds": 49.03095391578972,
+    "formal_picture_runs_modified": false,
+    "maximum_total_seconds": 540,
+    "model_calls": 0,
+    "model_tokens_added": 0,
+    "settled_reservations": 3,
+    "task_id": "shared-mountain-fixed-view-20261123-api3-r1",
+    "unknown_baseline_preserved": true,
+    "wikiskill_published": false
+  },
+  "date": "2026-11-23",
+  "validation_batches": {
+    "geometry_node_tests": 14,
+    "geometry_python_wrapper_tests": 1,
+    "renderer_unique_tests": 37,
+    "native_browser_scenes": 16,
+    "native_expected_rejections": 3,
+    "common_learning_effect_production_tests": 48,
+    "note": "Wrapper and browser scenarios overlap test cases; these counts are not added into a global total."
+  },
+  "visual_review": {
+    "images_viewed": true,
+    "structural_result": "Common saddles, shoulders and front feet connect the main mountain group; the front slope hides rear faces.",
+    "remaining": [
+      "Dense crossed hatching still reads as procedural linework.",
+      "Some bright saddle shoulders look staircase-like.",
+      "Foreground bank, pines, far ridge and cloud paint are retained from the prior study."
+    ],
+    "artistic_acceptance": false
+  },
+  "output_artifacts": [
+    {
+      "path": "video_workbench/examples/shared-mountain-study/preview.png",
+      "sha256": "4e6ebacdcc91b26081095080fdb3a860ab2bc0f537e6b98b16c8ff5c5a7b6f28"
+    },
+    {
+      "path": "video_workbench/examples/shared-mountain-study/structure-diagnostic.png",
+      "sha256": "088df7048adec2d479214fea4b045a8a25824ec1a72e4d46c1258abffc92a320"
+    },
+    {
+      "path": "video_workbench/examples/shared-mountain-study/structure-comparison.png",
+      "sha256": "6a9ec4c4c7a58b687905a2b86c951ecddc94a1ff77ee446fe50c80e096c7c4e6"
+    }
+  ],
+  "raw_sanitized_evidence": {
+    "release": "D:\\codex-work\\operations\\shared-mountain-integration-20261123\\release\\evidence\\release-verification.json",
+    "release_sha256": "9f98cbdfe7199f839219301752af887a055b46abfe7c5c2e2ec5e6656afe1e80",
+    "study_directory": "D:\\codex-work\\operations\\shared-mountain-integration-20261123\\release\\study-evidence"
+  },
+  "comparison": {
+    "inputs": [
+      {
+        "label": "上一版：独立峰体",
+        "path": "D:\\codex-work\\operations\\sword-cloud-micro-20261123\\final\\brush\\output.png",
+        "sha256": "3ff7e3c1b1312268bed688516cca26bb30a616cc82366d6cec83d6bf89b588e0"
+      },
+      {
+        "label": "结构诊断：共同网格",
+        "path": "D:\\codex-work\\operations\\shared-mountain-integration-20261123\\release\\study-evidence\\clay\\output.png",
+        "sha256": "088df7048adec2d479214fea4b045a8a25824ec1a72e4d46c1258abffc92a320"
+      },
+      {
+        "label": "本版墨稿：可见表面落笔",
+        "path": "D:\\codex-work\\operations\\shared-mountain-integration-20261123\\release\\study-evidence\\ink\\output.png",
+        "sha256": "4e6ebacdcc91b26081095080fdb3a860ab2bc0f537e6b98b16c8ff5c5a7b6f28"
+      }
+    ],
+    "scope": "visual_structure_comparison_not_controlled_ablation",
+    "platforms": [
+      "previous_desktop",
+      "current_arm_container",
+      "current_arm_container"
+    ]
+  },
+  "checkout_consistency": "Scene host and scene_space*.mjs use eol=lf; this changes no reviewed runtime bytes.",
+  "effect_adopted": false,
+  "wikiskill_published": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false
+}

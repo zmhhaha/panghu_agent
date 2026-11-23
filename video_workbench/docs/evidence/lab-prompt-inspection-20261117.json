@@ -1,0 +1,494 @@
+{
+  "schema": "video.lab-prompt-inspection-validation.v1",
+  "date": "2026-11-17",
+  "code_revision": "2d0f2ab19c22a245d0c2505edefa8828455eea5e",
+  "branch": "codex/video-capability-experiment-redesign",
+  "images": {
+    "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:e4c8322ada059dcce51fc08504a65ac486e5959a733dcc9783cd28d29397eb94",
+    "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:e6429b39a40063d5950386cd2e9e4e7324925bdc012b194d76d1d3d261a0a0fa"
+  },
+  "clean_git_full_source_build": true,
+  "python": {
+    "unique_tests": 218,
+    "passed": 218,
+    "skipped": 0,
+    "runs": [
+      {
+        "file": "python-checks.xml",
+        "tests": 218,
+        "failures": 1
+      },
+      {
+        "file": "packaging-checks.xml",
+        "tests": 78,
+        "failures": 0
+      }
+    ],
+    "resolved_failure": "Lab Docker context allowlist omitted the new viewer module; fixed and all 78 packaging tests passed."
+  },
+  "node": {
+    "passed": 117,
+    "failed": 0,
+    "skipped": 0,
+    "reporter": "dot",
+    "files": [
+      "prompt-inspection-ui.test.mjs",
+      "animation-method-gallery-ui.test.mjs",
+      "animation-authoring-tools-ui.test.mjs",
+      "animation-method-comparison.test.mjs"
+    ]
+  },
+  "browser": {
+    "date": "2026-11-17",
+    "surface": "signed-in in-app browser",
+    "url": "https://video-service.panghuer.top/dev/animations/?prompts=20261117",
+    "commission_id": "c3a9ec2b-d6d4-48c1-8687-5b0a91a28f24",
+    "creator_operation_id": "20f5af20-d8cd-41ca-91f0-0df14b143832",
+    "creator_input_sha256_displayed": "6a8f92051d0d83f8c8b391732adf9c5205b3675567defcac263383b18e16910e",
+    "creator_input_bytes_displayed": 416570,
+    "checks": {
+      "signed_in_effect_library_visible": true,
+      "both_panels_initially_collapsed": true,
+      "historical_reconstruction_origin_visible": true,
+      "historical_execution_budget_label_visible": true,
+      "readable_goal_feedback_criteria_visible": true,
+      "planning_authoring_review_index_visible": true,
+      "creator_input_identity_and_digest_visible": true,
+      "submission_copy_acknowledged": true,
+      "round_requirement_copy_acknowledged": true,
+      "frozen_json_copy_acknowledged": true,
+      "submission_json_download_acknowledged": true,
+      "input_json_download_acknowledged": true,
+      "other_effect_requirement_visible_without_old_ink_input": true,
+      "return_restores_correct_ink_input": true
+    },
+    "limits": [
+      "Clipboard confirmation uses the page success state; the operating-system clipboard was not read.",
+      "Download verification covers the actual UI handler acknowledgement; original JSON fidelity is checked separately by API digests and automated export tests.",
+      "No experiment, model generation, rendering or WikiSkill publication was started."
+    ]
+  },
+  "live_inputs": {
+    "schema": "video.animation-prompt-inspection-live-validation.v1",
+    "effects": [
+      {
+        "commission_id": "cca78142-8903-4a2e-b82d-cc08627a45d2",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "8f72772a-302c-4ded-a3a9-4278e9a3e330",
+            "mode": "plan",
+            "scope": "collaboration",
+            "round": 0,
+            "available": true,
+            "input_bytes": 21606,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "5b841ba0-419c-47c5-acb7-bc1a0e5bceec",
+            "mode": "component",
+            "scope": "collaboration",
+            "round": 1,
+            "available": true,
+            "input_bytes": 35213,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "b3c189fb-1b13-436f-acff-8856b7d93c06",
+            "mode": "component",
+            "scope": "collaboration",
+            "round": 1,
+            "available": true,
+            "input_bytes": 54181,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "3eddd5a6-0fa1-4878-9b69-65ff860df6e7",
+            "mode": "component",
+            "scope": "collaboration",
+            "round": 1,
+            "available": true,
+            "input_bytes": 54180,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "c142b269-bad8-4571-bfe7-5f7a18132e8f",
+            "mode": "integrate",
+            "scope": "collaboration",
+            "round": 1,
+            "available": true,
+            "input_bytes": 92328,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "a41be3a1-d7ac-45c1-a9c5-26fd360450d0",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 58310,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "094606fa-c1b0-459a-bb42-0261f46b139a"
+      },
+      {
+        "commission_id": "110816a7-bce3-4121-b9d9-b4bcfe90b24f",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "4b171a5c-a82e-4b9b-bab2-2f37922562a7",
+            "mode": "plan",
+            "scope": "collaboration",
+            "round": 0,
+            "available": true,
+            "input_bytes": 10062,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "6ffa06ec-b21a-43bb-a7e3-f3fc094d956b",
+            "mode": "component",
+            "scope": "collaboration",
+            "round": 1,
+            "available": true,
+            "input_bytes": 21184,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "44e0ef51-9e07-4267-9953-5f7d017a6bb4",
+            "mode": "component",
+            "scope": "collaboration",
+            "round": 1,
+            "available": true,
+            "input_bytes": 32104,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "a3ebfcd3-d00f-40dc-becc-ac1b6b4c2d7c",
+            "mode": "integrate",
+            "scope": "collaboration",
+            "round": 1,
+            "available": true,
+            "input_bytes": 40878,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "58c86084-bac5-403c-bd55-fa403d5ba3fe",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 41163,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "110816a7-bce3-4121-b9d9-b4bcfe90b24f"
+      },
+      {
+        "commission_id": "c3a9ec2b-d6d4-48c1-8687-5b0a91a28f24",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "dc862929-a5d3-4284-bf04-4991deacac77",
+            "mode": "plan",
+            "scope": "method",
+            "round": 0,
+            "available": true,
+            "input_bytes": 390866,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "20f5af20-d8cd-41ca-91f0-0df14b143832",
+            "mode": "create",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 416570,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "a860d273-0193-4239-8483-4fd19dd8b401",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 433953,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "c3a9ec2b-d6d4-48c1-8687-5b0a91a28f24"
+      },
+      {
+        "commission_id": "62e42bd8-682f-4801-ae4f-e46b116f9167",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "4aa1b495-62b6-4c35-8f23-0b5daeb33abe",
+            "mode": "plan",
+            "scope": "method",
+            "round": 0,
+            "available": true,
+            "input_bytes": 345939,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "ca20dd31-7c3c-4326-80e8-90b2db9da2a7",
+            "mode": "create",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 371617,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "92b5ec52-407a-4f9d-8a1a-06b07bf1d3ce",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 394792,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "fdf40e8b-c741-4c8d-b510-100cef36f446"
+      },
+      {
+        "commission_id": "b0491b6e-1d43-4c3e-9f31-338ec8204fb5",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "7a82df76-cec0-465b-a04e-1e1f5a26b9c5",
+            "mode": "plan",
+            "scope": "method",
+            "round": 0,
+            "available": true,
+            "input_bytes": 298327,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "96c85a2a-b330-47ce-b332-b6be212b0b67",
+            "mode": "create",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 317228,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "f561b5be-5b2b-498e-a9a7-7192f78abf05",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 350646,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "a949a96c-eb9b-4450-bb24-942b2047f826"
+      },
+      {
+        "commission_id": "f39fc52a-9a8e-4da5-817a-b1880b076687",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "56160643-4a01-4065-968a-8b4d9a33caeb",
+            "mode": "plan",
+            "scope": "method",
+            "round": 0,
+            "available": true,
+            "input_bytes": 293154,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "b09ba343-fb85-483c-9f3a-f7d8c092e103",
+            "mode": "create",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 309621,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "756b0a9f-c913-4004-90bf-8a18ac8a27c4",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 341183,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "4c8f540a-7ae2-40c6-8a16-7c53c354ac5b"
+      },
+      {
+        "commission_id": "1d82c981-7964-4e7b-b4d7-75ced29a02aa",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "4aa41422-c5dd-4093-9342-4f747a50fc8c",
+            "mode": "plan",
+            "scope": "method",
+            "round": 0,
+            "available": true,
+            "input_bytes": 226061,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "ca124bba-56fd-4c0e-b456-4dab8127701a",
+            "mode": "create",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 241927,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "c3dcb58b-0641-4e13-ab1a-9da23e111420",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 288753,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "512361b6-b0f2-4948-a8b6-ce1efbf8d6e4"
+      },
+      {
+        "commission_id": "4422081c-2149-489c-9d11-62c48c021459",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "4418faca-b38b-43f1-95ca-add82282150d",
+            "mode": "plan",
+            "scope": "method",
+            "round": 0,
+            "available": true,
+            "input_bytes": 222086,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "e2d1ff99-4bd7-41aa-b134-a91b5151cf36",
+            "mode": "create",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 238659,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "8f174e90-02c8-49c5-8462-835e28090511",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 264971,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "776a5839-d9dc-4351-ab42-1383b4f50c4b"
+      },
+      {
+        "commission_id": "092a455b-c3c6-4018-a66e-770a4f6549a4",
+        "origin": "reconstructed_frozen_fields",
+        "submission_sha256_matches": true,
+        "effective_sha256_matches": true,
+        "operations": [
+          {
+            "operation_id": "bb9952e1-d817-4add-ab53-1f909b1b4a18",
+            "mode": "plan",
+            "scope": "method",
+            "round": 0,
+            "available": true,
+            "input_bytes": 171253,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "3ad42bc8-f5fb-4ad5-a0ed-f92bb8b54f2a",
+            "mode": "create",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 186665,
+            "sha256_matches": true
+          },
+          {
+            "operation_id": "49417f10-b176-419c-9319-61b0a7aac791",
+            "mode": "review",
+            "scope": "method",
+            "round": 1,
+            "available": true,
+            "input_bytes": 211077,
+            "sha256_matches": true
+          }
+        ],
+        "effect_id": "6b719f65-6aca-4433-95ae-a350f84aa4d3"
+      }
+    ],
+    "effect_count": 9,
+    "operation_count": 32,
+    "readable_operations": 32,
+    "model_requests": 0,
+    "render_requests": 0,
+    "wiki_publications": 0
+  },
+  "unchanged_historical_effects": 9,
+  "active_commissions": 0,
+  "database_backup": {
+    "count": 19,
+    "bytes": 82292736,
+    "quick_check_passed": true
+  },
+  "deployments": {
+    "executor": {
+      "replicas": 1,
+      "all_ready": true,
+      "source_verified": true
+    },
+    "lab": {
+      "replicas": 1,
+      "all_ready": true,
+      "source_verified": true
+    }
+  },
+  "source_files_verified": 16,
+  "model_requests": 0,
+  "new_renders": 0,
+  "wikiskill_publications": 0,
+  "observation_scope": "Read-only requirements and frozen application inputs; no new artistic quality, full model transcript or resource-recipe coverage claim",
+  "local_receipts": "D:\\codex-work\\operations\\prompt-inspection-20261117",
+  "server_receipts": "/root/video-releases/prompt-inspection-20261117-r2",
+  "database_backup_receipts": "/root/video-releases/prompt-inspection-20261117",
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "change_id": "evolve-video-agent-creation-and-effect-library",
+    "revision": "d54b6f8d517c7592d15ecccc09118fe514cb535e",
+    "valid": true,
+    "completed": [
+      "S.1",
+      "S.2",
+      "S.3"
+    ],
+    "task_status": {
+      "total": 91,
+      "completed": 64,
+      "remaining": 27
+    }
+  }
+}

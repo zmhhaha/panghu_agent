@@ -46,6 +46,41 @@ def arguments(settings):
             '--lab-token-secret', settings.lab_token_secret]
 
 
+def test_remote_reference_egress_is_explicit_and_excludes_internal_destinations(settings):
+    import ipaddress
+    ordinary = render(settings)
+    assert len(by_kind(ordinary, 'NetworkPolicy')['spec']['egress']) == 2
+    with pytest.raises(ValueError, match='learning library'):
+        render(replace(settings, remote_reference_dns='alidns'))
+    enabled = replace(settings, method_agent_token_secret='methods-agent-caller',
+        method_project_runtime='hyperframes-core-bridge',
+        picture_agent_token_secret='pictures-agent-caller', remote_reference_dns='alidns')
+    document = render(enabled)
+    assert pod(document)['containers'][0]['args'][-2:] == ['--remote-reference-dns', 'alidns']
+    old_rules = by_kind(ordinary, 'NetworkPolicy')['spec']['egress']
+    rules = by_kind(document, 'NetworkPolicy')['spec']['egress']
+    assert rules[:2] == old_rules and len(rules) == 3
+    assert rules[-1]['ports'] == [{'protocol': 'TCP', 'port': 443}]
+
+    def permitted(address):
+        ip = ipaddress.ip_address(address)
+        for peer in rules[-1]['to']:
+            block = peer['ipBlock']
+            network = ipaddress.ip_network(block['cidr'])
+            if ip.version == network.version and ip in network and not any(
+                    ip in ipaddress.ip_network(value) for value in block.get('except', [])):
+                return True
+        return False
+
+    assert permitted('223.5.5.5') and permitted('2606:4700:4700::1111')
+    for address in ('127.0.0.1', '10.96.0.1', '169.254.169.254', '172.16.0.1',
+                    '192.168.137.101', '198.18.0.28', '224.0.0.1', '::1', 'fc00::1',
+                    'fe80::1', '2001:db8::1'):
+        assert not permitted(address), address
+    with pytest.raises(ValueError, match='Invalid remote reference DNS'):
+        render(replace(enabled, remote_reference_dns='unreviewed'))
+
+
 def test_method_caller_is_a_distinct_optional_readonly_secret(settings):
     document = render(replace(settings, method_agent_token_secret='methods-agent-caller'))
     spec = pod(document)

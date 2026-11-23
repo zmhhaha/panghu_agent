@@ -35,6 +35,7 @@ _TABLES = frozenset({
     'animation_method_acceptances', 'animation_method_publications',
     'animation_method_requests', 'animation_method_deliveries',
     'animation_method_events', 'animation_research_records', 'sqlite_sequence',
+    'animation_method_scene_space',
 })
 _METHOD_FIELDS = frozenset({
     'title', 'problem', 'guidance', 'applicability', 'limitations', 'criteria',
@@ -223,6 +224,9 @@ class AnimationMethodStore:
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             _require(tables <= _TABLES, 'animation_method_database_not_isolated', 409)
             statements = (
+                '''CREATE TABLE IF NOT EXISTS animation_method_scene_space (
+                    id TEXT PRIMARY KEY,owner TEXT NOT NULL,method_version_id TEXT NOT NULL,
+                    document TEXT NOT NULL)''',
                 '''CREATE TABLE IF NOT EXISTS animation_research_records (
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL, research_id TEXT NOT NULL,
                     version INTEGER NOT NULL, document TEXT NOT NULL,
@@ -376,6 +380,52 @@ class AnimationMethodStore:
                         dict(content_sha256=result['content_sha256']))
             return result
         return self._perform(owner, 'create_method', request_id, body, create)
+
+    def attach_scene_space(self,owner,method_version_id,metadata,request_id,*,evidence=None):
+        """Retain a versioned sidecar without changing a frozen method body.
+
+        Called by host materialization, never by an author or a publication GET.
+        Hypotheses retain their own source scope; render evidence is separate.
+        """
+        from .scene_space_learning import validate_scene_method
+        metadata=validate_scene_method(metadata)
+        _require(evidence is None or type(evidence) is dict,'animation_method_scene_evidence_invalid')
+        request=dict(method_version_id=method_version_id,metadata=metadata,evidence=evidence)
+        def create(db):
+            method=self._load(db,'animation_methods',owner,method_version_id)
+            content=dict(schema='video.animation-method-scene-record.v1',
+                owner=owner,method_version_id=method_version_id,
+                method_content_sha256=method['content_sha256'],metadata=metadata,
+                evidence=_copy(evidence),
+                scope='spatial_hypotheses_with_separate_host_evidence',
+                adoption_implied=False,publication_implied=False)
+            content['id']=digest(content)
+            content['sha256']=digest(content)
+            previous=db.execute('SELECT document FROM animation_method_scene_space '
+                'WHERE owner=? AND id=?',(owner,content['id'])).fetchone()
+            if previous:
+                current=json.loads(previous['document'])
+                _require(current==content,'animation_method_scene_identity_conflict',409)
+                return current
+            db.execute('INSERT INTO animation_method_scene_space VALUES (?,?,?,?)',
+                (content['id'],owner,method_version_id,_json(content)))
+            self._event(db,owner,method_version_id,'scene_space_attached',dict(sha256=content['sha256']))
+            return content
+        return self._perform(owner,'attach_scene_space',request_id,request,create)
+
+    def get_scene_space(self,owner,method_version_id):
+        _owner(owner)
+        with self._transaction() as db:
+            method=self._load(db,'animation_methods',owner,method_version_id)
+            records=[]
+            for row in db.execute('SELECT document FROM animation_method_scene_space '
+                    'WHERE owner=? AND method_version_id=? ORDER BY id',(owner,method_version_id)):
+                record=json.loads(row['document'])
+                _require(record['method_content_sha256']==method['content_sha256']
+                    and record['sha256']==digest({key:value for key,value in record.items() if key!='sha256'}),
+                    'animation_method_scene_record_changed',409)
+                records.append(record)
+            return records
 
     def create_research(self, owner, body, request_id):
         """Append raw source observations, independent of reusable Skill text."""

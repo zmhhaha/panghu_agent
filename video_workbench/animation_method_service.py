@@ -19,6 +19,7 @@ from agent_service.animation_knowledge_contract import MAX_EXPERIENCE_BYTES
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_method as protocol
 from agent_service.profiles import video_animation_skill_method as skill_protocol
+from agent_service.profiles.video_animation_create import source_sha256
 from .animation_creation_service import _run_lock
 from .animation_method_store import AnimationMethodStore, _structural_changes
 from .animation_method_commissions import (
@@ -28,6 +29,10 @@ from .animation_runtime_capabilities import validate_runtime_capabilities
 from .animation_authoring_tools import observed_authoring_tools
 from .animation_motion_evidence import motion_orchestration
 from .animation_quality_policy import select_review
+from .animation_creation_selection import (
+    freeze_constraints as freeze_creation_selection, manim_request, motion_tools,
+    normalize_selection, validate_new_selection, validate_rendered_selection, validate_source_selection,
+)
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 from .animation_method_renderer import PUBLIC_RENDER_FAILURE_CODES, public_render_failure_code
 from .animation_method_trash import AnimationMethodTrash, serialized_library_mutation
@@ -140,7 +145,7 @@ def _validation_view(record, *, demonstration=None, method=None):
 
 def _candidates(run):
     rows = list(run['candidates'])
-    baseline = run['frozen'].get('base_candidate')
+    baseline = run['frozen'].get('base_candidate') or run.get('retry_base_candidate')
     if baseline and not any(row['id'] == baseline['id'] for row in rows):
         rows.insert(0, baseline)
     return rows
@@ -284,7 +289,7 @@ def _resolve_effect_roots(runs, parents, direct_issues):
     return roots, issues
 
 
-def _effect_views(runs, demonstrations, memberships=(), deletions=(), separations=()):
+def _effect_views(runs, demonstrations, memberships=(), deletions=(), separations=(), adoptions=None):
     """Group explicit frozen lineage and separately audited historical membership.
 
     A missing/foreign ancestor or a cycle makes every affected run independent.
@@ -303,8 +308,13 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=(), separation
         retry = frozen.get('retry_of_commission_id')
         transfer = frozen.get('role', 'reference') == 'transfer'
         parent, issue = None, None
-        kinds[identity] = 'retry' if retry else 'continuation' if base else 'transfer' if transfer else 'original'
-        if base and (transfer or baseline):
+        fresh = frozen.get('creation_mode') == 'fresh'
+        kinds[identity] = 'retry' if retry else 'fresh' if fresh else 'continuation' if base else 'transfer' if transfer else 'original'
+        if fresh and not retry:
+            parent = frozen.get('effect_id')
+            if base or baseline or transfer or not parent:
+                issue = 'fresh_effect_relationship_invalid'
+        elif base and (transfer or baseline):
             issue = 'conflicting_frozen_relations'
         elif base:
             parent = base
@@ -446,8 +456,14 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=(), separation
             current = next_runs[0]
             if _representative_candidate(current) is not None:
                 representative = current
+        chosen = (adoptions or {}).get(effect_id)
+        chosen_id = representative['best_candidate_id']
+        if chosen and chosen['commission_id'] in {row['id'] for row in members}:
+            selected_run = by_id[chosen['commission_id']]
+            if any(row['id'] == chosen['candidate_id'] for row in _candidates(selected_run)):
+                representative, chosen_id = selected_run, chosen['candidate_id']
         candidate = next((item for item in _candidates(representative)
-                          if item['id'] == representative['best_candidate_id']), None)
+                          if item['id'] == chosen_id), None)
         engine = _sample_engine(candidate, samples)
         best = (dict(id=candidate['id'], media_url=_public_url(
             representative['id'], candidate['id'], 'media'), **engine) if candidate else None)
@@ -470,6 +486,8 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=(), separation
             **engine, engines=[engine['engine']] if engine['engine'] else [],
             commissions=summaries, relationship_status='needs_review' if issues else 'verified',
             relationship_issues=issues)
+        effect.update(representative_revision=chosen['revision'] if chosen else 0,
+                      adopted_candidate_id=candidate['id'] if candidate else None)
         if effect_id in separation_origins:
             effect['separation'] = separation_origins[effect_id]
         effects.append(effect)
@@ -481,7 +499,7 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=(), separation
 class AnimationMethodService:
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time,
                  runtime_capabilities=None, knowledge_store=None, manim_coordinator=None,
-                 collaboration_gateway=None):
+                 collaboration_gateway=None, library_adapter=None):
         self.root = Path(root).absolute()
         _require(not any(path.is_symlink() for path in (self.root, *self.root.parents)))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -518,6 +536,10 @@ class AnimationMethodService:
             db.execute('CREATE TABLE IF NOT EXISTS commission_deletions (owner TEXT NOT NULL, '
                        'commission_id TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(owner,commission_id))')
             db.commit()
+        from .animation_effect_adoption import AnimationEffectAdoptionStore
+        from .animation_laboratory_library import make_laboratory_library_adapter
+        self.adoptions = AnimationEffectAdoptionStore(self.metadata_path, clock=clock)
+        self.library_adapter = library_adapter or make_laboratory_library_adapter(self.root)
         self.trash = AnimationMethodTrash(self)
         from .animation_effect_identity import AnimationEffectIdentity
         self.effect_identity = AnimationEffectIdentity(self)
@@ -571,6 +593,11 @@ class AnimationMethodService:
                     if method['id'] in methods:
                         add('method:' + method['id'], 'method', method)
                         research.update(method.get('research_record_ids', []))
+                for record in self.trash.documents(db,'methods.animation_method_scene_space',owner):
+                    origin=record.get('evidence') or {}
+                    if record['method_version_id'] in methods and (
+                            not origin.get('commission_id') or origin['commission_id'] in visible_ids):
+                        add('method-scene-space:'+record['id'],'method_scene_space',record)
                 for observation in self.trash.documents(db, 'methods.animation_research_records', owner):
                     if observation['id'] in research:
                         add('research:' + observation['id'], 'research', observation)
@@ -582,6 +609,9 @@ class AnimationMethodService:
                     members = [row for row in effect['commissions'] if row['id'] in visible_ids]
                     if members:
                         view = deepcopy(dict(effect, commissions=members))
+                        visible_candidates={candidate['id'] for run in runs for candidate in _candidates(run)}
+                        if view.get('adopted_candidate_id') not in visible_candidates:
+                            view['adopted_candidate_id']=None
                         if view.get('open_commission_id') not in visible_ids:
                             usable = [row for row in members if row.get('best_candidate_id') and row['state'] == 'completed']
                             chosen = max(usable or members, key=lambda row: (row['created_at'], row['id']))
@@ -642,6 +672,10 @@ class AnimationMethodService:
         _require(len(canonical_bytes(result)) <= 2 * 1024 * 1024,
                  'animation_method_response_too_large', 413)
         return result
+
+    def get_method_scene_space(self,owner,method_version_id):
+        return dict(schema='video.animation-method-scene-records.v1',
+            records=self.methods.get_scene_space(owner,method_version_id))
 
     @serialized_library_mutation
     def accept_validation(self, owner, validation_id, body):
@@ -739,7 +773,9 @@ class AnimationMethodService:
                     experience_document = _review_experience(experience_document, opinion)
             self._experience(owner, experience_kind, operation['id'], experience_document)
             snapshot = operation['input'].get('knowledge_snapshot')
-            if snapshot is None or not result.get('knowledge_proposals'):
+            # Published bytes are immutable; new experimental facts above are
+            # retained, but old working-Wiki proposals cannot mutate a release.
+            if 'library_binding' in run['frozen'] or snapshot is None or not result.get('knowledge_proposals'):
                 continue
             proposal = self.knowledge.record_proposals(owner, operation['id'], result['knowledge_proposals'],
                 snapshot_id=snapshot['id'])
@@ -915,6 +951,7 @@ class AnimationMethodService:
                         and self.renderer is not None, reason=None,
                         collaboration=self.collaboration_author is not None,
                         allowed_engines=capabilities['allowed_engines'] if capabilities else ['html-svg'],
+                        motion_tools=motion_tools(capabilities),
                         authoring_libraries=deepcopy(capabilities.get('authoring_libraries', {})) if capabilities else {},
                         resource_authoring=dict(manim=self.manim.capabilities() if self.manim else
                             dict(enabled=False, status='prepared_not_admitted', kind='manim'))))
@@ -1028,7 +1065,7 @@ class AnimationMethodService:
             budget=run['budget'], usage=run['usage'], remaining=run['remaining'],
             criteria=standards, candidates=candidates, best_candidate_id=run['best_candidate_id'],
             baseline_candidate=next((row for row in candidates if row['id'] ==
-                run['frozen'].get('base_candidate_id')), None),
+                (run['frozen'].get('base_candidate_id') or (run.get('retry_base_candidate') or {}).get('id'))), None),
             methods=[_method_view(row) for row in methods.values()], publication_method_version_ids=selected_method_ids,
             method_publication_readiness=readiness,
             requires_audio_verification=any(row['media'].get('audio_sha256') for row in relevant_demos),
@@ -1037,7 +1074,8 @@ class AnimationMethodService:
             stop_reason=run['stop_reason'], remaining_issues=latest_review.get('remaining_issues', []),
             summary=summary, error=error, publication_ready=not blockers, publishable=not blockers,
             publication_blockers=sorted(set(blockers)), reviews=run['reviews'],
-            execution=[{k: op.get(k) for k in ('id', 'stage', 'status', 'job_id', 'error')}
+            execution=[{k: op.get(k) for k in ('id', 'stage', 'status', 'job_id', 'error',
+                'reused_from', 'artifact_operation_id')}
                        for op in run['operations']])
         if separated_anchor:
             detail['effect']['separation'] = deepcopy(effect['separation'])
@@ -1047,54 +1085,146 @@ class AnimationMethodService:
             _require(len(canonical_bytes(detail)) <= 2 * 1024 * 1024,
                      'animation_method_response_too_large', 413)
         if run['frozen'].get('resource_authoring'):
-            detail['resource_authoring'] = (self.resource_stage.view(owner, commission_id) if self.manim else
-                dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
+            decision = run.get('adopted_capabilities')
+            if run['frozen'].get('resource_planning') and not (decision or {}).get('uses_manim'):
+                state = dict(kind='manim', status='not_adopted' if decision else
+                    ('cancelled' if run['cancel_requested'] else
+                     'not_started' if run['state'] in TERMINAL else 'awaiting_plan'),
+                    operation_id=None, usage=dict(attempts=0), error=None,
+                    scope='resource_not_visual_acceptance')
+            else:
+                options = ({'resource_round': max(self._manim_round(run),
+                           self.resource_stage.allocated_round(owner, commission_id) or 0)}
+                       if 'manim_iteration' in run['frozen'] else {})
+                state = (self.resource_stage.view(owner, commission_id, **options) if self.manim else
+                    dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
+            detail['resource_authoring'] = dict(deepcopy(run['frozen']['resource_authoring']), **state)
+        detail.update(effect_id=effect['id'], representative_revision=effect.get('representative_revision', 0),
+            adopted_candidate_id=effect.get('adopted_candidate_id'),
+            creation_mode=run['frozen'].get('creation_mode', 'continue' if run['frozen'].get('base_commission_id') else 'new'),
+            use_wikiskill=run['frozen'].get('use_wikiskill', True),
+            library_binding=deepcopy(run['frozen'].get('library_binding')),
+            problem_summary=deepcopy(run['frozen'].get('problem_summary', [])))
+        detail['adopted_capabilities'] = deepcopy(run.get('adopted_capabilities'))
+        if run['frozen'].get('picture_origin') is not None:
+            detail['picture_origin'] = {key: deepcopy(value) for key, value in
+                run['frozen']['picture_origin'].items()
+                if key not in {'source', 'method', 'manim_source_context'}}
+        if 'capability_selection' in run['frozen']:
+            detail['capability_selection'] = deepcopy(run['frozen']['capability_selection'])
         if run['frozen'].get('collaboration'):
             from .animation_collaboration import progress_view
             detail['collaboration'] = progress_view(run)
         return detail
 
     @serialized_library_mutation
-    def start(self, owner, body):
+    def start(self, owner, body, *, _submission_snapshot=None, _picture_origin=None):
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
-                  'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration'}
+                  'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration', 'capability_selection',
+                  'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary', 'renderer_rebind'}
         if type(body) is dict and body.get('baseline_demonstration_id'):
             self.trash.require_demonstrations_visible(owner, [body['baseline_demonstration_id']])
-        _require(type(body) is dict and {'request_id', 'goal', 'budget'} <= set(body)
-                 and set(body) <= fields)
+        _require(type(body) is dict and {'request_id', 'budget'} <= set(body)
+                 and ('goal' in body or 'retry_of_commission_id' in body) and set(body) <= fields)
+        _require('use_wikiskill' not in body or type(body['use_wikiskill']) is bool,
+                 'animation_creation_knowledge_choice_invalid')
         request_id = body['request_id']
+        from .animation_prompt_inspection import submission_snapshot
+        submitted = (deepcopy(_submission_snapshot) if _submission_snapshot is not None else
+                     submission_snapshot(body))
         data = {key: deepcopy(value) for key, value in body.items() if key != 'request_id' and value is not None}
+        if _picture_origin is not None:
+            from .picture_animation_bridge import validate_origin
+            _require(not data.get('base_commission_id') and not data.get('retry_of_commission_id')
+                     and data.get('creation_mode', 'new') == 'new', 'picture_animation_origin_invalid')
+            data['picture_origin'] = validate_origin(_picture_origin)
+        explicit_selection = 'capability_selection' in data
+        if 'capability_selection' in data:
+            data['capability_selection'] = normalize_selection(data['capability_selection'])
         previous_request = next((row for row in self.commissions.list_all(owner)
                                  if row['request_id'] == request_id), None)
         skill_mode = (previous_request['frozen'].get('protocol_schema') == skill_protocol.INPUT_SCHEMA
                       if previous_request is not None else self.author_protocol is skill_protocol)
         if previous_request is not None:
             self._get_visible_commission(owner, previous_request['id'])
+        retry_source = None
+        _require('renderer_rebind' not in body or (body.get('renderer_rebind') == 'current-admitted'
+            and 'retry_of_commission_id' in data), 'animation_method_renderer_rebind_invalid')
         if 'retry_of_commission_id' in data:
-            # An existing visible retry still normalizes against its immutable
-            # ancestor on replay. Only a new request needs a visible parent;
-            # the durable request hash below rejects changed replay payloads.
-            previous = (self.commissions.get(owner, data['retry_of_commission_id'])
-                        if previous_request is not None else
-                        self._get_visible_commission(owner, data['retry_of_commission_id']))
-            _require(previous['state'] in {'failed', 'cancelled'} and all(
-                op['status'] in OP_TERMINAL for op in previous['operations']),
+            retry_fields = {'request_id', 'retry_of_commission_id', 'budget'}
+            if 'renderer_rebind' in body:
+                retry_fields.add('renderer_rebind')
+            _require(set(body) == retry_fields,
+                     'animation_method_retry_creative_contract_changed', 409)
+            retry_source = (self.commissions.get(owner, data['retry_of_commission_id'])
+                if previous_request is not None else self._get_visible_commission(owner, data['retry_of_commission_id']))
+            _require(retry_source['state'] in {'failed', 'cancelled'} and all(
+                op['status'] in OP_TERMINAL for op in retry_source['operations']),
                 'animation_method_retry_not_available', 409)
-            for key in RETRY_RELATION_FIELDS:
-                _require(key not in data or data[key] == previous['frozen'].get(key),
-                         'animation_method_retry_relationship_invalid', 409)
-                if key in previous['frozen']:
-                    data[key] = deepcopy(previous['frozen'][key])
-            for key in ('title', 'reference', 'duration_seconds', 'criteria', 'feedback', 'resource_authoring', 'collaboration'):
-                if key in previous['frozen']:
-                    data.setdefault(key, deepcopy(previous['frozen'][key]))
+            for key, value in data.items():
+                if key in {'budget', 'retry_of_commission_id', 'renderer_rebind'}:
+                    continue
+                _require(value == retry_source['frozen'].get(key),
+                    'animation_method_commission_idempotency_conflict' if previous_request else
+                    'animation_method_retry_creative_contract_changed', 409)
+            budget = deepcopy(data['budget'])
+            retry_id = data['retry_of_commission_id']
+            data = {key: deepcopy(value) for key,value in retry_source['frozen'].items()
+                    if key != 'base_candidate'}
+            data.update(budget=budget, retry_of_commission_id=retry_id)
+            if 'renderer_rebind' in body:
+                from .animation_renderer_rebind import freeze_binding
+                _require(type(budget) is dict and budget.get('max_rounds') == 1,
+                    'animation_method_renderer_rebind_single_render_required', 409)
+                data['renderer_rebind'] = body['renderer_rebind']
+                # An HTTP replay must retain its original new-runtime binding,
+                # even if another renderer has since been admitted.
+                if previous_request is not None:
+                    _require(previous_request.get('submission_snapshot', {}).get('document', {}).get('renderer_rebind')
+                        == body['renderer_rebind'], 'animation_method_commission_idempotency_conflict', 409)
+                    data['render_context_binding'] = deepcopy(previous_request['frozen']['render_context_binding'])
+                else:
+                    data['render_context_binding'] = freeze_binding(retry_source, self._capabilities())
+        from .animation_creation_policy import normalize
+        if previous_request is None or 'creation_mode' in previous_request['frozen']:
+            data = normalize(data)
+        if data.get('effect_id'):
+            effects = self.catalogue(owner)['effects']
+            effect = next((row for row in effects if row['id'] == data['effect_id']), None)
+            _require(effect is not None, 'animation_method_effect_not_found', 404)
+            if data.get('base_commission_id'):
+                _require(any(row['id'] == data['base_commission_id'] for row in effect['commissions']),
+                         'animation_creation_effect_mismatch', 409)
+            if data.get('creation_mode') == 'fresh' and effect['best_candidate']:
+                self.adoptions.ensure(owner, effect['id'], effect['open_commission_id'],
+                                      effect['best_candidate']['id'])
         if data.get('base_commission_id'):
             baseline_run = self._get_visible_commission(owner, data['base_commission_id'])
-            for key in ('resource_authoring', 'collaboration'):
+            for key in ('collaboration', 'capability_selection'):
                 if key not in data and baseline_run['frozen'].get(key):
                     data[key] = deepcopy(baseline_run['frozen'][key])
+            chosen_creation = data.get('capability_selection', {}).get('creation', [])
+            if (not explicit_selection or 'manim' in chosen_creation) and 'resource_authoring' not in data:
+                if baseline_run['frozen'].get('resource_authoring'):
+                    data['resource_authoring'] = deepcopy(baseline_run['frozen']['resource_authoring'])
+        if 'capability_selection' in data:
+            data['capability_selection'] = normalize_selection(data['capability_selection'])
+            if previous_request is None:
+                validate_new_selection(data['capability_selection'])
+        if previous_request is not None:
+            if previous_request['frozen'].get('resource_planning'):
+                data['resource_planning'] = previous_request['frozen']['resource_planning']
+        elif 'manim' in data.get('capability_selection', {}).get('creation', []):
+            data['resource_planning'] = 'after-plan.v1'
+        duration = data.setdefault('duration_seconds', 18)
+        _require(type(duration) in (int, float) and 1 <= duration <= 60
+                 and duration * 24 == int(duration * 24))
+        if 'capability_selection' in data:
+            resource = manim_request(data['capability_selection'], data.get('resource_authoring'), duration)
+            if resource is not None:
+                data['resource_authoring'] = resource
         budget = data['budget']
         _require(type(budget) is dict and set(budget) == {'max_rounds', 'max_seconds'})
         rounds, seconds = budget['max_rounds'], budget['max_seconds']
@@ -1109,21 +1239,20 @@ class AnimationMethodService:
             _require(not data.get('resource_authoring') and data.get('role', 'reference') == 'reference',
                      'animation_collaboration_scope_invalid')
             data['budget']['creator'] = required_creator_budget(data['collaboration'])
-        duration = data.setdefault('duration_seconds', 18)
-        _require(type(duration) in (int, float) and 1 <= duration <= 60
-                 and duration * 24 == int(duration * 24))
         if data.get('resource_authoring') is not None:
             from .manim_method_coordinator import authoring_request
             data['resource_authoring'] = authoring_request(data['resource_authoring'], duration)
             _require(self.manim is not None, 'manim_method_resource_not_admitted', 503)
-            self.manim.preflight(self.clock() + seconds)
+            if not data.get('resource_planning'):
+                self.manim.preflight(self.clock() + seconds)
         # Runtime admission is trusted server configuration, never a browser
         # field. Replay uses the original server-injected snapshot even if a
         # later deployment admits additional engines or changes image hashes.
-        if previous_request is not None:
+        if previous_request is not None or retry_source is not None:
+            origin = previous_request or retry_source
             for key in ('constraints', 'assets'):
-                if key in previous_request['frozen']:
-                    data[key] = deepcopy(previous_request['frozen'][key])
+                if key in origin['frozen']:
+                    data[key] = deepcopy(origin['frozen'][key])
         else:
             capabilities = self._capabilities()
             if capabilities is not None:
@@ -1133,7 +1262,19 @@ class AnimationMethodService:
                 if capabilities.get('authoring_libraries'):
                     from .animejs_library import method_authoring_context
                     data['constraints'].update(method_authoring_context(capabilities))
+            if 'capability_selection' in data:
+                data['constraints'] = freeze_creation_selection(data['capability_selection'],
+                    data.get('constraints', {}), data.get('assets', {}))
+            if set(data.get('constraints', {}).get('allowed_engines', [])) & {'canvas', 'three'}:
+                from .animation_runtime_capabilities import drawing_context_budget
+                data['constraints']['native_drawing_context_budget'] = drawing_context_budget()
         allowed_engines = data.get('constraints', {}).get('allowed_engines', ['html-svg'])
+        if previous_request is None and retry_source is None and 'canvas' in allowed_engines:
+            provider=getattr(self.renderer,'scene_space_capabilities',None)
+            if callable(provider) and not data.get('resource_authoring') and not data.get('resource_planning') and not data.get('collaboration'):
+                scene_capability=provider()
+                if scene_capability.get('admitted') is True:
+                    data.setdefault('constraints',{})['scene_space_capability']=deepcopy(scene_capability)
         if data.get('criteria'):
             protocol.criteria(data['criteria'])
         _require(data.get('role', 'reference') in {'reference', 'transfer'})
@@ -1149,6 +1290,8 @@ class AnimationMethodService:
             if not data.get('criteria'):
                 old = self.get(owner, previous['id'])
                 data['criteria'] = old['criteria']
+        if data.get('use_wikiskill') is False and data.get('role') != 'transfer':
+            data['method_versions'] = []
         version_ids = data.get('method_versions', [])
         _require(type(version_ids) is list and len(version_ids) <= 32
                  and all(type(item) is str for item in version_ids)
@@ -1162,7 +1305,22 @@ class AnimationMethodService:
             require_method_compatible(version, assets=data.get('assets', {}),
                 authoring_libraries=data.get('constraints', {}).get('authoring_libraries', {}),
                 resource_authoring=PRODUCER_REQUIREMENT if data.get('resource_authoring') else {})
-        if data.get('collaboration') and previous_request is None:
+        if data.get('resource_authoring'):
+            if previous_request is not None:
+                if 'manim_iteration' in previous_request['frozen']:
+                    data['manim_iteration'] = deepcopy(previous_request['frozen']['manim_iteration'])
+            elif 'manim_iteration' not in data:
+                data['manim_iteration'] = (self._manim_iteration_context(owner, previous, baseline,
+                    allow_without_resource=bool(data.get('resource_planning')))
+                    if data.get('base_commission_id') else dict(criteria=deepcopy(data.get('criteria', [])),
+                        methods=[self.methods.get_method(owner, version_id) for version_id in version_ids]))
+                if data.get('use_wikiskill') is False:
+                    data['manim_iteration']['methods'] = []
+            if not data.get('resource_planning') and callable(getattr(self.manim, 'recipe_guidance', None)):
+                self.manim.recipe_guidance(owner, data)
+        else:
+            data.pop('manim_iteration', None)
+        if data.get('collaboration') and previous_request is None and retry_source is None:
             from .creative_direction import build_creative_direction
             # Freeze the direction with the request. Later feedback must not
             # change an already reserved operation or its idempotency hash.
@@ -1211,25 +1369,69 @@ class AnimationMethodService:
                         *([self.collaboration_author] if data.get('collaboration') else [])):
             if callable(getattr(gateway, 'preflight', None)):
                 gateway.preflight(self.clock() + seconds)
+        if 'creation_mode' in data:
+            if previous_request is not None:
+                data['library_binding'] = deepcopy(previous_request['frozen']['library_binding'])
+            elif retry_source is not None and 'library_binding' in retry_source['frozen']:
+                data['library_binding'] = deepcopy(retry_source['frozen']['library_binding'])
+            else:
+                data['library_binding'] = self.library_adapter.pin(owner,
+                    'animation-lab-request:' + request_id, use_wikiskill=data['use_wikiskill'])
         if skill_mode:
             data['protocol_schema'] = skill_protocol.INPUT_SCHEMA
-            if previous_request is not None:
+            if 'library_binding' in data:
+                snapshot = self.library_adapter.laboratory_snapshot(owner, data['library_binding'])
+                data['knowledge_snapshot_id'] = snapshot['id']
+            elif previous_request is not None:
                 data['knowledge_snapshot_id'] = previous_request['frozen']['knowledge_snapshot_id']
             else:
-                self._experience(owner, 'brief', request_id, dict(
-                    goal=data['goal'], feedback=data.get('feedback', ''),
-                    role=data.get('role', 'reference'), scope='requested_goal_not_rendered_or_accepted'))
                 data['knowledge_snapshot_id'] = (None if data.get('role') == 'transfer' else
                     self.knowledge.snapshot(owner, page_ids=[], experience_ids=[])['id']
                     if data.get('collaboration') else self._knowledge_snapshot(owner)['id'])
-            # Build the complete first main JSON before reserving any paid
-            # operation; research and Wiki cannot exceed the fixed reader.
-            if data.get('collaboration'):
-                self._collaboration_document(owner, dict(frozen=data, operations=[]), 'plan')
-            else:
-                self._document(owner, dict(frozen=data, operations=[]), 'plan')
-        run = self.commissions.create(owner, data, request_id)
+            if previous_request is None:
+                self._experience(owner, 'brief', request_id, dict(
+                    goal=data['goal'], feedback=data.get('feedback', ''),
+                    role=data.get('role', 'reference'), scope='requested_goal_not_rendered_or_accepted'))
+        # Validate the complete bounded input before reserving paid work.
+        if data.get('collaboration'):
+            self._collaboration_document(owner, dict(frozen=data, operations=[]), 'plan')
+        else:
+            self._document(owner, dict(frozen=data, operations=[]), 'plan')
+        run = self.commissions.create(owner, data, request_id, submission_snapshot=submitted)
+        if retry_source is not None:
+            self.commissions.restore_completed_creators(owner, run['id'], retry_source['id'])
         return self.get(owner, run['id'])
+
+    @serialized_library_mutation
+    def adopt(self, owner, commission_id, body):
+        _require(type(body) is dict and set(body) == {
+            'request_id', 'effect_id', 'candidate_id', 'expected_revision'})
+        run = self._get_visible_commission(owner, commission_id)
+        _require(run['state'] in TERMINAL, 'animation_effect_adoption_commission_active', 409)
+        effect = next((row for row in self.catalogue(owner)['effects']
+            if row['id'] == body['effect_id'] and any(item['id'] == commission_id for item in row['commissions'])), None)
+        _require(effect is not None, 'animation_method_effect_not_found', 404)
+        candidate = next((row for row in run['candidates'] if row['id'] == body['candidate_id']), None)
+        _require(candidate is not None and candidate.get('technical', {}).get('status') == 'passed',
+                 'animation_effect_adoption_candidate_invalid', 409)
+        self.artifact(owner, commission_id, candidate['id'], 'media')
+        if self.adoptions.get(owner, effect['id']) is None:
+            current = effect.get('best_candidate')
+            self.adoptions.ensure(owner, effect['id'], effect['open_commission_id'] if current else commission_id,
+                                  current['id'] if current else candidate['id'])
+        self.adoptions.adopt(owner, effect['id'], commission_id, candidate['id'],
+            body['expected_revision'], body['request_id'])
+        return self.get(owner, commission_id)
+
+    def prompt_inspection(self, owner, commission_id):
+        from .animation_prompt_inspection import inspection_view
+        return inspection_view(self._get_visible_commission(owner, commission_id))
+
+    def operation_input(self, owner, commission_id, operation_id):
+        from .animation_prompt_inspection import operation_input_view
+        run = self._get_visible_commission(owner, commission_id)
+        operation = self.commissions.operation(owner, operation_id)
+        return operation_input_view(run, operation)
 
     @serialized_library_mutation
     def cancel(self, owner, commission_id, body):
@@ -1352,7 +1554,8 @@ class AnimationMethodService:
     @serialized_library_mutation
     def transfer(self, owner, commission_id, body):
         allowed = {'request_id', 'title', 'goal', 'structural_changes', 'budget',
-                   'duration_seconds', 'reference', 'base_candidate_id', 'feedback', 'content_changes'}
+                   'duration_seconds', 'reference', 'base_candidate_id', 'feedback', 'content_changes',
+                   'capability_selection', 'resource_authoring', 'use_wikiskill'}
         _require(type(body) is dict and {'request_id', 'goal', 'structural_changes', 'budget'} <= set(body)
                  and set(body) <= allowed)
         run = self._get_visible_commission(owner, commission_id)
@@ -1365,9 +1568,16 @@ class AnimationMethodService:
         request = dict(body, role='transfer', baseline_demonstration_id=demo['id'],
                        method_versions=source['method_versions'],
                        criteria=self._method_criteria(owner, source['method_versions']))
+        if 'capability_selection' in run['frozen']:
+            request.setdefault('capability_selection', deepcopy(run['frozen']['capability_selection']))
+        chosen_creation = request.get('capability_selection', {}).get('creation', [])
+        if 'capability_selection' not in body or 'manim' in chosen_creation:
+            if run['frozen'].get('resource_authoring'):
+                request.setdefault('resource_authoring', deepcopy(run['frozen']['resource_authoring']))
         request.pop('base_candidate_id', None)
         # The new goal creates a new composition from the exact method, not a copied source baseline.
-        return self.start(owner, request)
+        from .animation_prompt_inspection import submission_snapshot
+        return self.start(owner, request, _submission_snapshot=submission_snapshot(body, action='transfer'))
 
     @serialized_library_mutation
     def publish(self, owner, commission_id, body):
@@ -1437,13 +1647,55 @@ class AnimationMethodService:
         if kind == 'source':
             return canonical_bytes(candidate['source']), 'application/json'
         _require(kind == 'media')
-        path = Path(self.renderer.media_path(candidate['operation_id']))
+        path = Path(self.renderer.media_path(self._artifact_operation_id(owner, candidate['operation_id'])))
         _require(not path.is_symlink() and path.is_file() and path.stat().st_size <= 32 * 1024 * 1024,
                  'animation_method_media_changed', 409)
         raw = path.read_bytes()
         _require(len(raw) <= 32 * 1024 * 1024 and hashlib.sha256(raw).hexdigest() == candidate['media']['sha256'],
                  'animation_method_media_changed', 409)
         return raw, 'video/mp4'
+
+    def _artifact_operation_id(self, owner, operation_id):
+        operation = self.commissions.operation(owner, operation_id)
+        return operation.get('artifact_operation_id', operation_id)
+
+    def _reuse_retry_render(self, owner, run, operation):
+        """Reuse only exact stopped media, never a failed rendering or a review."""
+        if run['frozen'].get('render_context_binding') is not None:
+            return False
+        previous_id = run['frozen'].get('retry_of_commission_id')
+        if previous_id is None or operation['status'] != 'reserved':
+            return False
+        author = self.commissions.operation(owner, operation['input']['author_operation_id'])
+        origin = author.get('reused_from')
+        if not origin or origin['commission_id'] != previous_id:
+            return False
+        previous = self.commissions.get(owner, previous_id)
+        render = next((row for row in previous['operations']
+            if row['stage'] == 'render' and row['status'] == 'completed'
+            and row['input'].get('author_operation_id') == origin['operation_id']
+            and (row.get('result') or {}).get('technical', {}).get('status') == 'passed'), None)
+        if render is None:
+            return False
+        artifact_id = render.get('artifact_operation_id', render['id'])
+        path = Path(self.renderer.media_path(artifact_id))
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > 32 * 1024 * 1024:
+            return False
+        raw = path.read_bytes()
+        if (len(raw) > 32 * 1024 * 1024
+                or hashlib.sha256(raw).hexdigest() != render['result']['media']['sha256']):
+            return False
+        self.commissions.reuse_render(owner, operation['id'], render['id'])
+        return True
+
+    def _retry_creator_already_reviewed(self, owner, run, authored):
+        origin = authored.get('reused_from')
+        if not origin or origin['commission_id'] != run['frozen'].get('retry_of_commission_id'):
+            return False
+        previous = self.commissions.get(owner, origin['commission_id'])
+        reviewed = {row['candidate_id'] for row in previous['reviews']}
+        return any(candidate['id'] in reviewed and candidate.get('provenance', {}).get(
+            'author_operation_id') == origin['operation_id'] for candidate in previous['candidates'])
 
     def trash_catalogue(self, owner):
         return self.trash.catalogue(owner)
@@ -1457,6 +1709,155 @@ class AnimationMethodService:
     def restore_trash(self, owner, entry_id, body):
         return self.trash.restore(owner, entry_id, body)
 
+    @staticmethod
+    def _uses_manim(run):
+        if run['frozen'].get('resource_planning'):
+            return bool(run.get('adopted_capabilities', {}).get('uses_manim'))
+        return bool(run['frozen'].get('resource_authoring'))
+
+    @staticmethod
+    def _effective_selection(run):
+        decision = run.get('adopted_capabilities')
+        if run['frozen'].get('resource_planning') and decision is not None:
+            return {key: deepcopy(decision[key]) for key in ('creation', 'motion')}
+        return deepcopy(run['frozen'].get('capability_selection', {}))
+
+    def _derive_capability_decision(self, run, operation, result=None):
+        """Reuse the existing plan contract; clients cannot supply adoption."""
+        result = operation['result'] if result is None else result
+        methods = (operation['input']['methods'] if run['frozen'].get('role') == 'transfer'
+                   else result['methods'])
+        _require(bool(methods), 'animation_method_capability_plan_missing', 409)
+        engines = {row['runtime_requirements']['engine'] for row in methods}
+        _require(len(engines) == 1, 'animation_method_capability_plan_ambiguous', 409)
+        engine = next(iter(engines))
+        uses_manim = any(row['runtime_requirements'].get('resource_authoring') for row in methods)
+        from .manim_method_resources import PRODUCER_REQUIREMENT, require_method_producer
+        if uses_manim:
+            require_method_producer(methods)
+        else:
+            _require(not any(row.get('skill_package', {}).get('runtime_requirements', {}).get(
+                'resource_authoring') for row in methods), 'animation_method_capability_plan_ambiguous', 409)
+        selection = run['frozen']['capability_selection']
+        candidates = selection.get('creation', [])
+        _require(engine in run['frozen']['constraints']['allowed_engines'],
+                 'animation_method_runtime_not_admitted', 409)
+        _require(engine in candidates or (engine == 'html-svg' and uses_manim),
+                 'animation_method_capability_plan_outside_selection', 409)
+        _require(candidates != ['manim'] or uses_manim,
+                 'animation_method_capability_plan_manim_required', 409)
+        from .animation_skill_compatibility import require_method_compatible
+        for method in methods:
+            require_method_compatible(method, assets=run['frozen'].get('assets', {}),
+                authoring_libraries=run['frozen'].get('constraints', {}).get('authoring_libraries', {}),
+                resource_authoring=PRODUCER_REQUIREMENT if uses_manim else {})
+        creation = ([engine] if engine in candidates else []) + (['manim'] if uses_manim else [])
+        motion = [] if creation == ['manim'] else deepcopy(selection.get('motion', []))
+        return dict(creation=creation, motion=motion, engine=engine, uses_manim=uses_manim,
+                    plan_operation_id=operation['id'], plan_result_sha256=digest(result))
+
+    def _manim_round(self, run, *, mode=None, base=None):
+        creates = [op for op in run['operations'] if op.get('stage') == 'creator'
+                   and op.get('input', {}).get('mode') == 'create']
+        if mode == 'review' and base is not None:
+            author_id = base.get('provenance', {}).get('author_operation_id')
+            index = next((i for i, op in enumerate(creates) if op['id'] == author_id), None)
+            _require(index is not None, 'manim_method_candidate_round_missing', 409)
+            return index
+        current = max(0, len(creates) - 1)
+        if (run.get('cancel_requested') or run.get('state') in TERMINAL
+                or self.clock() + 30 >= run.get('deadline_at', float('inf'))
+                or any(op['status'] in {'failed', 'cancelled'} for op in run['operations'])):
+            return current
+        if not creates or not all(run.get('remaining', {}).get(key, 0) > 0
+                                  for key in ('creator', 'render', 'review')):
+            return current
+        latest = next((candidate for candidate in run.get('candidates', [])
+                       if candidate.get('provenance', {}).get('author_operation_id') == creates[-1]['id']), None)
+        review = next((item for item in reversed(run.get('reviews', []))
+                       if latest is not None and item['candidate_id'] == latest['id']), None)
+        if review is None or review['outcome'] == 'goal_met':
+            return current
+        if (len(run['reviews']) >= 2
+                and all(row['outcome'] in {'equal', 'regressed', 'inconclusive'} for row in run['reviews'][-2:])
+                and len({digest(row['strategy']) for row in run['candidates'][-2:]}) >= 2):
+            return current
+        return len(creates)
+
+    def _manim_iteration_context(self, owner, run, base, *, review=None, frozen_feedback=None,
+                                 allow_without_resource=False):
+        """Bind the actual previous Python resource, not an HTML reconstruction."""
+        context = {}
+        if base is not None:
+            author_id = base.get('provenance', {}).get('author_operation_id')
+            author = next((op for op in run['operations'] if op['id'] == author_id), None)
+            descriptors = (author or {}).get('input', {}).get('constraints', {}).get('generated_resources', [])
+            if len(descriptors) == 1:
+                context['baseline_descriptor'] = deepcopy(descriptors[0])
+            elif base.get('id') == (run['frozen'].get('base_candidate') or {}).get('id'):
+                original = run['frozen'].get('manim_iteration', {}).get('baseline_descriptor')
+                if original is not None:
+                    context['baseline_descriptor'] = deepcopy(original)
+            _require(allow_without_resource or 'baseline_descriptor' in context,
+                     'manim_method_iteration_baseline_missing', 409)
+            context['methods'] = [self.methods.get_method(owner, version_id)
+                                  for version_id in base.get('method_versions', [])]
+        plan = next((op['result'] for op in run['operations'] if op.get('stage') == 'creator'
+                     and op.get('input', {}).get('mode') == 'plan' and op['status'] == 'completed'), {})
+        context['criteria'] = deepcopy(run['frozen'].get('criteria') or plan.get('criteria', []))
+        if review is None:
+            review = next((op['result']['review'] for op in reversed(run['operations'])
+                           if op['stage'] == 'review' and op['status'] == 'completed'), None)
+        if review is not None:
+            context['review'] = deepcopy(review)
+        context['developer_feedback'] = deepcopy(frozen_feedback if frozen_feedback is not None else
+            [item for item in self._feedback(owner, run['id']) if not item.get('withdrawn')])
+        return context
+
+    def _manim_projection(self, owner, run, *, mode=None, base=None):
+        if 'library_binding' in run['frozen']:
+            run = deepcopy(run)
+            run['library_binding'] = deepcopy(run['frozen']['library_binding'])
+        if 'manim_iteration' not in run['frozen']:
+            return run
+        if run['frozen'].get('retry_of_commission_id') and not run.get('reviews'):
+            previous = self.commissions.get(owner, run['frozen']['retry_of_commission_id'])
+            original = self._manim_projection(owner, previous, mode=mode)
+            projected = deepcopy(run)
+            projected['resource_round'] = original.get('resource_round', 0)
+            projected['frozen']['manim_iteration'] = deepcopy(original['frozen']['manim_iteration'])
+            projected['frozen']['feedback'] = original['frozen'].get('feedback', '')
+            return projected
+        resource_round = self._manim_round(run, mode=mode, base=base)
+        if mode != 'review':
+            allocated = self.resource_stage.allocated_round(owner, run['id'])
+            if allocated is not None:
+                resource_round = max(resource_round, allocated)
+        projected = deepcopy(run)
+        projected['resource_round'] = resource_round
+        if run['frozen'].get('resource_planning') and not resource_round:
+            plan = next(op for op in run['operations'] if op['input'].get('mode') == 'plan'
+                        and op['status'] == 'completed')
+            context = projected['frozen']['manim_iteration']
+            context['criteria'] = deepcopy(plan['result']['criteria'])
+            context['methods'] = deepcopy(plan['input']['methods'] if run['frozen'].get('role') == 'transfer'
+                                          else plan['result']['methods'])
+        if resource_round:
+            creates = [op for op in run['operations'] if op.get('stage') == 'creator'
+                       and op.get('input', {}).get('mode') == 'create']
+            previous = next(item for item in run['candidates']
+                            if item.get('provenance', {}).get('author_operation_id') == creates[resource_round - 1]['id'])
+            evaluation = next(row for row in run['reviews'] if row['candidate_id'] == previous['id'])
+            baseline_id = evaluation.get('best_candidate_id') or previous['id']
+            baseline = next((item for item in _candidates(run) if item['id'] == baseline_id), previous)
+            review_operation = next(op for op in run['operations'] if op['id'] == evaluation['operation_id'])
+            projected['frozen']['manim_iteration'] = self._manim_iteration_context(owner, run, baseline,
+                review=review_operation['result']['review'],
+                frozen_feedback=run['frozen']['manim_iteration'].get('developer_feedback', []),
+                allow_without_resource=bool(run['frozen'].get('resource_planning')))
+            projected['frozen']['feedback'] = review_operation['result']['review']['next_guidance']
+        return projected
+
     def _collaboration_document(self, owner, run, phase, **task):
         from .animation_collaboration import operation_input
         frozen = run['frozen']
@@ -1468,7 +1869,14 @@ class AnimationMethodService:
         standards = frozen.get('criteria') or (plans[0]['result']['criteria'] if plans else [])
         selected = [self.methods.get_method(owner, version_id)
                     for version_id in frozen.get('method_versions', [])]
-        base = frozen.get('base_candidate')
+        base = frozen.get('base_candidate') if frozen.get('creation_mode') != 'fresh' else None
+        from .animation_creation_policy import authoring_constraints
+        if 'creation_mode' in frozen:
+            constraints['authoring_policy'] = authoring_constraints(frozen)
+            constraints['animation_knowledge'] = self.library_adapter.laboratory_snapshot(owner, frozen['library_binding'])
+            constraints['library_binding'] = deepcopy(frozen['library_binding'])
+        if frozen.get('use_wikiskill') is False:
+            selected = []
         document = dict(goal=frozen['goal'], criteria=deepcopy(standards),
             constraints=constraints, assets=deepcopy(frozen.get('assets', {})),
             reference=deepcopy(frozen.get('reference')), feedback=frozen.get('feedback', ''),
@@ -1496,22 +1904,65 @@ class AnimationMethodService:
                      or op['input'].get('phase') == 'plan')
                      and op['status'] == 'completed'), None)
         standards = run['frozen'].get('criteria') or (plan['criteria'] if plan else [])
+        if run['frozen'].get('creation_mode') == 'fresh' and base and base.get('id') not in {
+                row['id'] for row in run.get('candidates', [])} | {
+                (run.get('retry_base_candidate') or {}).get('id')}:
+            base = None
         versions = (base.get('method_versions', []) if base else run['frozen'].get('method_versions', []))
+        if run['frozen'].get('use_wikiskill') is False and run['frozen'].get('role') != 'transfer':
+            versions = []
         selected = [self.methods.get_method(owner, version_id) for version_id in versions]
         if not selected and plan:
             selected = deepcopy(plan['methods'])
         frozen_constraints = deepcopy(run['frozen'].get('constraints', {}))
+        if mode == 'review' and run['frozen'].get('render_context_binding') is not None:
+            from .animation_renderer_rebind import review_constraints
+            frozen_constraints.update(review_constraints(run['frozen']['render_context_binding']))
+        if 'creation_mode' in run['frozen']:
+            from .animation_creation_policy import authoring_constraints
+            frozen_constraints['authoring_policy'] = authoring_constraints(run['frozen'])
+            frozen_constraints['library_binding'] = deepcopy(run['frozen']['library_binding'])
+            if active_protocol is not skill_protocol:
+                frozen_constraints['animation_knowledge'] = self.library_adapter.laboratory_snapshot(
+                    owner, run['frozen']['library_binding'])
         assets = deepcopy(run['frozen'].get('assets', {}))
-        if run['frozen'].get('resource_authoring') and run.get('id'):
+        deferred = bool(run['frozen'].get('resource_planning'))
+        decision = run.get('adopted_capabilities')
+        if deferred and mode != 'plan':
+            _require(decision is not None, 'animation_method_capability_decision_missing', 409)
+            frozen_constraints.update(allowed_engines=[decision['engine']],
+                adopted_capabilities=deepcopy(decision), capability_selection=self._effective_selection(run))
+        if deferred and mode == 'plan':
+            from .manim_method_resources import PRODUCER_REQUIREMENT
+            frozen_constraints['resource_authoring_plan'] = dict(
+                candidate=deepcopy(run['frozen']['resource_authoring']),
+                producer_requirements=deepcopy(PRODUCER_REQUIREMENT),
+                instruction=(
+                    'No resource has been made. Choose actual drawing capabilities now, using the existing '
+                    'methods contract: return nonempty methods with one consistent browser engine. Declare '
+                    'runtime_requirements.resource_authoring equal to producer_requirements in every method '
+                    'and its Skill package only when adopting Manim. Otherwise omit that dependency entirely. '
+                    'For transfer, apply the frozen input methods and return methods=[] as required. '
+                    'html-svg outside the requested drawing choices is available solely as a real Manim '
+                    'carrier. A pure Manim decision uses native Manim motion, not browser motion libraries. '
+                    'Never claim resources already exist or wait to read their output in this plan. '
+                    'This choice will be frozen before any producer task and cannot be reversed in create.'))
+        if self._uses_manim(run) and run.get('id') and not (deferred and mode == 'plan'):
             _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
-            descriptor = self.resource_stage.context(owner, run['id'])
-            placement = self.resource_stage.placement(owner, run)
+            projected = self._manim_projection(owner, run, mode=mode, base=base)
+            options = ({'resource_round': projected['resource_round']} if 'resource_round' in projected else {})
+            descriptor = self.resource_stage.context(owner, run['id'], **options)
+            placement = self.resource_stage.placement(owner, projected)
             _require(not (set(assets) & set(descriptor['assets_sha256'])), 'manim_method_resource_collision', 409)
             assets.update(descriptor['assets_sha256'])
             frozen_constraints['generated_resources'] = [descriptor]
+            optional_resource = (not deferred and 'capability_selection' in run['frozen']
+                and run['frozen']['capability_selection'].get('creation', []) != ['manim'])
             frozen_constraints['generated_resource_usage'] = (
                 'A stopped Manim PNG resource has already been created for this experiment. '
-                'Use it as a visual layer in your original scene composition, without running Python or '
+                + ('You may choose this resource or another selected drawing capability. If choosing it, use '
+                   if optional_resource else 'Use ')
+                + 'it as a visual layer in your original scene composition, without running Python or '
                 'rebuilding its frames. Import {prepareManimMethodFrames} from /assets/manim_method_frames.mjs. '
                 'The exact manifest object is constraints.generated_resources[0].manifest: embed that object '
                 'directly in scene.js (connect-src is disabled, so do not fetch JSON). Prepare a positioned '
@@ -1544,6 +1995,30 @@ class AnimationMethodService:
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
             comparison=comparison, assets=assets)
+        if run['frozen'].get('constraints',{}).get('scene_space_capability') and mode in {'plan','create'}:
+            from .scene_space_effects import effect_scene_offer
+            document['constraints']['scene_space']=effect_scene_offer(run)
+            if run['frozen'].get('use_wikiskill') is not False:
+                from .scene_space_learning import transferable_scene_method
+                methods=[]
+                for version_id in run['frozen'].get('method_versions',[]):
+                    for record in self.methods.get_scene_space(owner,version_id):
+                        methods.append(transferable_scene_method({'scene_space':record['metadata']})['scene_space'])
+                if methods:document['constraints']['scene_space_methods']=methods[:32]
+        origin = run['frozen'].get('picture_origin')
+        if origin is not None and run['frozen'].get('creation_mode') != 'fresh':
+            from .picture_animation_bridge import validate_origin
+            origin = validate_origin(origin)
+            document['constraints']['picture_origin'] = {
+                key: deepcopy(value) for key, value in origin.items() if key != 'source'}
+            document['constraints']['picture_origin']['instruction'] = (
+                'This is a source-preserving still-picture starting point for a NEW original animation, '
+                'not a previous animation or motion-validated Skill. Keep the requested visual craft '
+                'while authoring movement and rhythm for the current goal. Regenerate resource identities '
+                'for this task; do not use old picture resource URLs as runtime dependencies. '
+                'Do not claim that the still source proves motion, audio or transfer quality.')
+            if base is None and mode in {'plan', 'create'}:
+                document['base_source'] = deepcopy(origin['source'])
         if mode == 'plan':
             document['constraints']['result_requirements'] = dict(
                 source=None, review=None, sound_events=[],
@@ -1607,7 +2082,10 @@ class AnimationMethodService:
                     review=dict(instruction='Assess the transferred application against the frozen criteria.')))
         if active_protocol is skill_protocol:
             transfer = run['frozen'].get('role') == 'transfer'
-            if run['frozen'].get('collaboration') and mode == 'review':
+            if 'library_binding' in run['frozen']:
+                snapshot = (None if transfer else self.library_adapter.laboratory_snapshot(
+                    owner, run['frozen']['library_binding']))
+            elif run['frozen'].get('collaboration') and mode == 'review':
                 # Review the actual candidate and its criteria. An empty,
                 # honestly captured snapshot avoids unrelated historical Wiki.
                 snapshot = self.knowledge.snapshot(owner, page_ids=[], experience_ids=[])
@@ -1626,6 +2104,12 @@ class AnimationMethodService:
                 document['constraints'].setdefault('result_requirements', {})['skill_contract'] = (
                     'New methods must use video.animation-method.v2 with a complete standard Skill draft; '
                     'knowledge_proposals are evidence-bound Wiki updates, never Skill publication.')
+                if 'library_binding' in run['frozen']:
+                    document['constraints']['result_requirements']['knowledge_proposals'] = []
+                    document['constraints']['result_requirements']['knowledge_instruction'] = (
+                        'The snapshot is an immutable published release or empty knowledge policy. '
+                        'Return knowledge_proposals=[]; preserve new reusable experience in your method draft. '
+                        'Do not invent editable working-Wiki pages or evidence.')
         active_protocol.validate_input(document)
         return document
 
@@ -1684,7 +2168,7 @@ class AnimationMethodService:
             return
         try:
             result = gateway.collect(job['job_id'], operation['input_sha256'], operation['input'])
-            if run['frozen'].get('resource_authoring'):
+            if self._uses_manim(run):
                 from .manim_method_resources import require_method_producer
                 require_method_producer(result['methods'])
             if operation['stage'] == 'review':
@@ -1694,6 +2178,22 @@ class AnimationMethodService:
                             if row.get('model_request_completed') is True}
                 _require(expected <= observed, 'animation_method_frame_transport_incomplete', 409)
             active_protocol.validate_result(result, operation['input_sha256'], operation['input'])
+            if result.get('source') is not None and run['frozen'].get('constraints',{}).get('scene_space_capability'):
+                from .scene_space_effects import effect_scene_metadata
+                effect_scene_metadata(result,run,operation['input'])
+            if run['frozen'].get('resource_planning'):
+                if operation['input'].get('mode') == 'plan':
+                    self._derive_capability_decision(run, operation, result)
+                elif result.get('source') is not None:
+                    decision = run['adopted_capabilities']
+                    _require(result['source']['engine'] == decision['engine'],
+                             'animation_method_capability_decision_changed', 409)
+                    if not decision['uses_manim']:
+                        _require(not any(row['runtime_requirements'].get('resource_authoring') or
+                            row.get('skill_package', {}).get('runtime_requirements', {}).get('resource_authoring')
+                            for row in result['methods']), 'animation_method_capability_decision_changed', 409)
+            if 'capability_selection' in run['frozen'] and result.get('source') is not None:
+                validate_source_selection(self._effective_selection(run), result['source'])
         except ServiceError as error:
             # Transport outages may be retried as reads of the same stopped
             # job. A definitive invalid artifact ends this operation.
@@ -1704,18 +2204,62 @@ class AnimationMethodService:
             raise
         self.commissions.complete(owner, operation['id'], result)
 
+    def _method_author_identity(self, owner, run, authored):
+        """Keep method writes idempotent across verified creator checkpoints.
+
+        Candidate/demo provenance still names this retry's operations. Only
+        the method request uses the original creator identity, so an already
+        persisted Skill package is not interpreted as a new method version.
+        """
+        seen = set()
+        while authored.get('reused_from'):
+            origin = authored['reused_from']
+            _require(authored['id'] not in seen
+                and authored['commission_id'] == run['id']
+                and authored['stage'] == 'creator' and authored['status'] == 'completed'
+                and origin['commission_id'] == run['frozen'].get('retry_of_commission_id'),
+                'animation_method_retry_method_author_changed', 409)
+            seen.add(authored['id'])
+            previous = self.commissions.get(owner, origin['commission_id'])
+            source = self.commissions.operation(owner, origin['operation_id'])
+            _require(previous['state'] in {'failed', 'cancelled'}
+                and source['commission_id'] == previous['id']
+                and source['stage'] == 'creator' and source['status'] == 'completed'
+                and all(source.get(key) == authored.get(key) for key in
+                    ('idempotency_key', 'input_sha256', 'result_sha256', 'input', 'result', 'job_id')),
+                'animation_method_retry_method_author_changed', 409)
+            run, authored = previous, source
+        return authored['id']
+
     def _materialize(self, owner, run, render):
         authored = next(op for op in run['operations'] if op['id'] == render['input']['author_operation_id'])
         result = authored['result']
+        from .scene_space_effects import effect_scene_metadata,portable_method
+        scene_metadata=effect_scene_metadata(result,run,authored['input'])
+        if scene_metadata is None and run['frozen'].get('constraints',{}).get('scene_space_capability'):
+            origin=run['frozen'].get('picture_origin',{}).get('method') or {}
+            candidate=origin.get('scene_space')
+            if type(candidate) is dict and candidate.get('schema')=='video.scene-space-method.v1':
+                from .scene_space_learning import validate_scene_method
+                scene_metadata=validate_scene_method(candidate)
+        if 'capability_selection' in run['frozen']:
+            validate_rendered_selection(self._effective_selection(run), result['source'],
+                                        render['result'], render.get('artifact_operation_id', render['id']))
+        if run['frozen'].get('resource_planning'):
+            observed_manim = any(row['id'] == 'manim' for row in observed_authoring_tools(
+                render['result'].get('runtime', {})))
+            _require(observed_manim == self._uses_manim(run),
+                     'animation_method_capability_resource_mismatch', 409)
         versions = []
         if run['frozen'].get('role') == 'transfer':
             versions = run['frozen'].get('method_versions', [])
         else:
+            method_author_id = self._method_author_identity(owner, run, authored)
             for index, proposal in enumerate(result['methods']):
                 parent = (next((row for row in authored['input']['methods']
                     if row.get('problem') == proposal['problem'] and row.get('version_id')), None)
                     if self._protocol(run) is protocol else None)
-                body = deepcopy(proposal)
+                body = portable_method(proposal,enabled=bool(run['frozen'].get('constraints',{}).get('scene_space_capability')))
                 if body.get('parent_version_id'):
                     parent = self.methods.get_method(owner, body['parent_version_id'])
                 if parent and parent.get('owner') != owner:
@@ -1726,10 +2270,19 @@ class AnimationMethodService:
                     body.pop('parent_version_id', None)
                 if parent:
                     body.update(method_id=parent['method_id'], parent_version_id=parent['version_id'])
-                method = self.methods.create_method(owner, body, authored['id'] + ':method:' + str(index))
+                method = self.methods.create_method(owner, body, method_author_id + ':method:' + str(index))
                 versions.append(method['id'])
         _require(bool(versions), 'animation_method_creator_no_method', 409)
         outcome = render['result']
+        if scene_metadata is not None:
+            for version_id in versions:
+                self.methods.attach_scene_space(owner,version_id,scene_metadata,
+                    render['id']+':scene-space:'+version_id,evidence=dict(
+                        commission_id=run['id'],author_operation_id=authored['id'],
+                        render_operation_id=render['id'],source_sha256=source_sha256(result['source']),
+                        input_sha256=authored['input_sha256'],technical=deepcopy(outcome.get('technical')),
+                        runtime=deepcopy(outcome.get('runtime',{}).get('scene_space')),
+                        continuous_motion_observed=False,audio_observed=False))
         _require(outcome.get('technical', {}).get('status') == 'passed',
                  'animation_method_render_failed', 409)
         candidate = self.commissions.add_candidate(owner, run['id'], dict(
@@ -1745,6 +2298,32 @@ class AnimationMethodService:
                 input_sha256=authored['input_sha256'])),
             render['id'] + ':demonstration')
         return candidate, demo
+
+    def _scene_render_arguments(self,run,document,operation_id):
+        if 'scene_space' not in document:return {}
+        expected=run['frozen'].get('constraints',{}).get('scene_space_capability')
+        provider=getattr(self.renderer,'scene_space_capabilities',None)
+        _require(expected is not None and callable(provider) and provider()==expected,
+            'scene_space_render_frozen_runtime_changed',409)
+        arguments=dict(scene_space=document['scene_space'])
+        prepare=getattr(self.renderer,'validate_scene_request',None)
+        if callable(prepare):
+            binding=prepare(operation_id,document['source'],document['document'],
+                scene_space=document['scene_space'],deadline_at=run['deadline_at'])
+            arguments['expected_request_sha256']=binding['request_sha256']
+        return arguments
+
+    def _execute_method_render(self,owner,run,operation,arguments):
+        try:
+            return self.renderer.render(operation['id'],operation['input']['source'],
+                operation['input']['document'],sound_events=operation['input']['sound_events'],
+                deadline_at=run['deadline_at'],**arguments)
+        except ServiceError as error:
+            if ('scene_space' in operation['input'] and getattr(error,'not_dispatched',False) is True
+                    and getattr(error,'stop_proven',False) is True):
+                self.commissions.fail(owner,operation['id'],error.code)
+                return None
+            raise
 
     def _record_review(self, owner, run, operation):
         result, document = operation['result'], operation['input']
@@ -1813,11 +2392,50 @@ class AnimationMethodService:
             run = self.commissions.get(owner, commission_id)
             if run['state'] in TERMINAL:
                 return
+            if run['frozen'].get('retry_of_commission_id') and not run.get('retry_creator_checkpoint'):
+                # Recover the create/checkpoint crash gap before reserving any
+                # new work. The original stopped task remains immutable.
+                self.commissions.restore_completed_creators(owner, commission_id,
+                    run['frozen']['retry_of_commission_id'])
+                return
             _require(self._protocol(run) is self.author_protocol,
                      'animation_method_historical_gateway_required', 409)
-            if run['frozen'].get('resource_authoring'):
+            if (run['frozen'].get('resource_planning') and not run.get('adopted_capabilities')
+                    and not run['cancel_requested'] and self.clock() < run['deadline_at']):
+                plan = next((op for op in run['operations'] if op['input'].get('mode') == 'plan'
+                             and op['status'] == 'completed'), None)
+                if plan is not None:
+                    self.commissions.freeze_capability_decision(owner, commission_id,
+                        self._derive_capability_decision(run, plan))
+                    return
+            if self._uses_manim(run):
                 _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
-                resource_state = self.resource_stage.advance(owner, run,
+                projected = self._manim_projection(owner, run)
+                allocated = (self.resource_stage.allocated_round(owner, commission_id)
+                             if run['frozen'].get('resource_planning') else None)
+                if run['frozen'].get('retry_of_commission_id') and not run['cancel_requested']:
+                    previous = self.commissions.get(owner, run['frozen']['retry_of_commission_id'])
+                    original = self._manim_projection(owner, previous)
+                    if (original.get('resource_round', 0) == projected.get('resource_round', 0)
+                            and self.resource_stage.allocated_round(owner, commission_id) is None):
+                        self.resource_stage.restore_retry(owner, projected, original)
+                if (run['frozen'].get('resource_planning') and not run['cancel_requested']
+                        and self.clock() < run['deadline_at']
+                        and (allocated is None or allocated < projected.get('resource_round', 0))):
+                    # Admission belongs before a new durable resource intent.
+                    # Once allocated, reconcile its original task and stop
+                    # proof even if later configuration no longer admits it.
+                    try:
+                        self.manim.preflight(run['deadline_at'])
+                        if callable(getattr(self.manim, 'recipe_guidance', None)):
+                            self.manim.recipe_guidance(owner, projected['frozen'])
+                    except ServiceError as error:
+                        if error.status >= 500:
+                            raise
+                        self.commissions.stop(owner, commission_id, 'failed',
+                            dict(message='Manim资源创作已停止；保留原操作和证据，不自动重试', code=error.code))
+                        return
+                resource_state = self.resource_stage.advance(owner, projected,
                     cancelled=run['cancel_requested'] or self.clock() >= run['deadline_at'])
                 if resource_state in {'failed', 'cancelled'}:
                     self.commissions.stop(owner, commission_id, resource_state,
@@ -1865,14 +2483,18 @@ class AnimationMethodService:
                     self.commissions.release_unsubmitted(owner, active['id'], {'reason': 'stopped_before_claim'})
                     return
                 if active['stage'] == 'render':
+                    if self._reuse_retry_render(owner, run, active):
+                        return
                     if active['status'] == 'reserved':
                         if run['deadline_at'] - self.clock() < 30:
                             return
+                        try:scene_arguments=self._scene_render_arguments(run,active['input'],active['id'])
+                        except ServiceError as error:
+                            if error.status>=500:raise
+                            self.commissions.fail(owner,active['id'],error.code);return
                         claim = self.commissions.claim(owner, active['id'])
                         if claim['submission_claimed']:
-                            result = self.renderer.render(active['id'], active['input']['source'],
-                                active['input']['document'], sound_events=active['input']['sound_events'],
-                                deadline_at=run['deadline_at'])
+                            result = self._execute_method_render(owner,run,active,scene_arguments)
                         else:
                             result = self.renderer.lookup(active['id'])
                     else:
@@ -1890,10 +2512,15 @@ class AnimationMethodService:
                                 self.commissions.fail(owner, active['id'],
                                     'animation_method_render_not_started', cancelled=run['cancel_requested'])
                                 return
-                            result = self.renderer.render(active['id'], active['input']['source'],
-                                active['input']['document'], sound_events=active['input']['sound_events'],
-                                deadline_at=run['deadline_at'])
+                            try:scene_arguments=self._scene_render_arguments(run,active['input'],active['id'])
+                            except ServiceError as error:
+                                if error.status>=500:raise
+                                self.commissions.fail(owner,active['id'],error.code);return
+                            result = self._execute_method_render(owner,run,active,scene_arguments)
                     if result is not None:
+                        if ('scene_space' in active['input'] and (result.get('status')=='unknown'
+                                or result.get('stop_proven') is not True)):
+                            return
                         self.commissions.complete(owner, active['id'], result)
                 else:
                     self._advance_agent(owner, dict(run, cancel_requested=bool(stopping)), active)
@@ -1955,14 +2582,21 @@ class AnimationMethodService:
             creates = [op for op in run['operations'] if op['stage'] == 'creator'
                        and (op['input'].get('mode') == 'create' or op['input'].get('phase') == 'integrate')]
             for authored in creates:
+                if self._retry_creator_already_reviewed(owner, run, authored):
+                    continue
                 if not any(op['stage'] == 'render' and op['input'].get('author_operation_id') == authored['id']
                            for op in run['operations']):
                     if run['remaining']['render'] <= 0:
                         self.commissions.stop(owner, commission_id, 'budget_exhausted', '本次画面渲染预算已用完')
                         return
-                    self.commissions.reserve(owner, commission_id, 'render', dict(
-                        author_operation_id=authored['id'], source=authored['result']['source'],
-                        document=authored['input'], sound_events=authored['result']['sound_events']),
+                    from .animation_renderer_rebind import render_input
+                    render_document=render_input(run,authored)
+                    if run['frozen'].get('constraints',{}).get('scene_space_capability'):
+                        from .scene_space_effects import effect_scene_metadata
+                        metadata=effect_scene_metadata(authored['result'],run,authored['input'])
+                        if metadata and metadata['plan'] is not None:
+                            render_document['scene_space']=metadata['plan']
+                    self.commissions.reserve(owner, commission_id, 'render', render_document,
                         'render-' + authored['id'])
                     return
             for candidate in run['candidates']:
@@ -1975,7 +2609,8 @@ class AnimationMethodService:
                              and row['id'] != candidate['id']), None)
                 entries, frame_files = [], {}
                 for target in ([best, candidate] if best else [candidate]):
-                    for index, frame in enumerate(self.renderer.frames(target['operation_id'], max_frames=12)):
+                    for index, frame in enumerate(self.renderer.frames(
+                            self._artifact_operation_id(owner, target['operation_id']), max_frames=12)):
                         name = 'frame-' + ('baseline' if target is best else 'candidate') + '-' + str(index) + '.jpg'
                         raw = frame['raw']
                         entries.append(dict(frame_id=('b' if target is best else 'c') + str(index),

@@ -87,3 +87,69 @@ def test_restart_reopens_exact_evidence_and_context_pins_actual_release(evidence
     capture_path.write_bytes(canonical_bytes(changed))
     with pytest.raises(ServiceError, match='capture_binding'):
         admission.validate_admission(path, resource_service=evidence['resource_service'])
+
+
+def store_evidence(root, evidence):
+    root.mkdir(parents=True)
+    for name in ('snapshot', 'result', 'capture'):
+        (root / (name + '.json')).write_bytes(canonical_bytes(evidence[name]))
+    (root / 'video.mp4').write_bytes(evidence['media'])
+
+
+def test_same_stopped_producer_retains_independent_consumer_evidence(evidence, tmp_path):
+    first = admission.build_admission(**evidence)
+    second_evidence = dict(evidence, capture=deepcopy(evidence['capture']), result=deepcopy(evidence['result']))
+    second_evidence['capture']['probe']['consumer_observation'] = 'another encoded whole-film check'
+    second_evidence['result']['film_export']['capture_sha256'] = digest(second_evidence['capture'])
+    second = admission.build_admission(**second_evidence)
+    assert first['operation_id'] == second['operation_id'] and first['sha256'] != second['sha256']
+    original = evidence['resource_service'].root / 'admissions' / first['operation_id']
+    store_evidence(original, evidence)
+    before = {path.name: path.read_bytes() for path in original.iterdir()}
+    for index, (record, inputs) in enumerate([(first, evidence), (second, second_evidence)]):
+        root = admission.admission_evidence_directory(evidence['resource_service'].root, record)
+        assert root.parent == original and root.name == record['sha256']
+        store_evidence(root, inputs)
+        path = tmp_path / f'consumer-{index}.json'
+        path.write_bytes(canonical_bytes(record))
+        assert admission.validate_admission(path, resource_service=evidence['resource_service']) == record
+    assert all((original / name).read_bytes() == raw for name, raw in before.items())
+
+
+@pytest.mark.parametrize('failure', ['missing', 'changed'])
+def test_exact_consumer_evidence_never_falls_back_to_original_files(evidence, tmp_path, failure):
+    value = admission.build_admission(**evidence)
+    path = tmp_path / 'admission.json'
+    path.write_bytes(canonical_bytes(value))
+    root = admission.admission_evidence_directory(evidence['resource_service'].root, value)
+    store_evidence(root.parent, evidence)
+    store_evidence(root, evidence)
+    capture = root / 'capture.json'
+    if failure == 'missing':
+        capture.unlink()
+    else:
+        capture.write_bytes(canonical_bytes(dict(evidence['capture'], changed=True)))
+    with pytest.raises(ServiceError, match='file_invalid|capture_binding'):
+        admission.validate_admission(path, resource_service=evidence['resource_service'])
+
+
+def test_broken_consumer_evidence_link_cannot_fall_back_to_original(evidence, tmp_path):
+    value = admission.build_admission(**evidence)
+    path = tmp_path / 'admission.json'
+    path.write_bytes(canonical_bytes(value))
+    root = admission.admission_evidence_directory(evidence['resource_service'].root, value)
+    store_evidence(root.parent, evidence)
+    try:
+        root.symlink_to(tmp_path / 'missing-consumer', target_is_directory=True)
+    except OSError:
+        pytest.skip('directory symlinks unavailable on this host')
+    with pytest.raises(ServiceError, match='file_invalid'):
+        admission.validate_admission(path, resource_service=evidence['resource_service'])
+
+
+@pytest.mark.parametrize('field,value', [('operation_id', '../another'), ('sha256', '../another')])
+def test_consumer_evidence_address_rejects_untrusted_path_components(evidence, field, value):
+    record = admission.build_admission(**evidence)
+    record[field] = value
+    with pytest.raises(ServiceError, match='binding_invalid'):
+        admission.admission_evidence_directory(evidence['resource_service'].root, record)

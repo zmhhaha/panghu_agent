@@ -453,7 +453,110 @@ def test_unbound_or_invalid_failed_receipt_cannot_supply_a_public_reason(adapter
     result = value.render('unbound-diagnostic', SOURCE, document())
     assert result['error'] == 'animation_method_render_container_failed'
     assert result['technical']['status'] == 'failed' and result['media'] is None
+    assert result['diagnostic']['category'] == 'runtime_failure_unknown'
+    assert result['diagnostic']['receipt_bound'] is False
+    assert result['diagnostic']['source_repair_recommended'] is False
     assert execution.calls == 1
+
+
+def install_failed_report(adapter, monkeypatch, error, *, failure=None, cleanup_mismatch=False):
+    value, execution = adapter
+    execution.failure = 'known'
+
+    def failed_render(directory):
+        outcome = execution(directory)
+        root = Path(directory)
+        binding = json.loads((root / 'binding.json').read_bytes())
+        request = binding['request']
+        outcome['error'] = 'animation_method_render_container_failed'
+        if cleanup_mismatch:
+            outcome['cleanup']['container_id'] = 'd' * 64
+        (root / 'render-outcome.json').write_bytes(canonical_bytes(outcome))
+        (root / 'work').mkdir()
+        receipt = dict(schema=request['schema'].replace('-request.', '-receipt.'), status='failed',
+            request_identity=request['identity'], request_sha256=binding['request_sha256'],
+            image_digest=binding['image_digest'], host_sha256=request['host_sha256'], error=error)
+        if failure is not None:
+            receipt['failure'] = failure
+        (root / 'work/render-receipt.json').write_bytes(canonical_bytes(receipt))
+        return outcome
+
+    monkeypatch.setattr(renderer, 'execute_method_render', failed_render)
+    return value, execution
+
+
+@pytest.mark.parametrize('error,failure,category,code', [
+    ('TimeoutError: page.screenshot: Timeout 10000ms exceeded.\nCall log:\n'
+     '  - taking page screenshot\n  - waiting for fonts to load...\n  - fonts loaded\n',
+     None, 'frame_capture_timeout', 'method_frame_capture_timeout'),
+    ('Error: page.evaluate: Error: hyperframes_legacy_seek_missing\n'
+     '    at prepareHyperFramesPage (eval at evaluate (:303:30), <anonymous>:8:67)\n'
+     '    at async <anonymous>:329:30',
+     None, 'scene_interface_unavailable', 'method_scene_prepare_failed'),
+    ('Error: method_reverse_seek_mismatch', None, 'non_deterministic_seek', 'method_reverse_seek_mismatch'),
+    ('Error: method_absolute_seek_mismatch', None, 'non_deterministic_seek', 'method_absolute_seek_mismatch'),
+])
+def test_bound_host_failure_has_safe_actionable_projection_without_mutating_custody(
+        adapter, monkeypatch, error, failure, category, code):
+    value, execution = install_failed_report(adapter, monkeypatch, error, failure=failure)
+    result = value.render('safe-failure', SOURCE, document())
+    diagnostic = result['diagnostic']
+    assert result['error'] == code and result['technical_passed'] is False
+    assert diagnostic['category'] == category
+    assert diagnostic['source_repair_recommended'] is (code != 'method_frame_capture_timeout')
+    assert diagnostic['operation_id'] == 'safe-failure'
+    assert diagnostic['source_sha256'] == result['source_sha256']
+    assert diagnostic['input_sha256'] == result['input_sha256']
+    assert diagnostic['evidence_sha256'] == result['technical']['evidence_sha256']
+    assert diagnostic['receipt_bound'] and len(diagnostic['receipt_sha256']) == 64
+    assert diagnostic['evidence_scope'] == 'host_report_not_visual_or_root_cause_validation'
+    serialized = json.dumps(diagnostic)
+    assert len(serialized) < 2500
+    assert 'PRIVATE_LOG_CONTENT' not in serialized and '/private/path' not in serialized
+    assert 'fonts loaded' not in serialized
+    before = value.ledger.read_bytes()
+    assert value.stopping_proof('safe-failure')['stop_proven'] is True
+    assert renderer.MethodAnimationRenderer(value.root, NEW_IMAGE).lookup('safe-failure') == result
+    assert value.ledger.read_bytes() == before and execution.calls == 1
+    with sqlite3.connect(value.ledger) as db:
+        stored = json.loads(db.execute('SELECT result FROM animation_method_render_operations').fetchone()[0])
+    assert 'diagnostic' not in stored and stored['error'] == 'animation_method_render_container_failed'
+
+
+@pytest.mark.parametrize('error,failure', [
+    ('Error: TimeoutError: page.screenshot: Timeout 10000ms exceeded.\nCall log:\n'
+     '  - taking page screenshot\n', None),
+    ('Error: page.evaluate: Error: user_error\nTimeoutError: page.screenshot: Timeout 10000ms exceeded.', None),
+    ('Error: PRIVATE_LOG_CONTENT', dict(schema='video.animation-host-failure.v1',
+     code='method_frame_capture_timeout', phase='prepare')),
+    ('Error: PRIVATE_LOG_CONTENT', dict(schema='video.animation-host-failure.v1',
+     code='method_frame_capture_timeout', phase='capture')),
+    ('Error: PRIVATE_LOG_CONTENT', dict(schema='video.animation-host-failure.v1',
+     code='method_scene_seek_failed', phase='seek', guidance='PRIVATE_LOG_CONTENT')),
+])
+def test_authored_error_substrings_and_invalid_host_markers_do_not_recommend_source_repair(
+        adapter, monkeypatch, error, failure):
+    value, _ = install_failed_report(adapter, monkeypatch, error, failure=failure)
+    result = value.render('unclassified-failure', SOURCE, document())
+    assert result['error'] == 'animation_method_render_container_failed'
+    assert result['diagnostic']['category'] == 'runtime_failure_unknown'
+    assert result['diagnostic']['source_repair_recommended'] is False
+    assert 'PRIVATE_LOG_CONTENT' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('error,category', [
+    ('TimeoutError: page.screenshot: Timeout 10000ms exceeded.\nCall log:\n  - taking page screenshot\n',
+     'frame_capture_timeout'),
+    ('Error: method_absolute_seek_mismatch', 'non_deterministic_seek'),
+])
+def test_classified_failure_cannot_recommend_another_source_attempt_without_original_cleanup(
+        adapter, monkeypatch, error, category):
+    value, _ = install_failed_report(adapter, monkeypatch,
+        error, cleanup_mismatch=True)
+    result = value.render('not-proven-stopped', SOURCE, document())
+    assert result['diagnostic']['category'] == category
+    assert result['diagnostic']['source_repair_recommended'] is False
+    assert value.stopping_proof('not-proven-stopped')['stop_proven'] is False
 
 
 def test_simultaneous_callers_share_a_single_external_claim(adapter):
@@ -580,6 +683,25 @@ def test_native_context_and_seek_evidence_cannot_be_relabelled(tmp_path, monkeyp
     with pytest.raises(ServiceError):
         value.lookup('native-evidence')
     assert execution.calls == 1
+
+
+@pytest.mark.parametrize('context_count', [500, 501])
+def test_native_receipt_context_limit_matches_the_runtime_budget(tmp_path, monkeypatch, context_count):
+    def execute(directory):
+        outcome = SyntheticExecution()(directory)
+        path = Path(directory) / 'work/render-receipt.json'
+        receipt = json.loads(path.read_bytes())
+        context = receipt['engine_observation']['contexts'][0]
+        receipt['engine_observation']['contexts'] = [dict(context) for _ in range(context_count)]
+        path.write_bytes(canonical_bytes(receipt))
+        return outcome
+    monkeypatch.setattr(renderer, 'execute_method_render', execute)
+    value = renderer.MethodAnimationRenderer(tmp_path / 'render', IMAGE, enabled=True, candidate_engines=['canvas'])
+    if context_count == 500:
+        assert value.render('many-native-contexts', dict(SOURCE, engine='canvas'), native_document('canvas'))['technical_passed'] is True
+    else:
+        with pytest.raises(ServiceError, match='engine_evidence_invalid'):
+            value.render('many-native-contexts', dict(SOURCE, engine='canvas'), native_document('canvas'))
 
 
 def test_engine_runtime_staged_bytes_remain_bound_after_restart(tmp_path, monkeypatch):

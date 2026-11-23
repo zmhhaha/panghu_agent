@@ -1,0 +1,84 @@
+{
+  "schema": "video.context500-runtime-release-summary.v1",
+  "revision": "e08474172da4bf25f36927cde3c1dbe202b9f5fa",
+  "max_contexts": 500,
+  "images": {
+    "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:8b1bf89c488a61122c2daac4ee93db34cefa2f1efc4243f34ecf3fbcf063b0ae",
+    "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:8bed320ea411bf9fc6c6709ebdf12d51454b7e7d1608520de60e9c6e8bdcac62",
+    "renderer": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+    "workbench": "arm-cluster-master:5000/video-workbench:latest@sha256:d1179ea0a6df82b081132157aaa65a2f271544c5d4c37c46054e534e2f3336c8"
+  },
+  "release_id": "context500-e084741-r2b",
+  "deployments": 4,
+  "clean_git_source": true,
+  "latest_tags_pinned_by_digest": true,
+  "runtime_source_verified": true,
+  "regressions": {
+    "python_context_contract": 206,
+    "python_rebind_and_api": 151,
+    "manim_admission": 12,
+    "manim_admission_windows_symlink_skips": 1,
+    "node_context_guard": 8,
+    "counts_are_overlapping_groups_not_a_sum": true
+  },
+  "readmission": {
+    "methods": {
+      "engines": [
+        "canvas",
+        "three"
+      ],
+      "frames": 144,
+      "libraries": [
+        "animejs"
+      ],
+      "prepared_resource": "stopped_original_manim_pngs",
+      "renders": 4
+    },
+    "formal": {
+      "cleanup_confirmed": true,
+      "consumer_admission_sha256": "bcfb920ef32926eff016753fbf695fdbd7d6226d437892aa5272401dfdf5bc26",
+      "duration_seconds": 16,
+      "execution_admission_sha256": "df9cc5145104a1bd2600bc4a245bb324f51f991e5216ae4a791488da71942653",
+      "frames": 384,
+      "independently_decoded": true,
+      "original_agent_source_and_recordings_unchanged": true,
+      "renders": 1
+    },
+    "calls": {
+      "cairo": 0,
+      "model": 0,
+      "tts": 0
+    },
+    "cancellation": {
+      "evidence": "historical-cancellation/reconciled-cancellation.json",
+      "new_runtime_probe": false,
+      "scope": "original_actual_native_running_Job_and_process_stop_mechanism_only"
+    }
+  },
+  "ink_replay": {
+    "usage": {
+      "creator": 0,
+      "render": 1,
+      "review": 1
+    },
+    "source_sha256": "26e684f9af66322afe2cdb2b614b38fbeb6fe2248c84ce17fdc798e22f21178f",
+    "historical_creators_preserved": 2,
+    "native_contexts": 75,
+    "frames": 576,
+    "duration_seconds": 24,
+    "fps": 24,
+    "media_sha256": "116e9f1bb78a5f9aa8fedf93c21226a53e29b94ced87c31afc804735da3d33c7",
+    "full_decode_passed": true,
+    "audio_streams": 0,
+    "review_outcome": "inconclusive",
+    "artistic_quality_accepted": false,
+    "failed_visual_criteria": [
+      "ink-form",
+      "style-unity"
+    ],
+    "whole_video_watched": false
+  },
+  "representative_adopted": false,
+  "wikiskill_published": false,
+  "mainline_merged": false
+}

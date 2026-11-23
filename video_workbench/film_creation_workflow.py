@@ -15,6 +15,7 @@ from agent_service.contracts import ServiceError
 from agent_service.profiles.video_animation_film_module import PROFILE
 from .agent import _uuid
 from .film_creation_store import ACTIVE, PENDING_SCHEMA
+from .hyperframes_film_limits import MAX_SECONDS
 
 LOG = logging.getLogger(__name__)
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
@@ -92,7 +93,7 @@ class FilmCreationWorkflow:
         if admitted is not True and not (type(admitted) is dict and admitted.get('available') is True):
             raise ServiceError('hyperframes_film_not_admitted', 503)
         return dict(available=True, renderer_mode='hyperframes-film',
-            configuration_sha256=self.creation.configuration_sha256, max_seconds=60, fps=24)
+            configuration_sha256=self.creation.configuration_sha256, max_seconds=MAX_SECONDS, fps=24)
 
     def freeze_configuration(self, owner, project_id):
         self.creation.store.project(owner, project_id)

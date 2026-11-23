@@ -284,6 +284,36 @@ class ExecutionEnvelope(WireModel):
         return digest(self.identity())
 
 
+class ExecutionControl(WireModel):
+    """Server-only handle to an already admitted, durably measured execution.
+
+    This is never a native start payload. Its digest is the original full
+    envelope's digest, recovered from the verified allocation, not a digest of
+    these metadata. There are no mutable task or inline-file objects to cache.
+    """
+    job_id: str
+    attempt_id: str
+    fence: int = Field(ge=1)
+    engine: Literal['pi', 'hermes']
+    profile: str
+    profile_revision: str
+    runtime_revision: str
+    image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
+    request_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    deadline_at: float
+    lease_expires_at: float
+    has_inputs: bool
+    execution_binding: ExecutionBindingPins | None = None
+    task_schema: str = 'workspace-text.v1'
+    output_schema: str = 'text-output.v1'
+    max_input_bytes: int = Field(default=1024 * 1024, ge=1, le=MAX_INPUT_BYTES)
+    max_input_total_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=MAX_ARTIFACT_BYTES)
+    max_input_files: int = Field(default=10, ge=0, le=MAX_FILES)
+    max_artifact_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=MAX_ARTIFACT_BYTES)
+    max_artifact_file_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=MAX_INPUT_BYTES)
+    max_artifact_files: int = Field(default=32, ge=1, le=MAX_FILES)
+
+
 class StopReceipt(WireModel):
     job_id: str
     attempt_id: str
@@ -400,7 +430,7 @@ class ProfilePolicy:
             'max_input_files', 'max_artifact_bytes', 'max_artifact_file_bytes', 'max_artifact_files')}
 
     def matches(self, value):
-        data = value.model_dump(mode='json') if isinstance(value, ExecutionEnvelope) else value
+        data = value.model_dump(mode='json') if isinstance(value, (ExecutionEnvelope, ExecutionControl)) else value
         if not isinstance(data, dict):
             return False
         pins = self.pins()

@@ -1,0 +1,1392 @@
+{
+  "schema": "video.scene-space-coverage-native-validation.v1",
+  "date": "2026-11-23",
+  "platform": "Windows native Chrome",
+  "scope": "actual_browser_coverage_pixels_local_surface_wash_and_host_capture",
+  "original_evidence": "scene-space-native-browser-cdp-fix-20261122.json",
+  "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
+  "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+  "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+  "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+  "runtime_revision": "scene-space-compositor-2",
+  "artwork_api_revision": 2,
+  "test_suite_sha256": "248079589a738132a150a7e3022f99e8e36879ea0a0e14ff6aabf45dc635b653",
+  "browser_probe_sha256": "ccb132515dd1a85654962d0cad9f04273937388b46ada5790f3a17cdb5278906",
+  "tests": {
+    "renderer_suite_passed": 28,
+    "renderer_suite_seconds": 59.17,
+    "native_test_functions": 2,
+    "native_browser_cases": 14,
+    "native_rendered_cases": 11,
+    "expected_rejections": 3,
+    "node_cdp_regressions_passed": 4
+  },
+  "pixel_check": {
+    "artistic_acceptance": false,
+    "pixels": {
+      "form-wash": {
+        "grid_boundary_max_rgb_jump": 2,
+        "surface_value_range": 130
+      },
+      "gradient": {
+        "clipped": [
+          127,
+          155,
+          178
+        ],
+        "interior": [
+          197,
+          130,
+          143
+        ],
+        "outside": [
+          30,
+          90,
+          150
+        ]
+      },
+      "legacy": {
+        "clipped": [
+          29,
+          84,
+          140
+        ],
+        "interior": [
+          158,
+          38,
+          75
+        ],
+        "outside": [
+          29,
+          84,
+          140
+        ]
+      },
+      "opacity-mask": {
+        "clipped": [
+          30,
+          90,
+          150
+        ],
+        "interior": [
+          183,
+          85,
+          111
+        ],
+        "outside": [
+          30,
+          90,
+          150
+        ]
+      },
+      "solid": {
+        "clipped": [
+          223,
+          219,
+          205
+        ],
+        "interior": [
+          223,
+          219,
+          205
+        ],
+        "outside": [
+          30,
+          90,
+          150
+        ]
+      }
+    },
+    "scope": "actual_coverage_shape_gradient_local_mask_and_single_application_of_object_layer_alpha",
+    "source_reference": "same_faint_pigment_and_background_for_each_case"
+  },
+  "ink_pixel_check": {
+    "dark_pixel_count": 3833,
+    "declared_screen_bounds": {
+      "height": 779.833080150463,
+      "width": 215.95377604166666,
+      "x": -31.763763996799213,
+      "y": -119.89728009259255
+    },
+    "pixel_bounds": [
+      8,
+      110,
+      146,
+      427
+    ],
+    "schema": "video.scene-space-ink-pixel-check.v1",
+    "scope": "two_actual_brush_strokes_zero_origin_object_cache_not_artistic_acceptance",
+    "transform_compatibility": "renderCanvas resets its internal transform; zero-origin document matches cache dimensions and finally restores the caller context"
+  },
+  "resource_scope": {
+    "coverage": "one_reused_temporary_mask_canvas_released_after_each_object",
+    "field_quota": "canonical_budget_shared_by_helper_url_fragments_no_reset_or_refund",
+    "max_fields": 64,
+    "max_retained_numeric_bytes": 16777216,
+    "max_numeric_work_bytes": 2097152,
+    "actual_browser_rss_measured": false,
+    "quota_excludes": "native_canvas_allocator_and_arbitrary_author_js_heap_use_existing_container_memory_limit"
+  },
+  "container_image_tested": false,
+  "deployed": false,
+  "model_calls": 0,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "artistic_acceptance": false,
+  "artifacts": [
+    {
+      "path": "D:/codex-work/operations/scene-coverage-native-20261123/pytest-renderer-native-final-v2.txt",
+      "sha256": "4984d724aac9d52bf1a9301cf541be0bd4ebc866fefb90356095579eb5cf47f1"
+    },
+    {
+      "path": "D:/codex-work/operations/scene-coverage-native-20261123/native-final-v2/test_native_browser_camera_cac0/native-summary.json",
+      "sha256": "e059a8dd0670efdd22f6c53a66718e5abc148ba9742c0292ae784208e545b515"
+    },
+    {
+      "path": "D:/codex-work/operations/scene-coverage-native-20261123/native-final-v2/test_native_browser_independen0/coverage-summary.json",
+      "sha256": "2c4f1dfcb4db652bb4c36d37905f79bf6fbf49e968383030b8c85aa904dfe314"
+    },
+    {
+      "path": "D:/codex-work/operations/scene-coverage-native-20261123/native-final-v2/test_native_browser_independen0/coverage-pixel-check.json",
+      "sha256": "29a02425525c4b65739b992f64472cacab3fdde29ff203968c76c015f53c326e"
+    }
+  ],
+  "cases": [
+    {
+      "name": "video",
+      "captured_frames": 96,
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "e6c1e6a69c10633fffa6591ccdd747e76babba2b9f2426ebbfceef05b9481213",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "b026862a1f20023368391be4cacbde090700569c491598faec5160094c3989fb"
+          },
+          {
+            "frame": 48,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          },
+          {
+            "frame": 0,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 103,
+        "cache_hits": 515,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 96,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "1ed617616e8616526c4c13985b6bd149d729a900a0629cb750a9ca5334b8255f",
+        "bytes": 32828
+      },
+      "video_streams": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720,
+          "frame_count": 96,
+          "fps": "24/1"
+        }
+      ],
+      "full_decode_passed": true
+    },
+    {
+      "name": "still",
+      "captured_frames": 1,
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "b9bc31590b00f7190c1df368a6a204c70edf76d62d9217bb72ccc83363e73706",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+        "bytes": 4472
+      }
+    },
+    {
+      "name": "mask",
+      "captured_frames": 1,
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "d626a726b8adee85340cf2ccdb0c94ff2200cf2e36b23eeb8e7c3ea11033f59a",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "3ff36ae9f7a8fac2db3d409a02a138bc9f8a755b995ce344553a5ce0398d19e5",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2",
+        "bytes": 4449
+      }
+    },
+    {
+      "name": "ink",
+      "captured_frames": 1,
+      "source_sha256": "d70aaddc531b1832a3d8d28ae5bfd1a640cc3db1ab8090f558f69344ae26e87f",
+      "scene_space_sha256": "cc7637a7d58d6629799c45027600f76ff60818c6dc68aded04c8599a4bac38c0",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/assets/ink-landscape.mjs",
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+        "bytes": 4472
+      },
+      "drawing_library": {
+        "schema": "video.learning-drawing-library-observation.v1",
+        "scope": "loaded_scripts_not_api_calls_or_visual_application",
+        "drawing_libraries": {
+          "ink-landscape": {
+            "assets": {
+              "ink-landscape.LICENSE.txt": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108",
+              "ink-landscape.mjs": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6"
+            },
+            "engines": [
+              "canvas"
+            ],
+            "entrypoint": "./assets/ink-landscape.mjs",
+            "library_id": "ink-landscape",
+            "license": "MIT",
+            "role": "drawing",
+            "schema": "video.learning-drawing-library.v1",
+            "source_revision": "b6c96a5e94124bfad8113aaa136ede2298151b5f",
+            "version": "0.1.0"
+          }
+        },
+        "loaded_scripts": [
+          "/assets/ink-landscape.mjs",
+          "/runtime/scene-space-runtime.mjs",
+          "/runtime/scene_space_surface.mjs",
+          "/runtime/scene_space_surface_budget.mjs",
+          "/scene.js"
+        ],
+        "loaded_libraries": [
+          "ink-landscape"
+        ],
+        "api_execution": {
+          "schema": "video.learning-drawing-api-execution.v1",
+          "scope": "v8_executed_functions_not_visual_application",
+          "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+          "functions": [
+            {
+              "function_name": "finite",
+              "start_offset": 2091,
+              "end_offset": 2265,
+              "call_count": 10
+            },
+            {
+              "function_name": "integer",
+              "start_offset": 2609,
+              "end_offset": 2773,
+              "call_count": 10
+            },
+            {
+              "function_name": "seedValue",
+              "start_offset": 2774,
+              "end_offset": 2842,
+              "call_count": 10
+            },
+            {
+              "function_name": "createRandom",
+              "start_offset": 3188,
+              "end_offset": 3498,
+              "call_count": 10
+            },
+            {
+              "function_name": "freeze",
+              "start_offset": 100030,
+              "end_offset": 100232,
+              "call_count": 6014
+            },
+            {
+              "function_name": "getTechniqueReading",
+              "start_offset": 224144,
+              "end_offset": 224242,
+              "call_count": 200
+            },
+            {
+              "function_name": "entry",
+              "start_offset": 227948,
+              "end_offset": 229304,
+              "call_count": 200
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "ink-paint",
+      "captured_frames": 1,
+      "source_sha256": "93bd6259b2ed7ae0e5dbe130efd777bc456db953dce7ddddf5c12b7ae32f187e",
+      "scene_space_sha256": "e45955834bfefaf7547b9bf0bb597898615682edb13b476aa54416881adf9834",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/assets/ink-landscape.mjs",
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "b2aa3eb715a6b146703ae496d3fba8327dbb95e15eb00d7d0e0f90ba4fbec5e5",
+        "objects_painted": 1,
+        "frames_composited": 4,
+        "cache_hits": 4,
+        "cache_pixels": 168480,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 96,
+          "start_frame": 95
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 3,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788",
+        "bytes": 16164
+      },
+      "drawing_library": {
+        "schema": "video.learning-drawing-library-observation.v1",
+        "scope": "loaded_scripts_not_api_calls_or_visual_application",
+        "drawing_libraries": {
+          "ink-landscape": {
+            "assets": {
+              "ink-landscape.LICENSE.txt": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108",
+              "ink-landscape.mjs": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6"
+            },
+            "engines": [
+              "canvas"
+            ],
+            "entrypoint": "./assets/ink-landscape.mjs",
+            "library_id": "ink-landscape",
+            "license": "MIT",
+            "role": "drawing",
+            "schema": "video.learning-drawing-library.v1",
+            "source_revision": "b6c96a5e94124bfad8113aaa136ede2298151b5f",
+            "version": "0.1.0"
+          }
+        },
+        "loaded_scripts": [
+          "/assets/ink-landscape.mjs",
+          "/runtime/scene-space-runtime.mjs",
+          "/runtime/scene_space_surface.mjs",
+          "/runtime/scene_space_surface_budget.mjs",
+          "/scene.js"
+        ],
+        "loaded_libraries": [
+          "ink-landscape"
+        ],
+        "api_execution": {
+          "schema": "video.learning-drawing-api-execution.v1",
+          "scope": "v8_executed_functions_not_visual_application",
+          "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+          "functions": [
+            {
+              "function_name": "copyStrokeBrush",
+              "start_offset": 90,
+              "end_offset": 1179,
+              "call_count": 36
+            },
+            {
+              "function_name": "brushStateAt",
+              "start_offset": 1180,
+              "end_offset": 1968,
+              "call_count": 874
+            },
+            {
+              "function_name": "finite",
+              "start_offset": 2091,
+              "end_offset": 2265,
+              "call_count": 444
+            },
+            {
+              "function_name": "positive",
+              "start_offset": 2266,
+              "end_offset": 2416,
+              "call_count": 80
+            },
+            {
+              "function_name": "bounded",
+              "start_offset": 2417,
+              "end_offset": 2608,
+              "call_count": 94
+            },
+            {
+              "function_name": "integer",
+              "start_offset": 2609,
+              "end_offset": 2773,
+              "call_count": 54
+            },
+            {
+              "function_name": "seedValue",
+              "start_offset": 2774,
+              "end_offset": 2842,
+              "call_count": 54
+            },
+            {
+              "function_name": "text",
+              "start_offset": 2843,
+              "end_offset": 2997,
+              "call_count": 110
+            },
+            {
+              "function_name": "hashText",
+              "start_offset": 2998,
+              "end_offset": 3187,
+              "call_count": 28
+            },
+            {
+              "function_name": "copyPoint",
+              "start_offset": 3499,
+              "end_offset": 3724,
+              "call_count": 66
+            },
+            {
+              "function_name": "copyInkPoint",
+              "start_offset": 3725,
+              "end_offset": 3964,
+              "call_count": 66
+            },
+            {
+              "function_name": "pathLength",
+              "start_offset": 3965,
+              "end_offset": 4181,
+              "call_count": 28
+            },
+            {
+              "function_name": "copyPath",
+              "start_offset": 4182,
+              "end_offset": 4590,
+              "call_count": 28
+            },
+            {
+              "function_name": "timing",
+              "start_offset": 7607,
+              "end_offset": 7976,
+              "call_count": 28
+            },
+            {
+              "function_name": "strokeMark",
+              "start_offset": 7977,
+              "end_offset": 9075,
+              "call_count": 28
+            },
+            {
+              "function_name": "createInkScene",
+              "start_offset": 9076,
+              "end_offset": 14842,
+              "call_count": 26
+            },
+            {
+              "function_name": "availableId",
+              "start_offset": 9396,
+              "end_offset": 9546,
+              "call_count": 2
+            },
+            {
+              "function_name": "assertUnused",
+              "start_offset": 9549,
+              "end_offset": 9675,
+              "call_count": 28
+            },
+            {
+              "function_name": "stroke",
+              "start_offset": 9700,
+              "end_offset": 9975,
+              "call_count": 28
+            },
+            {
+              "function_name": "snapshot",
+              "start_offset": 14673,
+              "end_offset": 14802,
+              "call_count": 4
+            },
+            {
+              "function_name": "finite2",
+              "start_offset": 14928,
+              "end_offset": 15084,
+              "call_count": 34
+            },
+            {
+              "function_name": "sourcePoints",
+              "start_offset": 15085,
+              "end_offset": 16034,
+              "call_count": 4
+            },
+            {
+              "function_name": "segments",
+              "start_offset": 16438,
+              "end_offset": 17022,
+              "call_count": 4
+            },
+            {
+              "function_name": "evaluate",
+              "start_offset": 17023,
+              "end_offset": 17997,
+              "call_count": 880
+            },
+            {
+              "function_name": "sampleStrokePath",
+              "start_offset": 17998,
+              "end_offset": 20647,
+              "call_count": 4
+            },
+            {
+              "function_name": "sampleBrushContact",
+              "start_offset": 43582,
+              "end_offset": 47054,
+              "call_count": 4
+            },
+            {
+              "function_name": "positionAt",
+              "start_offset": 44193,
+              "end_offset": 45041,
+              "call_count": 1748
+            },
+            {
+              "function_name": "clamp2",
+              "start_offset": 47137,
+              "end_offset": 47203,
+              "call_count": 131184
+            },
+            {
+              "function_name": "hash3",
+              "start_offset": 47205,
+              "end_offset": 47511,
+              "call_count": 245934
+            },
+            {
+              "function_name": "noise",
+              "start_offset": 47512,
+              "end_offset": 47723,
+              "call_count": 95266
+            },
+            {
+              "function_name": "split",
+              "start_offset": 47724,
+              "end_offset": 48183,
+              "call_count": 88
+            },
+            {
+              "function_name": "releaseFilaments",
+              "start_offset": 48184,
+              "end_offset": 51636,
+              "call_count": 4
+            },
+            {
+              "function_name": "prepare",
+              "start_offset": 51637,
+              "end_offset": 57084,
+              "call_count": 4
+            },
+            {
+              "function_name": "prefix",
+              "start_offset": 57085,
+              "end_offset": 57847,
+              "call_count": 258
+            },
+            {
+              "function_name": "ribbon",
+              "start_offset": 57848,
+              "end_offset": 58834,
+              "call_count": 258
+            },
+            {
+              "function_name": "drawContactStroke",
+              "start_offset": 58835,
+              "end_offset": 59392,
+              "call_count": 4
+            },
+            {
+              "function_name": "finite5",
+              "start_offset": 60126,
+              "end_offset": 60238,
+              "call_count": 60
+            },
+            {
+              "function_name": "range",
+              "start_offset": 60239,
+              "end_offset": 60400,
+              "call_count": 20
+            },
+            {
+              "function_name": "validatePoints",
+              "start_offset": 60401,
+              "end_offset": 60786,
+              "call_count": 4
+            },
+            {
+              "function_name": "validate",
+              "start_offset": 60787,
+              "end_offset": 62737,
+              "call_count": 2
+            },
+            {
+              "function_name": "progressAt",
+              "start_offset": 63005,
+              "end_offset": 63146,
+              "call_count": 4
+            },
+            {
+              "function_name": "renderCanvas",
+              "start_offset": 72678,
+              "end_offset": 74068,
+              "call_count": 2
+            },
+            {
+              "function_name": "compact",
+              "start_offset": 74834,
+              "end_offset": 75246,
+              "call_count": 8
+            },
+            {
+              "function_name": "corners",
+              "start_offset": 77357,
+              "end_offset": 79425,
+              "call_count": 4
+            },
+            {
+              "function_name": "modulate",
+              "start_offset": 79842,
+              "end_offset": 81694,
+              "call_count": 4
+            },
+            {
+              "function_name": "endpointGeometry",
+              "start_offset": 81695,
+              "end_offset": 84799,
+              "call_count": 4
+            },
+            {
+              "function_name": "compileLocalBrushGeometry",
+              "start_offset": 84800,
+              "end_offset": 84945,
+              "call_count": 4
+            },
+            {
+              "function_name": "choice",
+              "start_offset": 85064,
+              "end_offset": 85216,
+              "call_count": 48
+            },
+            {
+              "function_name": "unique",
+              "start_offset": 85651,
+              "end_offset": 85992,
+              "call_count": 6
+            },
+            {
+              "function_name": "measure2",
+              "start_offset": 85993,
+              "end_offset": 86385,
+              "call_count": 6
+            },
+            {
+              "function_name": "createBrushStroke",
+              "start_offset": 87161,
+              "end_offset": 94596,
+              "call_count": 6
+            },
+            {
+              "function_name": "freeze",
+              "start_offset": 100030,
+              "end_offset": 100232,
+              "call_count": 6014
+            },
+            {
+              "function_name": "getTechniqueReading",
+              "start_offset": 224144,
+              "end_offset": 224242,
+              "call_count": 200
+            },
+            {
+              "function_name": "entry",
+              "start_offset": 227948,
+              "end_offset": 229304,
+              "call_count": 200
+            },
+            {
+              "function_name": "generatorFor",
+              "start_offset": 247631,
+              "end_offset": 247710,
+              "call_count": 6
+            },
+            {
+              "function_name": "assertOptions",
+              "start_offset": 248010,
+              "end_offset": 248491,
+              "call_count": 6
+            },
+            {
+              "function_name": "contactControls",
+              "start_offset": 248492,
+              "end_offset": 249042,
+              "call_count": 6
+            },
+            {
+              "function_name": "prepare2",
+              "start_offset": 249043,
+              "end_offset": 250677,
+              "call_count": 6
+            },
+            {
+              "function_name": "createBrushDocument",
+              "start_offset": 251113,
+              "end_offset": 251447,
+              "call_count": 6
+            },
+            {
+              "function_name": "fields5",
+              "start_offset": 341030,
+              "end_offset": 341409,
+              "call_count": 22
+            },
+            {
+              "function_name": "text5",
+              "start_offset": 341410,
+              "end_offset": 341549,
+              "call_count": 6
+            },
+            {
+              "function_name": "colour4",
+              "start_offset": 341550,
+              "end_offset": 341729,
+              "call_count": 10
+            },
+            {
+              "function_name": "hash6",
+              "start_offset": 341730,
+              "end_offset": 341906,
+              "call_count": 4
+            },
+            {
+              "function_name": "validateParents",
+              "start_offset": 341907,
+              "end_offset": 342504,
+              "call_count": 2
+            },
+            {
+              "function_name": "createStrokeGroupDocument",
+              "start_offset": 342505,
+              "end_offset": 347170,
+              "call_count": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "font",
+      "captured_frames": 1,
+      "source_sha256": "e7bc6ffd2791e6f5918912721c897f64d8a506b5a73b3e238c14cbf0f90388ab",
+      "scene_space_sha256": "8cdc13de6b62d13b901acccb9c8651daa5f9e92ba7ae542f898be8021cba4ed3",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "f5b1ec017cb0bbcc271fb9c245c69d99473bbf1eb63145553a374608815654af"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "810565f47b59ef3ee12b0228477fa5222e41fee790a9afe939525ea3dddcf87e",
+        "objects_painted": 5,
+        "frames_composited": 4,
+        "cache_hits": 20,
+        "cache_pixels": 1027356,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {},
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "numeric_bytes_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "f5b1ec017cb0bbcc271fb9c245c69d99473bbf1eb63145553a374608815654af",
+        "bytes": 8099
+      }
+    },
+    {
+      "name": "legacy",
+      "captured_frames": 1,
+      "source_sha256": "30e489a833c7be197a1c11cc1b3f0894ed04854d256c6e1b6e3ecd091c67c9fd",
+      "scene_space_sha256": "f49512d723e9b5b662669c79b276a1c4a46231ed7e4bb288b2702655fc510d18",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "7c03793d68bac7b0ecaf37759d6357644377edd917f94c2e6fe5ba2fa96de5f1"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 1843200,
+        "coverage_callbacks": 0,
+        "coverage_objects": 0,
+        "coverage_peak_pixels": 0,
+        "coverage_contexts": 0,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 4,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "7c03793d68bac7b0ecaf37759d6357644377edd917f94c2e6fe5ba2fa96de5f1",
+        "bytes": 4401
+      }
+    },
+    {
+      "name": "solid",
+      "captured_frames": 1,
+      "source_sha256": "ef83c3f077f72c1de9b788c7676fcee4cbd9647f2d55f6a6aaa9e8bbcc90df7e",
+      "scene_space_sha256": "b41bb9886931cf9751d69e67e85766f07f36c70ff966f33a476fbb80d91f57c4",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "0e4ef60b4742b6deaa76eb7317b0d07a05556c61dfa4aa5f8d624654bc68c8b3"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 5,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "0e4ef60b4742b6deaa76eb7317b0d07a05556c61dfa4aa5f8d624654bc68c8b3",
+        "bytes": 13419
+      }
+    },
+    {
+      "name": "gradient",
+      "captured_frames": 1,
+      "source_sha256": "7c297c3d37ac39ebb7533fc0740844ba7df6b438884a0880d997fc2d1fdf11ff",
+      "scene_space_sha256": "90d03c0496356c68476559a6c07a212202b71a87e61c207f509bcd8e542790da",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "c734a077b1abe71ccf3a316f50fb24b16313138e07bb09f7d1f5af841051fa0c"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 5,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "c734a077b1abe71ccf3a316f50fb24b16313138e07bb09f7d1f5af841051fa0c",
+        "bytes": 13956
+      }
+    },
+    {
+      "name": "opacity-mask",
+      "captured_frames": 1,
+      "source_sha256": "ef83c3f077f72c1de9b788c7676fcee4cbd9647f2d55f6a6aaa9e8bbcc90df7e",
+      "scene_space_sha256": "a77be1e558073be9274bb2f85cc2c55bd9afe4c06883ad82c137fab47a0b918d",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "a46225ba912c9c5b6002aa52a045ed7d245ec38e218cbe89d21860bff77d1d9b"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "aabc2f902b32be6eeabfc16da0c77ef35e425b69cea285a7c5fd0156d2bd04c2",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 432,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 5,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "a46225ba912c9c5b6002aa52a045ed7d245ec38e218cbe89d21860bff77d1d9b",
+        "bytes": 8149
+      }
+    },
+    {
+      "name": "form-wash",
+      "captured_frames": 1,
+      "source_sha256": "d7eabee36782cbd5d6bfcf0af446041085bd03410470791a87510a4d703a00e3",
+      "scene_space_sha256": "dc94d65f0f3990e9e51de83005f1e6d29067d12300906933302e07e3c4f7a11f",
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "106033227133215d5cb48e09e1893d2f1b41c6c166b3e4eb5f0abec745b2f896"
+          }
+        ]
+      },
+      "loaded_scripts": [
+        "/runtime/scene-space-runtime.mjs",
+        "/runtime/scene_space_surface.mjs",
+        "/runtime/scene_space_surface_budget.mjs",
+        "/scene.js"
+      ],
+      "scene_space_observation": {
+        "schema": "video.scene-space-compositor-observation.v1",
+        "plan_sha256": "610794c03994a50907ac775c9e76ba090b31a77062f627d30fd86351fb7fcd58",
+        "objects_painted": 2,
+        "frames_composited": 4,
+        "cache_hits": 8,
+        "cache_pixels": 1221600,
+        "peak_work_pixels": 2764800,
+        "coverage_callbacks": 2,
+        "coverage_objects": 1,
+        "coverage_peak_pixels": 921600,
+        "coverage_contexts": 1,
+        "surface_helper_calls": {
+          "createSurfaceField": 1,
+          "sampleSurface": 1,
+          "paintSurfaceWash": 1
+        },
+        "recipes_executed": 0,
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "runtime_revision": "scene-space-compositor-2",
+        "surface_field_usage": {
+          "fields_created": 1,
+          "fields_reserved": 1,
+          "numeric_bytes_reserved": 5760,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216
+        },
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "artwork_api_revision": 2
+      },
+      "native_contexts": 5,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "output": {
+        "sha256": "106033227133215d5cb48e09e1893d2f1b41c6c166b3e4eb5f0abec745b2f896",
+        "bytes": 118589
+      }
+    },
+    {
+      "name": "async",
+      "captured_frames": 0,
+      "expected_rejection": "scene_space_async_coverage_not_admitted",
+      "error": "Error: page.evaluate: Error: scene_space_async_coverage_not_admitted\n    at check (http://127.0.0.1:55747/runtime/scene-space-runtime.mjs:5:68)\n    at createSceneSpaceRenderer (http://127.0.0.1:55747/runtime/scene-space-runtime.mjs:96:5)\n    at eval (eval at evaluate (:311:30), <anonymous>:7:22)\n    at async <anonymous>:337:30"
+    },
+    {
+      "name": "options",
+      "captured_frames": 0,
+      "expected_rejection": "scene_space_coverage_options_invalid",
+      "error": "Error: page.evaluate: Error: scene_space_coverage_options_invalid\n    at check (http://127.0.0.1:55758/runtime/scene-space-runtime.mjs:5:68)\n    at createSceneSpaceRenderer (http://127.0.0.1:55758/runtime/scene-space-runtime.mjs:101:5)\n    at eval (eval at evaluate (:311:30), <anonymous>:7:22)\n    at async <anonymous>:337:30"
+    },
+    {
+      "name": "resize",
+      "captured_frames": 0,
+      "expected_rejection": "scene_space_coverage_resized_cache",
+      "error": "Error: page.evaluate: Error: scene_space_coverage_resized_cache\n    at check (http://127.0.0.1:55769/runtime/scene-space-runtime.mjs:5:68)\n    at createSceneSpaceRenderer (http://127.0.0.1:55769/runtime/scene-space-runtime.mjs:98:4)\n    at eval (eval at evaluate (:311:30), <anonymous>:7:22)\n    at async <anonymous>:337:30"
+    }
+  ]
+}

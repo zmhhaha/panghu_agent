@@ -1,0 +1,258 @@
+{
+  "schema": "video.scene-space-native-browser-validation.v1",
+  "date": "2026-11-22",
+  "platform": "Windows native Chrome",
+  "scope": "subsequent_cdp_lifecycle_fix_actual_browser_pixels_and_host_capture_function",
+  "original_evidence": "scene-space-native-browser-20261122.json",
+  "host_sha256": "c929a88764ebec119fc9b5e319c8102dae2ff2cc7591bba9274134773f50f1e2",
+  "runtime_sha256": "6b0fd362c01f4cc30f6fa5e2b722dd62090e19c73ea8436b7c96ec903722a18a",
+  "fix": "Collect and hash-verify each live document before navigation retires its Debugger script IDs; merge positive counts by function range.",
+  "tests": {
+    "renderer_suite_passed": 22,
+    "renderer_suite_seconds": 37.66,
+    "native_browser_cases": 6,
+    "node_cdp_regressions_passed": 4
+  },
+  "container_image_tested": false,
+  "deployed": false,
+  "model_calls": 0,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "artistic_acceptance": false,
+  "pixel_check": {
+    "position": [
+      200,
+      300
+    ],
+    "unmasked_rgb": [
+      72,
+      44,
+      30
+    ],
+    "masked_rgb": [
+      91,
+      131,
+      173
+    ],
+    "meaning": "Local foreground mask exposes painted far layer"
+  },
+  "cases": [
+    {
+      "name": "video",
+      "captured_frames": 96,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "b026862a1f20023368391be4cacbde090700569c491598faec5160094c3989fb"
+          },
+          {
+            "frame": 48,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          },
+          {
+            "frame": 0,
+            "sha256": "495f15d62b1ae427a02fd8d54f017f792bd63005b08bef045236c29ed421c71f"
+          }
+        ]
+      },
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "9793b7a60827cbda375a2be52f74809e96f9a73f58d0558c519abc7a5a8232f5",
+      "objects_painted": 5,
+      "cache_hits": 515,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 3,
+      "output_sha256": "1ed617616e8616526c4c13985b6bd149d729a900a0629cb750a9ca5334b8255f",
+      "output_bytes": 32828,
+      "full_decode_passed": true,
+      "video_streams": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720,
+          "frame_count": 96,
+          "fps": "24/1"
+        }
+      ]
+    },
+    {
+      "name": "still",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "8be6723438cd61187722d385a5f260d4ce97579c8b63e6eb1e7b5e00c999cd34",
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+      "output_bytes": 4472
+    },
+    {
+      "name": "mask",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2"
+          }
+        ]
+      },
+      "source_sha256": "64e4f51eefdbedd004f4b5964fd3e854a82d68f1f36c0a77198b5480a13443c2",
+      "scene_space_sha256": "c578b516d529bdaa32a1d8e57696af6332c5fde032b3cd134fe0f927ef3c0c2e",
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "3237a4781198e6871be3f70255ea9c67620efeb58fe419f9695180592b842dd2",
+      "output_bytes": 4449
+    },
+    {
+      "name": "ink",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb"
+          }
+        ]
+      },
+      "source_sha256": "d70aaddc531b1832a3d8d28ae5bfd1a640cc3db1ab8090f558f69344ae26e87f",
+      "scene_space_sha256": "f9fabe9e506e27269a17fbe5cf71050f73fedcb58947d08af7ea22478badeaa4",
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "dbc34999193e15fdb3b2799187e3645c0d1aaeba2e96664265d350ce14f92ccb",
+      "output_bytes": 4472,
+      "drawing_library": {
+        "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+        "loaded_libraries": [
+          "ink-landscape"
+        ],
+        "scope": "selected_positive_v8_functions_not_exhaustive_or_artistic_acceptance",
+        "functions": [
+          {
+            "function_name": "createRandom",
+            "start_offset": 3188,
+            "end_offset": 3498,
+            "call_count": 10
+          }
+        ]
+      }
+    },
+    {
+      "name": "ink-paint",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 95,
+            "sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788"
+          }
+        ]
+      },
+      "source_sha256": "93bd6259b2ed7ae0e5dbe130efd777bc456db953dce7ddddf5c12b7ae32f187e",
+      "scene_space_sha256": "09769c305b76d44cfad8411d40f64bd1493bcd2e0d3defad329359ecb8eeb009",
+      "objects_painted": 1,
+      "cache_hits": 4,
+      "native_contexts": 3,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "8080dadf4359cec98d18dfbddea4e7b46e5f755a4bc0e4395b6b81e5c914f788",
+      "output_bytes": 16164,
+      "drawing_library": {
+        "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+        "loaded_libraries": [
+          "ink-landscape"
+        ],
+        "scope": "selected_positive_v8_functions_not_exhaustive_or_artistic_acceptance",
+        "functions": [
+          {
+            "function_name": "renderCanvas",
+            "start_offset": 72678,
+            "end_offset": 74068,
+            "call_count": 2
+          },
+          {
+            "function_name": "createStrokeGroupDocument",
+            "start_offset": 342505,
+            "end_offset": 347170,
+            "call_count": 2
+          }
+        ]
+      },
+      "actual_pixel_check": {
+        "dark_pixel_count": 3833,
+        "declared_screen_bounds": {
+          "height": 779.833080150463,
+          "width": 215.95377604166666,
+          "x": -31.763763996799213,
+          "y": -119.89728009259255
+        },
+        "pixel_bounds": [
+          8,
+          110,
+          146,
+          427
+        ],
+        "schema": "video.scene-space-ink-pixel-check.v1",
+        "scope": "two_actual_brush_strokes_zero_origin_object_cache_not_artistic_acceptance",
+        "transform_compatibility": "renderCanvas resets its internal transform; zero-origin document matches cache dimensions and finally restores the caller context"
+      }
+    },
+    {
+      "name": "font",
+      "captured_frames": 1,
+      "checks": {
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "reload_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "f5b1ec017cb0bbcc271fb9c245c69d99473bbf1eb63145553a374608815654af"
+          }
+        ]
+      },
+      "source_sha256": "e7bc6ffd2791e6f5918912721c897f64d8a506b5a73b3e238c14cbf0f90388ab",
+      "scene_space_sha256": "c55deda9e9a2e7c29bf7097578260ac7b8a3eeb780f94cd330677ecdb4024611",
+      "objects_painted": 5,
+      "cache_hits": 20,
+      "native_contexts": 7,
+      "hyperframes_core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+      "core_seek_count": 1,
+      "output_sha256": "f5b1ec017cb0bbcc271fb9c245c69d99473bbf1eb63145553a374608815654af",
+      "output_bytes": 8099
+    }
+  ]
+}

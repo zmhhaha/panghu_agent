@@ -47,6 +47,8 @@ def compile_film_browser_bundle(project_files, *, expected_project_manifest_sha2
         hyperframes_core_sha256=manifest['runtime_fingerprint']['hyperframes_core_sha256'],
         host_files_sha256={name: _sha(raw) for name, raw in sorted(host_files.items())},
         evidence_scope='verified_bundle_inputs_not_runtime_admission_or_render')
+    if manifest['clock']['frame_count'] > 1440:
+        root['capture_lifecycle'] = 'persistent-active-modules-v1'
     resources['host/config.json'] = canonical_bytes(root)
     html = ('<!doctype html><html><head><meta charset="utf-8"><title>Film root</title></head>'
         '<body><main id="film-root"></main><script type="module" src="/host/hyperframes_film_root.mjs"></script></body></html>')

@@ -33,6 +33,7 @@ from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
 from .audio_workflow import AudioWorkflow
 from .production import Production
+from .hyperframes_film_limits import MAX_SECONDS as MAX_FILM_SECONDS
 from .explanation_gateway import ExplanationAgentGateway
 from .explanation_store import ExplanationStore
 from .explanation_workflow import ExplanationWorkflow
@@ -63,12 +64,21 @@ UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'sel
           "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
+    'scene_space_production_unavailable': '场景漫游制作尚未就绪，暂未开始新的制作任务。',
+    'scene_space_production_runtime_unavailable': '场景漫游渲染服务尚未就绪，暂未开始新的制作任务。',
+    'scene_space_production_plan_required': '场景规划未完成，已保留已有结果，尚未启动视频导出。',
+    'scene_space_production_resource_not_admitted': '本次场景漫游尚不支持所选外部制作资源，请使用原整片制作流程。',
+    'scene_space_export_budget_unavailable': '制作额度不足或实际用量尚未确认，已保留已有结果并停止后续导出。',
+    'scene_space_render_budget_insufficient': '本次可用渲染时间不足，已保留规划和已有预演，没有继续导出整片。',
+    'scene_space_preview_coverage_budget_exceeded': '本次场景覆盖超过预演限额，已保留规划和绘制结果，尚未启动整片导出。',
     'film_creation_unavailable': '整片动画制作暂未就绪，尚未开始新的制作任务。',
     'hyperframes_film_not_admitted': '整片渲染服务暂未就绪，尚未开始新的制作任务。',
     'production_run_film_unavailable': '整片制作依赖暂未就绪，尚未开始新的制作任务。',
-    'production_run_film_plan_too_long': '当前整片制作支持最长 60 秒，请先将制作方案控制在一分钟内。尚未开始配音。',
-    'production_run_film_too_long': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
-    'film_creation_duration_budget': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
+    'production_run_silent_requires_film': '无旁白制作需要整片制作服务，尚未开始新的制作任务。',
+    'production_run_silent_audio_reuse_conflict': '无旁白制作不能同时选择复用录音。',
+    'production_run_film_plan_too_long': '当前整片制作支持最长 5 分钟，请缩短制作方案。尚未开始配音。',
+    'production_run_film_too_long': '实际录音与留白超过当前 5 分钟制作上限，请缩短内容后再制作。',
+    'film_creation_duration_budget': '实际录音与留白超过当前 5 分钟制作上限，请缩短内容后再制作。',
     'creative_skills_unavailable': '暂时无法读取已发布的动画 Skill 目录，尚未提交制作任务。',
     'creative_film_context_required': '请从整片草稿制作入口生成动画，以绑定完整内容和真实配音时钟。',
     'skill_production_profile_unavailable': '通用 Agent 的动画 Skill 制作能力尚未完成独立准入或配置，暂不能开始新的制作任务。',
@@ -296,10 +306,12 @@ class ExplanationAdoption(Revision):
 class JointPlanRequest(ExplanationRequest):
     preserve_script: bool = Field(default=False, strict=True)
     library_release_id: str | None = Field(default=None, min_length=1, max_length=200)
+    use_wikiskill: bool = Field(default=True, strict=True)
 
 
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
+    audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
     reuse_audio_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
     resource_authoring: dict[str, dict] | None = Field(default=None, min_length=1, max_length=8)
     resource_plan: dict | None = Field(default=None)
@@ -533,7 +545,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                joint_plan_enabled=None, production_runs_enabled=None,
                skill_gateway=None, skill_adapter=None, skill_production=True, film_creation=None,
                resource_planning_gateway=None, resource_producer_catalog=None,
-               refinement_service=None, refinement_enabled=None):
+               refinement_service=None, refinement_enabled=None, scene_space_adapter=None):
     if type(skill_production) is not bool:
         raise ValueError('An explicit boolean Skill production mode is required')
     explanation_settings = ExplanationSettings.from_env()
@@ -570,6 +582,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     owned_film_client = None
     owned_film_renderer = None
     owned_speech_client = None
+    owned_scene_space_client = None
     if gateway is None:
         settings = AgentSettings.from_env()
         if settings:
@@ -732,9 +745,14 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                 owned_film_renderer, enabled=film_settings.enabled if film_settings is not None else False,
                 render_readiness=lambda: execution_readiness(owned_film_renderer, film_settings)
                     if film_settings is not None else {'available': False}, resource_client=resource_client)
+    if scene_space_adapter is None:
+        from .scene_space_production import configured_scene_space_production
+        scene_space_adapter,owned_scene_space_client=configured_scene_space_production(store,
+            library_adapter=skill_adapter,fallback_agent_client=owned_production_client or (
+                gateway.client if isinstance(gateway,VideoAgentGateway) else None))
     production_sequence_store = _production_sequence_ledger(store)
     production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production,
-        film_creation=film_creation, sequence_store=production_sequence_store)
+        film_creation=film_creation, sequence_store=production_sequence_store,scene_space_adapter=scene_space_adapter)
     author_configured = ((skill_gateway is not None and skill_adapter is not None) if skill_production
                          else (creative_gateway is not None and method_adapter is not None))
     run_dependencies = (joint_gate and motion_gate and speech_client is not None and creative_gate
@@ -744,6 +762,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         # A configured whole-film path never falls back to per-scene rendering.
         # Fresh exact release/profile preflight belongs to start(), before TTS.
         run_dependencies = joint_gate and speech_client is not None and film_creation.enabled
+    if scene_space_adapter is not None and scene_space_adapter.enabled:
+        run_dependencies = joint_gate
     if production_runs_enabled is not None and type(production_runs_enabled) is not bool:
         raise ValueError('An explicit boolean production run feature gate is required')
     production_run_workflow = ProductionRunWorkflow(production_run_store,
@@ -818,6 +838,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             owned_film_renderer.close()
         if owned_speech_client:
             owned_speech_client.close()
+        if owned_scene_space_client:
+            owned_scene_space_client.close()
 
     app = FastAPI(title='动态视频工作台', lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.workflow = store, workflow
@@ -831,6 +853,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.production_sequence_store = production_sequence_store
     app.state.refinement_service, app.state.refinement_workflow = refinement_service, refinement_workflow
     app.state.film_creation = film_creation
+    app.state.scene_space_production = scene_space_adapter
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -928,7 +951,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     joint_plan_configured=joint_gate and joint_plan_gateway is not None,
                     production_runs_enabled=production_run_workflow.enabled,
                     production_refinement_enabled=refinement_workflow.enabled,
-                    production_run_max_seconds=60 if film_creation is not None else None,
+                    production_run_max_seconds=MAX_FILM_SECONDS if film_creation is not None or scene_space_adapter is not None else None,
+                    scene_space_production=bool(scene_space_adapter is not None and scene_space_adapter.enabled),
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
                     creative_enabled=creative_gate, creative_configured=creative_gate and author_configured,
@@ -1266,6 +1290,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         rows = production.renders(owner, project_id)
         if film_creation is not None:
             rows += film_creation.renders(owner, project_id)
+        if scene_space_adapter is not None:
+            store.project(owner,project_id)
+            rows += scene_space_adapter.renders(owner,project_id)
         return {'renders': sorted(rows, key=lambda row: row.get('created_at', 0), reverse=True)}
 
     @app.post('/api/renders/{render_id}/cancel')
@@ -1273,19 +1300,39 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         try:
             return production.cancel(owner, render_id)
         except ServiceError as error:
-            if error.code != 'not_found' or film_creation is None:
+            if error.code != 'not_found':
                 raise
-        return film_creation.cancel_render(owner, render_id)
+        if film_creation is not None:
+            try:return film_creation.cancel_render(owner,render_id)
+            except ServiceError as error:
+                if error.code!='not_found':raise
+        if scene_space_adapter is not None:return scene_space_adapter.cancel_render(owner,render_id)
+        raise ServiceError('not_found',404)
 
     @app.get('/api/renders/{render_id}/video')
     def video(render_id: str, request: Request, owner=Depends(identity)):
         try:
             raw = production.video(owner, render_id)
         except ServiceError as error:
-            if error.code != 'not_found' or film_creation is None:
+            if error.code != 'not_found':
                 raise
-            raw = film_creation.video(owner, render_id)
+            raw=None
+            if film_creation is not None:
+                try:raw=film_creation.video(owner,render_id)
+                except ServiceError as error:
+                    if error.code!='not_found':raise
+            if raw is None and scene_space_adapter is not None:
+                media=scene_space_adapter.video(owner,render_id)
+                raw=media[0] if type(media) is tuple else media
+            if raw is None:raise ServiceError('not_found',404)
         return media_response(raw, request, 'video/mp4', f'video-{render_id}.mp4')
+
+    @app.get('/api/production-runs/{run_id}/scene-previews/{render_id}')
+    def scene_preview(run_id: str,render_id: str,owner=Depends(identity)):
+        if scene_space_adapter is None:raise ServiceError('not_found',404)
+        production_run_store.get(owner,run_id)
+        raw,mime=scene_space_adapter.preview(owner,run_id,render_id)
+        return Response(raw,media_type=mime,headers={'Cache-Control':'private, no-store'})
 
     @app.get('/api/versions/{version_id}/preview')
     def preview(version_id: str, owner=Depends(identity)):

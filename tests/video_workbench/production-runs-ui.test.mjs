@@ -54,6 +54,31 @@ test('whole-film modules enable draft review without pretending to be old scene 
   assert.match(h.$('production-run-status').textContent,/编排完整视频画面/);
 });
 
+test('scene-space silent production preserves one explicit audio choice and offers static previews without shot editing',async()=>{
+  const h=harness();h.state.context.settings.scene_space_production=true;await h.load();
+  h.$('production-run-audio-mode').value='silent';await h.$('production-run-audio-mode').emit('change');
+  assert.equal(h.$('production-run-audio-choice').hidden,false);
+  assert.match(h.$('start-production-run').textContent,/无旁白/);
+  h.state.transport=(path,options)=>options.method==='POST'?run({audio_mode:'silent'}):h.state.data;
+  await h.panel.start();
+  assert.equal(posts(h)[0].options.body.audio_mode,'silent');
+  assert.doesNotMatch(JSON.stringify(posts(h)[0].options.body),/shot|camera|layer|object/);
+  const value=run({renderer_mode:'scene-space',audio_mode:'silent',current:true,status:'completed',
+    phase:'completed',draft_render_id:'scene-film',scene_space:{plan_sha256:'plan',previews:[
+      {frame:0,status:'completed',url:'/api/production-runs/run-1/scene-previews/preview-one'},
+      {frame:24,status:'completed',url:'javascript:alert(1)'}]},
+    items:[{scene_id:'p1-scene',title:'山水',audio_status:'not_requested',audio_version_id:null,
+      world_source_sha256:'world-source',scene_space_plan_sha256:'plan',candidate_current:true}]});
+  assert.equal(productionRunDraftReady(value),true);
+  h.state.data={runs:[value]};h.state.transport=null;await h.load();
+  assert.equal(h.$('production-run-previews').hidden,false);
+  assert.equal(h.$('production-run-preview-images').children.length,1);
+  assert.equal(h.$('production-run-video').src,'/api/renders/scene-film/video');
+  assert.match(h.$('production-run-voice').textContent,/无旁白/);
+  assert.match(h.$('production-run-items').textContent,/共用场景已准备/);
+  assert.doesNotMatch(h.$('production-run-items').textContent,/配音尚未完成/);
+});
+
 test('resource phase reports stopped ready resources and excludes adopted recordings from animation progress', async () => {
   const h=harness();
   h.state.data={runs:[run({status:'running',phase:'resources',resources:{nodes:[

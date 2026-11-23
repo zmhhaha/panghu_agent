@@ -31,7 +31,21 @@ AGENT_TOKEN = '/run/secrets/animation-creation-agent/token'
 LAB_TOKEN = '/run/secrets/animation-creation-lab/token'
 METHOD_TOKEN = '/run/secrets/animation-method-agent/token'
 COLLABORATION_TOKEN = '/run/secrets/animation-collaboration-agent/token'
+PICTURE_TOKEN = '/run/secrets/picture-learning-agent/token'
+VIDEO_LEARNING_TOKEN = '/run/secrets/video-learning-agent/token'
 SELECTOR = {'app.kubernetes.io/name': NAME}
+
+
+def reference_https_egress():
+    """Public HTTPS only for the trusted source reader, never scene workers."""
+    return {'to': [
+        {'ipBlock': {'cidr': '0.0.0.0/0', 'except': [
+            '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
+            '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24',
+            '192.168.0.0/16', '198.18.0.0/15', '198.51.100.0/24',
+            '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4']}},
+        {'ipBlock': {'cidr': '2000::/3', 'except': ['2001:db8::/32']}},
+    ], 'ports': [{'protocol': 'TCP', 'port': 443}]}
 
 
 @dataclass(frozen=True)
@@ -59,6 +73,12 @@ class Settings:
     collaboration_agent_token_secret: str | None = None
     collaboration_agent_token_key: str = 'token'
     enable_collaborative_authoring: bool = False
+    picture_agent_token_secret: str | None = None
+    picture_agent_token_key: str = 'token'
+    video_learning_agent_token_secret: str | None = None
+    video_learning_agent_token_key: str = 'token'
+    method_project_runtime: str = 'native-seek'
+    remote_reference_dns: str | None = None
 
 
 def render(settings: Settings):
@@ -96,8 +116,30 @@ def render(settings: Settings):
         raise ValueError('Collaboration requires skills and independent caller Secret')
     if collaboration_secret is not None and collaboration_secret in {agent_secret, lab_secret, method_secret}:
         raise ValueError('Distinct collaboration Agent caller Secret required')
+    picture_secret = (_dns_name(settings.picture_agent_token_secret, 'picture Agent caller Secret')
+                      if settings.picture_agent_token_secret is not None else None)
+    if settings.method_project_runtime not in {'native-seek', 'hyperframes-core-bridge'}:
+        raise ValueError('Invalid method project runtime')
+    if picture_secret is not None:
+        if picture_secret in {agent_secret, lab_secret, method_secret, collaboration_secret}:
+            raise ValueError('Distinct picture Agent caller Secret required')
+        if method_secret is None or settings.method_project_runtime != 'hyperframes-core-bridge':
+            raise ValueError('Picture learning requires HyperFrames and method execution')
+    video_learning_secret = (_dns_name(settings.video_learning_agent_token_secret, 'video learning Agent caller Secret')
+                             if settings.video_learning_agent_token_secret is not None else None)
+    if video_learning_secret is not None:
+        if video_learning_secret in {agent_secret, lab_secret, method_secret, collaboration_secret, picture_secret}:
+            raise ValueError('Distinct video learning Agent caller Secret required')
+        if method_secret is None or settings.method_project_runtime != 'hyperframes-core-bridge':
+            raise ValueError('Video learning requires HyperFrames and method execution')
+    if settings.remote_reference_dns is not None:
+        if settings.remote_reference_dns not in {'system', 'alidns', 'cloudflare', 'google'}:
+            raise ValueError('Invalid remote reference DNS')
+        if not (picture_secret or video_learning_secret):
+            raise ValueError('Remote references require a learning library')
     for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key,
-                settings.collaboration_agent_token_key):
+                settings.collaboration_agent_token_key, settings.picture_agent_token_key,
+                settings.video_learning_agent_token_key):
         if type(key) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,253}', key):
             raise ValueError('Invalid caller Secret key')
 
@@ -124,6 +166,14 @@ def render(settings: Settings):
             '--listen', '0.0.0.0', '--port', str(PORT)]
     if method_secret:
         args += ['--method-agent-token-file', METHOD_TOKEN, '--method-protocol', settings.method_protocol]
+        if settings.method_project_runtime != 'native-seek':
+            args += ['--method-project-runtime', settings.method_project_runtime]
+    if picture_secret:
+        args += ['--picture-agent-token-file', PICTURE_TOKEN]
+    if video_learning_secret:
+        args += ['--video-learning-agent-token-file', VIDEO_LEARNING_TOKEN]
+    if settings.remote_reference_dns is not None:
+        args += ['--remote-reference-dns', settings.remote_reference_dns]
     if settings.enable_collaborative_authoring:
         args += ['--enable-collaborative-authoring', '--collaboration-agent-token-file', COLLABORATION_TOKEN]
     health = {'httpGet': {'path': '/healthz', 'port': 'http'}, 'periodSeconds': 10,
@@ -175,6 +225,18 @@ def render(settings: Settings):
             'items': [{'key': settings.collaboration_agent_token_key, 'path': 'token'}]}})
         container['volumeMounts'].append({'name': 'collaboration-agent-token',
             'mountPath': COLLABORATION_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
+    if picture_secret:
+        volumes.append({'name': 'picture-agent-token', 'secret': {'secretName': picture_secret,
+            'optional': False, 'defaultMode': 0o400,
+            'items': [{'key': settings.picture_agent_token_key, 'path': 'token'}]}})
+        container['volumeMounts'].append({'name': 'picture-agent-token',
+            'mountPath': PICTURE_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
+    if video_learning_secret:
+        volumes.append({'name': 'video-learning-agent-token', 'secret': {'secretName': video_learning_secret,
+            'optional': False, 'defaultMode': 0o400,
+            'items': [{'key': settings.video_learning_agent_token_key, 'path': 'token'}]}})
+        container['volumeMounts'].append({'name': 'video-learning-agent-token',
+            'mountPath': VIDEO_LEARNING_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
     deployment = resource('apps/v1', 'Deployment', {
         'replicas': 1, 'strategy': {'type': 'Recreate'}, 'selector': {'matchLabels': dict(SELECTOR)},
         'template': {'metadata': {'labels': dict(labels), 'annotations': dict(annotations)}, 'spec': {
@@ -212,6 +274,8 @@ def render(settings: Settings):
             {'to': [peer(agent_namespace, agent_labels)], 'ports': [{'protocol': 'TCP', 'port': settings.agent_port}]},
         ],
     })
+    if settings.remote_reference_dns is not None:
+        policy['spec']['egress'].append(reference_https_egress())
     return dict(apiVersion='v1', kind='List', items=[deployment, service, policy])
 
 
@@ -235,6 +299,12 @@ def main(argv=None):
     parser.add_argument('--collaboration-agent-token-secret')
     parser.add_argument('--collaboration-agent-token-key', default='token')
     parser.add_argument('--enable-collaborative-authoring', action='store_true')
+    parser.add_argument('--picture-agent-token-secret')
+    parser.add_argument('--picture-agent-token-key', default='token')
+    parser.add_argument('--video-learning-agent-token-secret')
+    parser.add_argument('--video-learning-agent-token-key', default='token')
+    parser.add_argument('--method-project-runtime', choices=('native-seek', 'hyperframes-core-bridge'), default='native-seek')
+    parser.add_argument('--remote-reference-dns', choices=('system', 'alidns', 'cloudflare', 'google'))
     parser.add_argument('--output', type=Path)
     args = vars(parser.parse_args(argv))
     output = args.pop('output')

@@ -1,0 +1,226 @@
+{
+  "activation": {
+    "automatic_retry": false,
+    "business_picture_quality_approved": false,
+    "caller": "video-picture-learning",
+    "configmap": "agent-service-picture-50bcb5a99522becf8a82",
+    "control_image": "arm-cluster-master:5000/agent-service-control:latest@sha256:718c9b465effff817c61b8df2b67e190b89945bde34ddf5c9405827b7a40bb06",
+    "direct_image_transport_technically_admitted": true,
+    "executor_http_live_verified": false,
+    "executor_namespace": "video-animation-creation",
+    "executor_secret": "picture-learning-agent-20261118",
+    "existing_routes_preserved": true,
+    "profiles": [
+      "video.picture-learning-author.v1",
+      "video.picture-learning-review.v1"
+    ],
+    "runtime_secret": "agent-service-runtime-picture-50bcb5a99522becf",
+    "schema": "picture-learning-activation-receipt.v1",
+    "status": "activated",
+    "wikiskill_published": false,
+    "worker_image": "arm-cluster-master:5000/agent-service-pi:latest@sha256:b9b9d363c769549be514a758dd086f515c39f801f877b16659e5363d4f0a9372"
+  },
+  "actual_total_model_requests": 8,
+  "author_render": {
+    "artistic_acceptance": false,
+    "height": 360,
+    "image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+    "motion_verified": false,
+    "picture_sha256": "3f8dfde7ab3ac9394e39d6d10066f90e4237fd7c6954ccc62f41413a1bacd798",
+    "source_sha256": "a57473412e49c3ecae950f57f9ca126c52e5900c89ea738b767bc1f8a418a580",
+    "source_unchanged": true,
+    "stop_proven": true,
+    "technical_passed": true,
+    "width": 640
+  },
+  "business_http_loop_verified": false,
+  "control_image": "arm-cluster-master:5000/agent-service-control:latest@sha256:718c9b465effff817c61b8df2b67e190b89945bde34ddf5c9405827b7a40bb06",
+  "live_control_capabilities": {
+    "caller_scope_exact": true,
+    "http_status": 200,
+    "model_requests": 0,
+    "origin": "deployed_executor_with_mounted_dedicated_secret",
+    "profiles": [
+      {
+        "binding_revision": "binding-4aba635e75e4f1a4ccbb",
+        "configured": true,
+        "image_digest": "sha256:b9b9d363c769549be514a758dd086f515c39f801f877b16659e5363d4f0a9372",
+        "profile": "video.picture-learning-author.v1",
+        "publication_authorized": false,
+        "ready": true,
+        "required_model_capabilities": [
+          "text",
+          "tool_calls",
+          "vision"
+        ]
+      },
+      {
+        "binding_revision": "binding-886063d810e525790850",
+        "configured": true,
+        "image_digest": "sha256:b9b9d363c769549be514a758dd086f515c39f801f877b16659e5363d4f0a9372",
+        "profile": "video.picture-learning-review.v1",
+        "publication_authorized": false,
+        "ready": true,
+        "required_model_capabilities": [
+          "text",
+          "tool_calls",
+          "vision"
+        ]
+      }
+    ]
+  },
+  "maximum_model_requests_per_candidate": 8,
+  "not_claimed": [
+    "human_artistic_acceptance",
+    "model_understanding",
+    "motion_quality",
+    "transfer_validation",
+    "business_api_end_to_end"
+  ],
+  "preservation": {
+    "existing_records_by_section": {
+      "callers": true,
+      "capability_bundles": true,
+      "execution_bindings": true,
+      "kubernetes_workers": true,
+      "routes": true,
+      "task_contracts": true,
+      "tool_environments": true
+    },
+    "new_token_refs": [
+      "video-picture-learning"
+    ],
+    "old_token_count": 16,
+    "old_token_values_preserved": true,
+    "other_runtime_secret_fields_preserved": true,
+    "secret_values_stored": false
+  },
+  "profiles": [
+    {
+      "all_image_requests_completed": true,
+      "candidate_name": "candidate-picture-author-r1",
+      "image_transport_scope": "completed_upstream_transport",
+      "input_sha256": "afe958b6ee616f52d6088973fcbb0e661ea315a2455dddc007898dc6af0e4694",
+      "lease_401_rejected": true,
+      "model_requests": 4,
+      "original_pods_stopped": true,
+      "profile": "video.picture-learning-author.v1",
+      "result_sha256": "5bf66316725186dd05a476c06ff5ae07dcd90c760d9b8b292b2161eb68f54041",
+      "review_issue_count": null,
+      "review_score": null,
+      "role": "author",
+      "technical_admission": {
+        "accepted_execution_binding_sha256": "261e89a034bb5d5da43166acc3924d920195ab490d7d8e0339f98580831e64c1",
+        "accepted_host": true,
+        "combination_sha256": "4aba635e75e4f1a4ccbbcc4a22e99398dafa7e1697f1d4dc303f529235ad4c3d",
+        "deployment_performed": false,
+        "enabled": false,
+        "host_config_map": "picture-learning-author-pi-4aba635e75e4f1a4ccbb",
+        "live_http_verified": false,
+        "model_requests": 0,
+        "not_claimed": [
+          "offline_hmac_reverification",
+          "production_api_dispatcher_end_to_end",
+          "business_user_approval",
+          "subjective_picture_quality",
+          "model_understanding",
+          "whole_video_watched",
+          "audio_quality",
+          "other_profiles_or_images"
+        ],
+        "profile": "video.picture-learning-author.v1",
+        "report_sha256": "3607c59a8d745baf543d7d1c7e5a3afad94a49ff8d10d4a75bdda589308d7758",
+        "schema": "picture-learning-technical-admission.v1",
+        "source_evidence_modified": false,
+        "technical_host_admission_only": true,
+        "uid_allocations": 0
+      },
+      "transported_pixels": [
+        {
+          "byte_length": 355077,
+          "occurrences": 2,
+          "sha256": "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260"
+        }
+      ]
+    },
+    {
+      "all_image_requests_completed": true,
+      "candidate_name": "candidate-picture-review-r1",
+      "image_transport_scope": "completed_upstream_transport",
+      "input_sha256": "fb9cfe8152c336f75920573a6ce9adfadd8f9c4160146dd5d92ee1bd1fbb4958",
+      "lease_401_rejected": true,
+      "model_requests": 4,
+      "original_pods_stopped": true,
+      "profile": "video.picture-learning-review.v1",
+      "result_sha256": "49005ac110d8a05fad846f494f7fa1200467d2d4fb8422ddb43c59527d3d6886",
+      "review_issue_count": 5,
+      "review_score": 66,
+      "role": "review",
+      "technical_admission": {
+        "accepted_execution_binding_sha256": "ca98e5297ea885e9a97c2cafe214fe728a5923f8f1bff571ac85e6d7df292c4c",
+        "accepted_host": true,
+        "combination_sha256": "886063d810e5257908502e3043138a26494ac5755b52fe2dc94d0686711126dd",
+        "deployment_performed": false,
+        "enabled": false,
+        "host_config_map": "picture-learning-review-pi-886063d810e525790850",
+        "live_http_verified": false,
+        "model_requests": 0,
+        "not_claimed": [
+          "offline_hmac_reverification",
+          "production_api_dispatcher_end_to_end",
+          "business_user_approval",
+          "subjective_picture_quality",
+          "model_understanding",
+          "whole_video_watched",
+          "audio_quality",
+          "other_profiles_or_images"
+        ],
+        "profile": "video.picture-learning-review.v1",
+        "report_sha256": "e4558dd79c3a60881bc551aa997b987845397389864aa85c2fd290ce736f84e5",
+        "schema": "picture-learning-technical-admission.v1",
+        "source_evidence_modified": false,
+        "technical_host_admission_only": true,
+        "uid_allocations": 0
+      },
+      "transported_pixels": [
+        {
+          "byte_length": 355077,
+          "occurrences": 2,
+          "sha256": "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260"
+        },
+        {
+          "byte_length": 215042,
+          "occurrences": 2,
+          "sha256": "3f8dfde7ab3ac9394e39d6d10066f90e4237fd7c6954ccc62f41413a1bacd798"
+        }
+      ]
+    }
+  ],
+  "revision": "70aa9065e4904bbc4c16ec1fa11768cce842ab81",
+  "root_custody_acquisition": {
+    "bytes_unchanged": true,
+    "container_absent_before_and_after": true,
+    "file_count": 8
+  },
+  "schema": "video.picture-learning-agent-validation.v1",
+  "uid_ranges": [
+    {
+      "name": "picture-learning-author-pi-4aba635e75e4f1a4ccbb",
+      "node": "arm-cluster-master",
+      "purpose": "picture-learning-production-pool",
+      "reusable": false,
+      "uid_count": 65536,
+      "uid_start": 312672256
+    },
+    {
+      "name": "picture-learning-review-pi-886063d810e525790850",
+      "node": "arm-cluster-master",
+      "purpose": "picture-learning-production-pool",
+      "reusable": false,
+      "uid_count": 65536,
+      "uid_start": 312737792
+    }
+  ],
+  "wikiskill_published": false,
+  "worker_image": "arm-cluster-master:5000/agent-service-pi:latest@sha256:b9b9d363c769549be514a758dd086f515c39f801f877b16659e5363d4f0a9372"
+}

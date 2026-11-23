@@ -18,6 +18,7 @@ from . import media
 from .hyperframes_film_snapshot import verify_film_execution_snapshot
 from .motion_render_adapter import (RemoteMotionRenderer, IDENTITY, TERMINAL, UNAVAILABLE,
     safe_progress, safe_diagnostic)
+from .hyperframes_film_limits import LEGACY_MAX_FRAMES
 
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _STATES = TERMINAL | {'queued', 'running', 'cancelling'}
@@ -41,7 +42,10 @@ def validate_film_render_result(metadata, snapshot, *, runtime_fingerprint):
         and metadata.get('runtime_fingerprint') == runtime_fingerprint
         and metadata.get('visual_mode') == 'hyperframes-film' and metadata.get('quality') == 'draft'
         and metadata.get('video_codec') == 'h264' and metadata.get('audio_codec') == 'aac'
-        and metadata.get('silent') is False and metadata.get('subtitles') is False
+        and metadata.get('silent') is (snapshot['clock'].get('authority') == 'explicit_silent_intervals')
+        and (metadata.get('contains_narration') is False if metadata.get('silent') else
+            metadata.get('contains_narration', True) is True)
+        and metadata.get('subtitles') is False
         and metadata.get('audio_sample_rate') == 48000 and type(metadata['audio_sample_rate']) is int
         and metadata.get('audio_channels') == 2 and type(metadata['audio_channels']) is int
         and metadata.get('width') == snapshot['width'] and type(metadata['width']) is int
@@ -68,6 +72,19 @@ def validate_film_render_result(metadata, snapshot, *, runtime_fingerprint):
 
 class RemoteFilmRenderer(RemoteMotionRenderer):
     """Same journal endpoints, a distinct validated snapshot and media contract."""
+
+    def __init__(self, url, token, *, client=None, poll_seconds=1, wait_seconds=None):
+        self._automatic_wait = wait_seconds is None
+        super().__init__(url, token, client=client, poll_seconds=poll_seconds,
+            wait_seconds=1800 if wait_seconds is None else wait_seconds)
+
+    def _wait_budget(self, snapshot):
+        if self._automatic_wait and snapshot['clock']['frame_count'] > LEGACY_MAX_FRAMES:
+            # Include the fixed Job deadline and its cleanup margin. This
+            # never grants the job a longer execution deadline or overrides
+            # a caller's explicitly bounded polling/recovery policy.
+            return max(self.wait_seconds, snapshot['timeout_seconds'] + 150)
+        return self.wait_seconds
 
     def render(self, snapshot, output_dir, *, expected_snapshot_sha256, runtime_fingerprint,
             trusted_host_sha256, image, operation_id, owner, cancel_event=None, progress_callback=None):
@@ -122,7 +139,7 @@ class RemoteFilmRenderer(RemoteMotionRenderer):
                     error.stop_proven, error.remote_state = True, state
                     raise error
                 break
-            if time.monotonic() - started >= self.wait_seconds:
+            if time.monotonic() - started >= self._wait_budget(snapshot):
                 raise ServiceError(UNAVAILABLE, 503)
             if cancel_event is None or wants_cancel:
                 time.sleep(self.poll_seconds)

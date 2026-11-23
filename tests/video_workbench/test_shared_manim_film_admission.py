@@ -108,11 +108,14 @@ def test_stored_assets_and_source_references_do_not_replace_actual_loaded_eviden
         admission.build_admission(**dict(shared_evidence, capture=changed, result=result))
 
 
-def test_restart_reopens_original_consumer_package_and_retains_frozen_resource_binding(shared_evidence, tmp_path):
+@pytest.mark.parametrize('versioned', [False, True])
+def test_restart_reopens_original_consumer_package_and_retains_frozen_resource_binding(shared_evidence, tmp_path, versioned):
     value = admission.build_admission(**shared_evidence)
     path = tmp_path / 'shared-admission.json'
     path.write_bytes(canonical_bytes(value))
-    root = shared_evidence['resource_service'].root / 'admissions' / shared_evidence['operation_id']
+    root = admission.admission_evidence_directory(shared_evidence['resource_service'].root, value)
+    if not versioned:
+        root = root.parent
     root.mkdir(parents=True)
     for name in ['snapshot', 'result', 'capture']:
         (root / (name + '.json')).write_bytes(canonical_bytes(shared_evidence[name]))

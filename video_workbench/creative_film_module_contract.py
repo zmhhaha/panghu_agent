@@ -10,15 +10,17 @@ from agent_service.contracts import canonical_bytes, digest
 from agent_service.profiles.video_animation_film_module import (
     PROFILE, INSTRUCTION_REVISION, BUNDLE_REVISION, BUNDLE_MANIFEST_SHA256,
     VideoAnimationFilmModuleProfile,
+    HISTORICAL_BUNDLES, build_prompt_for_bundle,
 )
 from agent_service.profiles.video_animation_film_module_contract import (
     INPUT_SCHEMA, CONTEXT_SCHEMA, CORE_FIELDS, DECISION_SCOPE, MAX_TOOL_EVIDENCE_BYTES,
-    require, validate_core_task, validate_input, validate_result, module_metadata,
+    require, validate_core_task, validate_input, validate_result, module_metadata, is_silent_task,
 )
 from agent_service.skill_tool_evidence import validate_tool_evidence
 from .animation_skill_production import validate_delivery
 from .hyperframes_film_project import module_identity
 from .motion import validate_alignment
+from .animation_runtime_capabilities import with_drawing_context_guidance
 
 CREATIVE_SCHEMA = 'video.creative-film-module.v1'
 ADAPTER_REVISION = 'creative-hyperframes-composable-module-1'
@@ -35,6 +37,7 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
                       assets=None, instruction='', base_module=None, style='', allowed_engines=None,
                       predecessor_package=None):
     """Exact task for SkillProductionAdapter.freeze, including the new targets."""
+    instruction = with_drawing_context_guidance(instruction, allowed_engines or ['html-svg'])
     value = dict(scene=dict(scene_id=scene_id, title=title, visual_description=visual_description,
         narration=narration, beats=deepcopy(beats), alignment=deepcopy(alignment),
         audio_sha256=audio_sha256, instruction=instruction, style=style),
@@ -45,7 +48,8 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
         target=dict(module_id=module_id, namespace=namespace, transition_target=deepcopy(transition_target)),
         assets={} if assets is None else deepcopy(assets), base_module=deepcopy(base_module))
     value = validate_core_task(value)
-    validate_alignment(value['scene']['alignment'], value['scene']['beats'])
+    if not is_silent_task(value):
+        validate_alignment(value['scene']['alignment'], value['scene']['beats'])
     if predecessor_package is not None:
         from .film_appearance_context import attach_predecessor_appearance
         value = attach_predecessor_appearance(value, predecessor_package)
@@ -60,11 +64,12 @@ def build_module_input(core_task, skill_delivery):
 
 def validate_module_input(document):
     document = validate_input(document)
-    validate_alignment(document['scene']['alignment'], document['scene']['beats'])
+    if not is_silent_task(document):
+        validate_alignment(document['scene']['alignment'], document['scene']['beats'])
     return document
 
 
-def collect_module_result(input_document, result, evidence, *, skill_delivery):
+def collect_module_result(input_document, result, evidence, *, skill_delivery, frozen_profile=None):
     document = validate_module_input(input_document)
     input_sha256 = digest(document)
     delivery = validate_delivery(skill_delivery)
@@ -91,10 +96,16 @@ def collect_module_result(input_document, result, evidence, *, skill_delivery):
         if transition is not None:
             require(incoming['boundary']['transition']['module_sha256'] == module_identity(transition),
                     'creative_film_module_boundary_mismatch', 409)
-    profile = dict(name=PROFILE, revision='1', instruction_revision=INSTRUCTION_REVISION,
-        bundle_revision=BUNDLE_REVISION, bundle_manifest_sha256=BUNDLE_MANIFEST_SHA256,
-        prompt_sha256=hashlib.sha256(VideoAnimationFilmModuleProfile().build_prompt(
-            {'input_sha256': input_sha256}).encode('utf-8')).hexdigest())
+    revision = frozen_profile.get('bundle_revision') if type(frozen_profile) is dict else BUNDLE_REVISION
+    require(revision in HISTORICAL_BUNDLES, 'creative_film_module_profile_unknown', 409)
+    instruction_revision, bundle_sha = HISTORICAL_BUNDLES[revision]
+    profile = dict(name=PROFILE, revision='1', instruction_revision=instruction_revision,
+        bundle_revision=revision, bundle_manifest_sha256=bundle_sha,
+        prompt_sha256=hashlib.sha256(build_prompt_for_bundle(
+            {'input_sha256': input_sha256}, revision).encode('utf-8')).hexdigest())
+    require(frozen_profile is None or frozen_profile == profile, 'creative_film_module_profile_changed', 409)
+    require(not is_silent_task(document) or revision != 'animation-film-module-v1',
+        'creative_film_module_silent_profile_not_admitted', 409)
     package = dict(schema=CREATIVE_SCHEMA, adapter_revision=ADAPTER_REVISION,
         input_document=document, input_sha256=input_sha256, profile=profile,
         result=output, result_sha256=digest(output), engine=module['engine'],
@@ -111,7 +122,7 @@ def validate_module_package(package):
         and package['schema'] == CREATIVE_SCHEMA and package['adapter_revision'] == ADAPTER_REVISION,
         'creative_film_module_package_invalid')
     expected = collect_module_result(package['input_document'], package['result'], package['skill_tool_evidence'],
-                                    skill_delivery=package['skill_delivery'])
+                                    skill_delivery=package['skill_delivery'], frozen_profile=package['profile'])
     require(package == expected, 'creative_film_module_package_changed', 409)
     return expected
 

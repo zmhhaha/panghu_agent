@@ -1,6 +1,8 @@
 # 动画效果库：外部 Agent API
 
-外部 Agent 可以直接使用现有 REST JSON API，完成列出效果、提交制作、查询状态、下载候选视频和源码、保存反馈及取消任务。
+2026-11-18 目标补充：[需求创作、图片学习与视频学习三库](reference-learning-libraries-design.md)要求网页与外部结构化 JSON API 同等支持参考媒体、片段分析和选定、独立项目与复现/迁移产物、实际读取证据及验证范围。新类型和媒体输入合同由 X.1、X.2、X.7 实施；下文仍是现有动画效果 API，不表示新三库字段或端点已经可用。新目标运行中仅查看或停止，新增意见用于下一次实验；现有可保存反馈的接口及部分实时消费路径需要明确活动任务的冻结边界，不能按下文旧行为解释为运行中可改学习方向。
+
+外部 Agent 可以直接使用现有 REST JSON API，完成列出效果、提交制作、查询状态、查看提交需求及逐轮冻结输入、下载候选视频和源码、保存反馈及取消任务。
 
 - API 基址：`https://video-service.panghuer.top/dev/animations/api/method-lab`
 - [在线静态指南](https://video-service.panghuer.top/dev/animations/agent-api.html)
@@ -8,6 +10,20 @@
 - [下载 Python 标准库客户端](https://video-service.panghuer.top/dev/animations/agent-api-client.py)
 
 这些入口沿用动画效果库的 OAuth 登录及开发者权限。合同只列出 Agent 接入支持的字段与操作；服务响应可以包含其他字段，调用方应忽略未知字段。
+
+2026-11-16 两组能力选择、继续／重跑／迁移继承及 Manim 逐轮资源迭代已从完整 Git `5a93ea3` 构建上线，真实浏览器确认控件与协作限制。干净源码 Python 矩阵234通过／1跳过，最终资源修复后55项补充回归和88项前端检查通过；分组有重叠，不累加。实际9个历史效果投影保持一致，本轮没有新模型、样片或 WikiSkill 发版，不代表审美改善已验证。[发布证据](evidence/lab-capability-selection-20261116.json)。
+
+## 2026-11-17 从零重做与知识选择
+
+已确认新增“同一效果从零重做”、独立的动效 WikiSkill 加载开关及保持原方案的技术重试。所有新创作默认加载，可在网页或 API 显式关闭；从零重做不继承旧源码、布局、专用方法或分工，新结果先作为候选，由开发者决定是否替换卡片默认作品。标准可提交，留空则由 Agent 拟定并记录后继续，无需等待确认。
+
+新创作支持 `creation_mode: new | continue | fresh`，缺省按有无 `base_commission_id` 推断 new 或 continue；`use_wikiskill` 默认为严格布尔 `true`。fresh 必须指定 `effect_id`，不提交旧基线或专用方法；可带 `problem_summary`，每项明确 `text` 与 `source: developer | observation | hypothesis`。关闭知识仍保留平台规范，普通继续优化仍可沿用明确选择的作品源码。实验室读取已发布整库的冻结原文，正式制作按同一绑定提供技能工具；加载为空与显式关闭分别记录。发布与验收状态见[实现验证](fresh-rebuild-validation-20261117.md)。
+
+```json
+{"request_id":"b5df2831-7a15-445f-b437-55350634a98a","effect_id":"原效果ID","creation_mode":"fresh","use_wikiskill":false,"goal":"重新创作具有明确笔触和空间层次的山石效果","budget":{"max_rounds":1,"max_seconds":1200},"problem_summary":[{"text":"原画面缺少可辨认的笔触","source":"developer"}]}
+```
+
+新候选不自动替换默认作品。完成后 POST `/commissions/{commission_id}/adopt`，提供 `request_id`、`effect_id`、`candidate_id` 和效果当前的 `representative_revision` 作为 `expected_revision`；过期选择返回冲突。采用不发布 WikiSkill。
 
 ## 授权与写请求
 
@@ -31,7 +47,7 @@ curl --fail-with-body --cookie cookies.txt \
   --output catalog.json
 ```
 
-从返回 JSON 读取 `availability.enabled`、已有 `commissions` 及 `csrf_token`。`enabled: false` 表示当前执行器不可用；目录仍可读取。若返回登录重定向或 HTML，请先重新授权，不要把登录页当作成功的目录。
+从返回 JSON 读取 `availability.enabled`、已有 `commissions` 及 `csrf_token`。`enabled: false` 表示当前执行器不可用；目录仍可读取。`availability.allowed_engines`、`availability.motion_tools` 和 `availability.resource_authoring.manim.enabled` 分别声明浏览器画面能力、动作工具及 Manim 资源的实际准入。若返回登录重定向或 HTML，请先重新授权，不要把登录页当作成功的目录。
 
 创建 `request.json`：
 
@@ -62,7 +78,7 @@ curl --fail-with-body --cookie cookies.txt \
 }
 ```
 
-上面是需要合入完整请求的字段片段。`max_components` 为 2–4 的整数；新建时显式开启，继续优化或重新运行可继承原协作配置。首版仅支持 Canvas 2D，不能与 Manim 预制资源或迁移任务合用。统筹先规划、部件分别创作、再整合为一条完整样片，调用方无需管理图层或单独发布部件。初版只制作一版，因此新建、继续优化或重新运行的 `budget.max_rounds` 均必须为 1；全部工作共用本次总时限，建议 1800 秒。预算最多包含 `max_components+2` 个创作任务（统筹、最多指定数量的部件、整合），另有 1 次样片渲染和 1 次评审。实际规划可少于上限；不要把上限当作实际消耗。`availability.collaboration` 为 `false` 或未返回时，不得提交此字段。
+上面是需要合入完整请求的字段片段。`max_components` 为 2–4 的整数；新建时显式开启，继续优化或重新运行可继承原协作配置。协作支持已准入的 HTML/SVG、Canvas 2D 和 Three.js，以 `availability.allowed_engines` 为准；动作编排仍单独检查 `availability.motion_tools`，不能与 Manim 预制资源或迁移任务合用。统筹先规划、部件分别创作、再整合为一条完整样片，调用方无需管理图层或单独发布部件。当前协作一次只制作一版，因此新建、继续优化或重新运行的 `budget.max_rounds` 均必须为 1；全部工作共用本次总时限，建议 1800 秒。预算最多包含 `max_components+2` 个创作任务（统筹、最多指定数量的部件、整合），另有 1 次样片渲染和 1 次评审。实际规划可少于上限；不要把上限当作实际消耗。`availability.collaboration` 为 `false` 或未返回时，不得提交此字段。
 
 ```sh
 curl --fail-with-body --cookie cookies.txt \
@@ -82,6 +98,36 @@ curl --fail-with-body --cookie cookies.txt \
 
 GET 只读，不会启动制作、执行模型、续跑任务或增加轮次。轮询应设定间隔和总等待上限。`202` 只代表提交被接受，不能当作完成或质量认可。
 
+## 两轴创作能力选择
+
+新建实验可省略 `capability_selection`，让 Agent 按目标选择已准入能力。需要约束实验能力时，将以下字段片段加入请求；不需要操作网页表单：
+
+```json
+{
+  "capability_selection": {
+    "creation": ["canvas", "three"],
+    "motion": ["gsap", "animejs"]
+  }
+}
+```
+
+| 维度 | 允许值 | 实际可用性 |
+| --- | --- | --- |
+| `creation` 画面创作 | `html-svg`、`canvas`、`three`、`manim` | 浏览器能力读取 `availability.allowed_engines`，Manim 检查 `availability.resource_authoring.manim.enabled=true` |
+| `motion` 动作编排 | `native-js`、`gsap`、`animejs` | 读取 `availability.motion_tools`；历史标签不能代替当前准入 |
+
+两组并列且可搭配；每组省略或空数组通常表示自动，整个字段也可省略。仅选 `creation:["manim"]` 是例外：动作由 Manim 自身编排，`motion` 必须省略或为空数组，非空值会被 API 拒绝，网页也会禁用浏览器动作选项。数组不接受重复项或未知名称。非空组单选约束使用该能力，多选允许从所选集合中选择或组合，不要求每项都使用。实际采用的浏览器画面引擎必须属于所选集合；实际采用浏览器画面能力且动作组非空时，必须实质使用至少一种所选工具，不能加载或使用未选的动作库，仅加载依赖也不足以满足要求。违反约束会明确失败。动作都跟随同一 HyperFrames 绝对时钟。
+
+Manim 与 SVG、Canvas、Three.js 同属画面创作，区别是先生成真实资源，再加入样片。新请求的 `capability_selection.creation` 包含 `manim` 时，先由现有规划 Agent 决定实际采用的能力，宿主冻结决定后再继续：采用 Manim 才预占资源制作额度、调用 recipe Agent 并生成资源；混选后未采用 Manim 则不启动这些资源任务。仅选 `manim` 时，主几何及其变化必须来自真实 Manim 资源，HTML/SVG 只负责辅助标记和构图。混选 `manim` 与浏览器画面能力时，仍可显式选择浏览器动作工具；若最后只采用 Manim，采用决定的 `motion` 为空，不要求额外制作浏览器装饰动作。
+
+`capability_selection` 保留用户允许的范围，`adopted_capabilities` 是规划后宿主冻结的只读决定；`creation`、`engine`、`uses_manim` 说明采用的画面方案，`motion` 是规划后仍适用的浏览器动作允许范围，并非每项都已采用。`plan_operation_id` 和 `plan_result_sha256` 关联规划结果。当 HTML/SVG 不在原画面选集且仅为 Manim 辅助承载时，`creation` 只列 `manim`，`motion` 为空；原选集显式包含 `html-svg` 且规划采用 HTML/SVG 和 Manim 时，`creation` 同时列两项，浏览器动作约束仍适用。规划尚未完成时为 `null`，旧任务可以不返回；请求方不能提交或伪造此字段。规划决定与实际样片标签分开，后者仍核对真实消费。方法只有确实需要 Manim 时才保留 producer 依赖；迁移冻结方法则沿用其确切资源依赖。已冻结的历史实验及原幂等键重放不改写为新流程。
+
+选中 Manim 可省略 `resource_authoring`；规划采用 Manim 后，服务使用默认资源参数：640×360、24 fps、起始帧 0，默认 48 帧或不足 48 帧的视频总帧数。也可以指定 `resource_authoring: {"kind":"manim","frame_count":48,"global_start_frame":0}`。在新选集包含 Manim 的请求里，它是按需候选参数，本身不触发制作；没有提供或继承 `capability_selection` 而显式提供 `resource_authoring` 时，仍表示在主动画规划前预制真实 Manim 资源。API 允许 1–60 帧，且资源必须处于视频时间线内；网页表单限定片段为 0.5–2.5 秒。非空 `creation` 不含 Manim 时，不能另带 Manim 资源；协作暂不能选择 Manim。
+
+详情中，资源状态 `awaiting_plan` 表示尚在等待规划；`not_adopted` 表示规划未采用 Manim，资源制作次数为零。两者都不能被解读为资源已完成或样片已制作。
+
+这是实验室及外部 API 的约束，正式视频制作不增加能力选项，由 Agent 根据表达目标与已发布的 WikiSkill 选择。`capability_selection` 是请求意图，不是实际使用证据，更不是视觉质量认可。
+
 ## 状态、结果与下载
 
 | 字段或状态 | 含义 |
@@ -93,6 +139,8 @@ GET 只读，不会启动制作、执行模型、续跑任务或增加轮次。�
 | `summary` / `error` | 结果说明 / 失败代码；可能为空 |
 | `best_candidate_id` | 当前选中的候选，可能为空 |
 | `candidates` | 候选列表，包括 `id`、`media_url`、`source_url`、`technical_status` |
+| `capability_selection` | 本次冻结的公开能力选择；旧自动任务可省略，不代表样片实际使用情况 |
+| `adopted_capabilities` | 规划后宿主冻结的只读采用决定，规划前为 `null`；旧任务可省略，不等于渲染或质量证据 |
 | `collaboration` | 可选，只读协作进度：`enabled`、`stage`、`components` 的 `id`/`title`/`status`、`completed`/`total`、`author_calls_used`/`author_calls_max` |
 
 `completed` 也可能是预算用完或停止进展；请结合 `stop_reason`、`summary`、`remaining_issues` 和候选结果判断。响应中的 `budget`、`usage`、`remaining` 使用服务内部的 `creator`、`review`、`render`、`seconds` 计数，形状与提交时的预算不同。
@@ -112,6 +160,41 @@ curl --fail-with-body --cookie cookies.txt \
 
 媒体为 `video/mp4`，支持单段字节 Range；源码是 `application/json` 下载。候选 ID 使用返回值，`candidate-1` 仅是占位示例。
 
+## 查看提交需求与逐轮 Agent 输入
+
+详情页的表达目标不是完整 prompt。用以下两个只读 GET 按需查看；沿用登录会话和开发者权限，无需 CSRF，不启动、续跑任务或唤醒执行器，不放进普通详情的高频轮询。两种响应均为有限 UTF-8 JSON，上限 6 MiB。
+
+```sh
+curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/prompt-inspection \
+  --output experiment-requirements.json
+```
+
+索引返回以下内容：
+
+| 字段 | 含义 |
+| --- | --- |
+| `submission` | `origin:captured_request`、`is_original:true` 表示新请求保存的原提交 JSON；历史请求为 `reconstructed_frozen_fields`、`false`，明确是按冻结字段还原。包含 `action`、`document`、`sha256`、`limitations` |
+| `effective_request` | 本次实际冻结的公开需求字段及其 `sha256`，可与原提交比较继承、默认值等处理；预算为执行计数，不能原样作为新的提交 JSON |
+| `operations` | 主委托各次规划、创作和评审的索引，含操作 ID、阶段、状态、轮次及依据、输入摘要和按需读取的 `input_url`；协作还含 `phase`、`component_id` |
+| `scope` / `limitations` | 当前范围为 `method_lab_agent_inputs`，明确未覆盖的内容，不能把索引当成全部外部调用记录 |
+
+主规划的 `round` 为 0；创作轮次按实际预占的创作顺序从 1 开始，评审按对应候选的创作操作关联。无法核实轮次时返回 `null`，不会猜测。协作仍是原有单轮合同，部件不代表多轮打磨。操作即使未执行完成，也可能已有真实预占输入；不把输入存在当成模型已调用或已执行成功。
+
+某次输入不能安全读取时，索引将该项标记为 `available:false`、`input_url:null` 并给出 `unavailable_reason`，其他可读项仍可查看；账本整体完整性异常则可能拒绝整次读取。
+
+从索引取得 `input_url` 后，使用同一会话读取。公网链接为包含 `/dev/animations` 的站点根相对地址，相对于同一站点 origin 解析；不要再次添加该前缀。也可以按以下路径请求，操作 ID 必须使用返回值并作为一个路径段进行 URL 编码：
+
+```sh
+curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/operations/operation-plan-1/input \
+  --output agent-operation-input.json
+```
+
+响应的 `input` 是该次操作真实冻结的结构化输入，`input_sha256` 是其 canonical JSON 摘要；不是下载文件排版后的字节摘要。它可能包含需求、选用方法、平台约束、观察和知识快照，服务不递归改写其中的 URL。访问其他用户、已删除委托或其他委托下的操作会被拒绝。
+
+这两个入口不提供运行凭据，也不凭当前代码猜测没有冻结证据的历史系统提示词。Manim recipe 位于独立资源账本，本轮未纳入该索引；渲染操作也不列为 Agent 输入。候选源码下载仍只是动画代码，与逐轮输入分开。网页可复制或导出对应 JSON；本节 curl 亦可直接保存。
+
 ## 继续优化、反馈和取消
 
 继续优化仍使用 **POST `/commissions`**。新建 `request_id`，设置 `base_commission_id`、`base_candidate_id`，并在 `feedback` 写明本轮改进目标；同时提供 `goal` 和新预算。例如：
@@ -130,6 +213,8 @@ curl --fail-with-body --cookie cookies.txt \
 ```
 
 省略 `base_candidate_id` 时服务选择基线委托的 `best_candidate_id`；基线必须存在且当前用户可访问。省略 `criteria` 时继承基线标准。此请求创建新委托，原委托保留。
+
+继续优化省略 `capability_selection` 时继承原能力选择；显式提交则采用本次选择，`{"creation":[],"motion":[]}` 恢复自动选择。默认技术重试只接受 `request_id`、`retry_of_commission_id`、`budget` 三项；原任务必须确认停止，目标、标准、技术、知识绑定、运行环境和完成方案均继承，不能借重试改变创作方向。首次普通渲染失败且创作已完成、尚无候选时，可显式另加 `renderer_rebind:"current-admitted"` 并设置 `max_rounds:1`，冻结当前已准入渲染环境后重新渲染相同源码；不增加创作调用，不改原作者输入、Job 或账本。此受限入口不支持协作、Manim，资产哈希与库版本必须兼容；请求重放保留最初新绑定，不跟随之后部署。输入查看中的 `renderer_rebind` 和 `render_replays` 分别提供冻结环境绑定及每次派生渲染收据，区分历史作者输入与本次渲染输入哈希。需要换方向时选择继续优化或从零重做。未知提交先找回原操作；幂等重放不提交新任务。详情中 `resource_authoring` 是只读进度，不能原样复制到请求。
 
 `reference` 可附 `{ "url": "https://example.com/reference.mp4", "start_seconds": 0, "end_seconds": 8 }`。参考 URL 和片段时间只是需求资料，提交链接不会自动读取或观看原片；需要将关键视觉特征、节奏和希望达到的效果写入 `goal` 或 `feedback`。
 

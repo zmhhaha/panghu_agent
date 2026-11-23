@@ -28,6 +28,7 @@ from agent_service.profiles.video_animation_experiment import _validate_source_o
 from . import animation_lab_capture as docker
 from .animation_creation_renderer import _plain, _read, _write
 from .animation_experiment_render import _IMAGE
+from .animation_runtime_capabilities import MAX_CANVAS_CONTEXTS
 
 
 HOST = Path(__file__).with_name('animation_method_host.mjs')
@@ -38,7 +39,7 @@ MAX_FRAMES = 1440
 MAX_MEDIA_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 192 * 1024 * 1024
 MAX_AUDIO_BYTES = 6 * 1024 * 1024
-MAX_TIMEOUT = 600
+MAX_TIMEOUT = 3600
 _OP = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}\Z')
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _TABLE = 'animation_method_render_operations'
@@ -54,6 +55,7 @@ PUBLIC_RENDER_FAILURE_CODES = frozenset({
     'animation_method_render_deadline_insufficient', 'animation_method_render_exit_invalid',
     'animation_method_render_image_changed',
     'method_absolute_seek_mismatch', 'method_reverse_seek_mismatch',
+    'method_frame_capture_timeout', 'method_scene_prepare_failed',
 })
 
 
@@ -62,12 +64,16 @@ def public_render_failure_code(value):
     return value if type(value) is str and value in PUBLIC_RENDER_FAILURE_CODES else 'animation_method_render_failed'
 
 
-def _failed_receipt_code(root, binding, outcome):
-    fallback = public_render_failure_code(outcome.get('error'))
+def _bound_failed_receipt(root, binding, outcome):
+    """Read a bounded host report only after checking its frozen identity.
+
+    Failed receipts are an additional diagnostic projection. Their bytes were
+    not included in historical stop proofs; do not rewrite those proofs.
+    """
     if outcome.get('error') != 'animation_method_render_container_failed':
-        return fallback
+        return None
     try:
-        receipt, _ = _json(root / 'work/render-receipt.json', 65536)
+        receipt, raw = _json(root / 'work/render-receipt.json', 65536)
         request = binding['request']
         if (receipt.get('status') != 'failed'
                 or receipt.get('schema') != request['schema'].replace('-request.', '-receipt.')
@@ -79,15 +85,84 @@ def _failed_receipt_code(root, binding, outcome):
                     **{key: request[key] for key in ('engine', 'engine_runtime_sha256', 'project_runtime_sha256')
                        if key in request},
                 }.items())):
-            return fallback
-        # Host errors include the literal "Error: " prefix. Do not extract a
-        # matching substring from an authored exception, stack trace or log.
-        return {
-            'Error: method_absolute_seek_mismatch': 'method_absolute_seek_mismatch',
-            'Error: method_reverse_seek_mismatch': 'method_reverse_seek_mismatch',
-        }.get(receipt.get('error'), fallback) if type(receipt.get('error')) is str else fallback
+            return None
+        return receipt, raw
     except (OSError, ServiceError, KeyError, TypeError, ValueError):
-        return fallback
+        return None
+
+
+def _failed_receipt_observation(root, binding, outcome):
+    bound = _bound_failed_receipt(root, binding, outcome)
+    if bound is None:
+        return None
+    receipt, raw = bound
+    error = receipt.get('error')
+    if type(error) is not str:
+        return None
+    exact = {'Error: method_absolute_seek_mismatch': 'method_absolute_seek_mismatch',
+             'Error: method_reverse_seek_mismatch': 'method_reverse_seek_mismatch'}
+    if error in exact:
+        return dict(code=exact[error], phase='seek_check', origin='legacy_host_report',
+                    receipt_sha256=hashlib.sha256(raw).hexdigest())
+    # Older hosts recorded only String(error). Match the complete known host
+    # shape, never a substring in an authored stack/log, and report the symptom
+    # only. A timeout does not establish hardware failure or excessive shader cost.
+    if re.fullmatch(r'TimeoutError: page\.screenshot: Timeout [1-9][0-9]{0,5}ms exceeded\.\n'
+                    r'Call log:\n(?:  - (?:taking page screenshot|waiting for fonts to load\.\.\.|fonts loaded)\n){1,6}',
+                    error):
+        return dict(code='method_frame_capture_timeout', phase='capture', origin='legacy_host_report',
+                    receipt_sha256=hashlib.sha256(raw).hexdigest())
+    if re.fullmatch(r'Error: page\.evaluate: Error: (?:hyperframes_legacy_seek_missing|method_seek_missing)\n'
+                    r'(?:    at [^\r\n]{1,250}\n?){1,8}', error):
+        return dict(code='method_scene_prepare_failed', phase='prepare', origin='legacy_host_report',
+                    receipt_sha256=hashlib.sha256(raw).hexdigest())
+    return None
+
+
+def _failed_receipt_code(root, binding, outcome):
+    observed = _failed_receipt_observation(root, binding, outcome)
+    return observed['code'] if observed else public_render_failure_code(outcome.get('error'))
+
+
+def _failure_diagnostic(root, binding, outcome, operation_id, proof):
+    """Bounded fixed guidance, never raw exception, scene text, stack or path."""
+    observed = _failed_receipt_observation(root, binding, outcome)
+    code = observed['code'] if observed else public_render_failure_code(outcome.get('error'))
+    categories = {
+        'method_frame_capture_timeout': ('frame_capture_timeout',
+            'The render host reported a timeout while capturing a frame.',
+            ['Preserve the original source and failure evidence; this timeout alone does not authorize source repair or visual simplification.',
+             'The developer can increase finite render resources or time and rerun unchanged source. The current retry does not itself increase those limits.',
+             'This report does not establish the visual result, exact frame duration or a specific hardware cause.']),
+        'method_scene_prepare_failed': ('scene_interface_unavailable',
+            'The render host could not complete scene preparation.',
+            ['Check browser initialization, script execution and the required absolute-time scene interface.',
+             'The host report does not identify the original script exception.']),
+        'method_absolute_seek_mismatch': ('non_deterministic_seek',
+            'The render host reported different pixels for equivalent absolute-time states.',
+            ['Reconstruct each frame from absolute time; preserve stable initialization and seeded randomness.']),
+        'method_reverse_seek_mismatch': ('non_deterministic_seek',
+            'The render host reported a reverse-seek frame mismatch.',
+            ['Remove accumulated animation state and reconstruct equivalent absolute-time states.']),
+    }
+    category, summary, guidance = categories.get(code, ('runtime_failure_unknown',
+        'The rendering attempt failed without a classified scene diagnostic.',
+        ['Preserve the original attempt and investigate runtime evidence before selecting a recovery action.']))
+    cleanup, identity = outcome.get('cleanup', {}), outcome.get('container_id')
+    stopped = ((identity is None and cleanup.get('status') == 'not_created'
+                and cleanup.get('container_id') is None) or
+               (type(identity) is str and _SHA.fullmatch(identity) is not None
+                and cleanup.get('container_id') == identity
+                and cleanup.get('status') in {'confirmed_absent', 'removed_and_confirmed_absent'}))
+    return dict(schema='video.animation-render-failure.v1', category=category, code=code,
+        phase=observed['phase'] if observed else 'unknown', summary=summary, guidance=guidance,
+        source_repair_recommended=bool(observed and code in categories
+            and code != 'method_frame_capture_timeout' and stopped),
+        operation_id=operation_id, source_sha256=binding['source_sha256'],
+        input_sha256=binding['input_sha256'], evidence_sha256=proof,
+        receipt_sha256=observed['receipt_sha256'] if observed else None,
+        receipt_bound=observed is not None, origin=observed['origin'] if observed else 'unknown',
+        evidence_scope='host_report_not_visual_or_root_cause_validation')
 
 
 def _require(condition, code='animation_method_render_invalid', status=409):
@@ -258,6 +333,18 @@ class MethodAnimationRenderer:
         self.authoring_library_admission_file = (_plain(authoring_library_admission_file)
             if authoring_library_admission_file is not None else None)
 
+    def _host_path(self):
+        """Release-owned host; subclasses cannot select a host from task data."""
+        return HOST
+
+    def _static_asset_checksums(self, context):
+        """Fixed assets admitted by this renderer, before generated resources."""
+        return dict(ASSET_SHA256)
+
+    def _read_static_asset(self, name):
+        _require(self.assets_dir is not None, 'animation_method_render_assets_missing', 422)
+        return _read(self.assets_dir / name, 32 * 1024 * 1024)
+
     def capabilities(self):
         assets = {}
         if self.assets_dir is not None:
@@ -268,7 +355,7 @@ class MethodAnimationRenderer:
                     _require(actual == expected, 'animation_method_render_assets_changed')
                     assets[name] = actual
         identity = dict(image_digest=self.image_digest,
-            host_sha256=hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest(),
+            host_sha256=hashlib.sha256(_read(self._host_path(), 1024 * 1024)).hexdigest(),
             engine_runtime_sha256=hashlib.sha256(_read(ENGINE_RUNTIME, 1024 * 1024)).hexdigest(),
             admission_id='method-html-svg-v1@' + self.image_digest)
         engines = ['html-svg']
@@ -402,7 +489,7 @@ class MethodAnimationRenderer:
                  set(capabilities['allowed_engines']) | set(self.candidate_engines),
                  'animation_method_render_engine_not_admitted', 422)
         payload = _validate_source_output(source, context)
-        asset_checksums = dict(ASSET_SHA256)
+        asset_checksums = self._static_asset_checksums(context)
         libraries = bounds.get('authoring_libraries')
         if libraries is not None:
             from .animejs_library import ASSETS as ANIME_ASSETS, validate_libraries, read_assets
@@ -448,7 +535,7 @@ class MethodAnimationRenderer:
             constraints={key: bounds[key] for key in ('width', 'height', 'fps', 'duration_seconds')},
             files_sha256=files, assets_sha256=context['assets'], sound_events=events,
             sound_events_sha256=digest(events),
-            host_sha256=hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest(),
+            host_sha256=hashlib.sha256(_read(self._host_path(), 1024 * 1024)).hexdigest(),
             image_digest=self.image_digest, max_frames=MAX_FRAMES,
             max_media_bytes=MAX_MEDIA_BYTES, max_evidence_bytes=MAX_EVIDENCE_BYTES)
         if engine_aware:
@@ -498,7 +585,21 @@ class MethodAnimationRenderer:
                  'animation_method_render_binding_changed')
         return dict(row), binding
 
-    def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None):
+    def scene_space_capabilities(self):
+        from .scene_space_renderer import render_capability
+        return render_capability(admitted_engines=self.capabilities()['allowed_engines'] if self.enabled else ())
+
+    def validate_scene_request(self,operation_id,source,document,*,scene_space,deadline_at=None):
+        from .scene_space_renderer import scene_renderer
+        return scene_renderer(self).validate_request(operation_id,source,document,
+            scene_space=scene_space,deadline_at=deadline_at)
+
+    def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None, scene_space=None,
+               expected_request_sha256=None):
+        if scene_space is not None:
+            from .scene_space_renderer import scene_renderer
+            return scene_renderer(self).render(operation_id,source,document,sound_events,
+                scene_space=scene_space,deadline_at=deadline_at,expected_request_sha256=expected_request_sha256)
         _require(self.enabled, 'animation_method_renderer_disabled', 503)
         binding = self._snapshot(operation_id, source, document, sound_events or [], deadline_at)
         # Existing claims are always reconciled even after their deadline. The
@@ -546,14 +647,13 @@ class MethodAnimationRenderer:
                 if name in resource_assets:
                     raw = resource_assets[name]
                 else:
-                    _require(self.assets_dir is not None, 'animation_method_render_assets_missing', 422)
-                    raw = _read(self.assets_dir / name, 32 * 1024 * 1024)
+                    raw = self._read_static_asset(name)
                 _require(hashlib.sha256(raw).hexdigest() == expected,
                          'animation_method_render_assets_changed')
                 target = root / 'input/scene/assets' / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 _write(target, raw)
-            _write(root / 'host.mjs', _read(HOST, 1024 * 1024))
+            _write(root / 'host.mjs', _read(self._host_path(), 1024 * 1024))
             if binding['request'].get('engine_runtime_sha256'):
                 _write(root / 'engine_runtime.mjs', _read(ENGINE_RUNTIME, 1024 * 1024))
             if binding['request'].get('project_runtime_sha256'):
@@ -658,7 +758,7 @@ class MethodAnimationRenderer:
             contexts = observation.get('contexts')
             _require(observation.get('engine') == request['engine']
                      and observation.get('revision') == 'animation-engine-runtime-1'
-                     and type(contexts) is list and len(contexts) <= 16,
+                     and type(contexts) is list and len(contexts) <= MAX_CANVAS_CONTEXTS,
                      'animation_method_render_engine_evidence_invalid')
             required_kind = '2d' if request['engine'] == 'canvas' else 'webgl2'
             _require((request['engine'] != 'html-svg' or not contexts)
@@ -747,6 +847,10 @@ class MethodAnimationRenderer:
 
     def stopping_proof(self, operation_id):
         """Read only the original cleanup receipt; never reconcile or clean up."""
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self).stopping_proof(operation_id)
+        if spatial is not None:
+            return spatial
         row, binding = self._row(operation_id, historical=True)
         root = self._directory(operation_id)
         outcome, outcome_raw = _json(root / 'render-outcome.json', 65536)
@@ -776,6 +880,10 @@ class MethodAnimationRenderer:
             scope='original_bound_container_cleanup_receipt_not_new_cleanup')
 
     def lookup(self, operation_id):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self).lookup(operation_id)
+        if spatial is not None:
+            return spatial
         # Reading a stopped historical attempt does not authorize execution
         # with its old pin. render() keeps _row's strict current-image default.
         row, binding = self._row(operation_id, historical=True)
@@ -875,7 +983,8 @@ class MethodAnimationRenderer:
         # Preserve the immutable historical result/proof shape in the private
         # ledger. Failure receipts only improve the returned diagnostic; they
         # never admit media, alter custody proofs or authorize another attempt.
-        public_result = (dict(result, error=_failed_receipt_code(root, binding, outcome))
+        public_result = (dict(result, error=_failed_receipt_code(root, binding, outcome),
+                             diagnostic=_failure_diagnostic(root, binding, outcome, operation_id, proof))
                          if not rendered else result)
         if row['proof_sha256'] is not None:
             _require(row['proof_sha256'] == proof, 'animation_method_render_proof_changed')
@@ -901,12 +1010,20 @@ class MethodAnimationRenderer:
         return public_result
 
     def media_path(self, operation_id):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self)
+        if spatial.lookup(operation_id) is not None:
+            return spatial.media_path(operation_id)
         result = self.lookup(operation_id)
         _require(result is not None and result['media'] is not None,
                  'animation_method_render_media_unavailable', 404)
         return self._directory(operation_id) / 'work/output.mp4'
 
     def frames(self, operation_id, max_frames=12):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self)
+        if spatial.lookup(operation_id) is not None:
+            return spatial.frames(operation_id,max_frames=max_frames)
         _require(type(max_frames) is int and 1 <= max_frames <= 24,
                  'animation_method_render_frame_budget_invalid', 422)
         result = self.lookup(operation_id)

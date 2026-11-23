@@ -83,6 +83,35 @@ test('each seek reconstructs fresh roots/instances at forward reverse random and
  await assert.rejects(f.host.renderFrame(0),/host_stopped/);
 });
 
+test('long capture keeps active modules mounted and an explicit reconstruction discards every cached realm',async()=>{
+ const f=fixture({overrides:{reuseActiveModules:true}});
+ for(let frame=0;frame<34;frame++){
+  const result=await f.host.renderFrame(frame);
+  assert.equal(result.completed_frame,frame);assert.ok(f.roots.size<=3);
+  for(const drawing of f.drawings.values())assert.equal(drawing.frame,frame);
+ }
+ assert.deepEqual(f.events.filter(e=>e[0]==='load').map(e=>e[1]),['one','two','three','bridge']);
+ const before=f.events.filter(e=>e[0]==='load').map(e=>e[2]);
+ await f.host.resetInstances();assert.equal(f.roots.size,0);
+ await f.host.renderFrame(31);
+ const fresh=f.events.filter(e=>e[0]==='load').slice(-3);
+ assert.deepEqual(fresh.map(e=>e[1]),['two','three','bridge']);
+ assert.ok(fresh.every(e=>!before.includes(e[2])));
+ assert.deepEqual([...f.drawings.values()].map(d=>d.frame),[31,31,31]);
+ await f.host.dispose();assert.equal(f.roots.size,0);
+});
+
+test('a persistent module render failure releases its already mounted realm',async()=>{
+ let mounted=0,disposed=0;
+ const f=fixture({overrides:{reuseActiveModules:true,trustedLoadModule(){return {
+  mount(){mounted++;},renderAt(context){if(context.global_frame===1)throw Error('cached_render_failed');},
+  dispose(){disposed++;}
+ };}}});
+ await f.host.renderFrame(0);await assert.rejects(f.host.renderFrame(1),/cached_render_failed/);
+ assert.equal(mounted,1);assert.equal(disposed,1);assert.equal(f.roots.size,0);
+ assert.equal(f.host.getState().status,'failed');
+});
+
 test('overlap participants share global frame with unmodified local enter/exit time',async()=>{
  const f=fixture();
  for(const [frame,phases,locals] of [[30,['active','entering','active'],[14,-2,0]],

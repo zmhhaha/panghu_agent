@@ -50,7 +50,7 @@ def recordings_and_film():
     return film, recordings
 
 
-def core(index=0, predecessor=None):
+def core(index=0, predecessor=None, *, allowed_engines=None, instruction=''):
     film, _ = recordings_and_film()
     row = film['scenes'][index]
     beats = make_beats(row['narration'])
@@ -62,7 +62,20 @@ def core(index=0, predecessor=None):
         module_id=f'module-{index}', namespace=f'scene_{index}',
         transition_target=dict(module_id='transition-0', namespace='relation_transition') if index else None,
         runtime_identity=dict(image_digest=RUNTIME['image_digest'], host_sha256='a' * 64,
-            engine_runtime_sha256=RUNTIME['engine_runtime_sha256'], admission_id='synthetic-module-fixture'))
+            engine_runtime_sha256=RUNTIME['engine_runtime_sha256'], admission_id='synthetic-module-fixture'),
+        allowed_engines=allowed_engines, instruction=instruction)
+
+
+def test_native_module_author_gets_context_budget_without_changing_the_frozen_schema():
+    task = core(allowed_engines=['canvas'], instruction='Keep the intended brush marks.')
+    text = task['scene']['instruction']
+    assert text.startswith('Keep the intended brush marks.\n\n')
+    assert 'At most 500 distinct native drawing contexts' in text
+    assert 'every detached or internal canvas buffer' in text
+    assert 'same native context does not consume another slot' in text
+    assert set(task['constraints']) == {'width', 'height', 'fps', 'duration_seconds',
+                                      'allowed_engines', 'runtime_identity'}
+    assert core(instruction='Only SVG.')['scene']['instruction'] == 'Only SVG.'
 
 
 def raw_module(document, *, transition=False, entry_x=0, exit_x=1):

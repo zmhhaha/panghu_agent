@@ -119,7 +119,7 @@ def test_preserved_successful_retry_request_replay_works_after_ancestor_deletion
     service, creator, reviewer, renderer = work
     failed = fail_run(service, start(service, title='Earlier attempt')['id'])
     body = dict(request_id=str(uuid4()), retry_of_commission_id=failed['id'],
-        goal=failed['goal'], budget=dict(max_rounds=1, max_seconds=300))
+        budget=dict(max_rounds=1, max_seconds=300))
     succeeded = finish(service, service.start('developer', body)['id'])
     remove(service, failed['id'])
     before = ledger_snapshot(service)
@@ -127,7 +127,7 @@ def test_preserved_successful_retry_request_replay_works_after_ancestor_deletion
     replay = service.start('developer', body)
     assert replay['id'] == succeeded['id'] and replay['state'] == 'completed'
     with pytest.raises(ServiceError, match='idempotency_conflict'):
-        service.start('developer', dict(body, goal='Changed replay goal'))
+        service.start('developer', dict(body, budget=dict(max_rounds=1, max_seconds=600)))
     with pytest.raises(ServiceError, match='commission_not_found'):
         service.start('developer', dict(body, request_id=str(uuid4())))
     assert ledger_snapshot(service) == before

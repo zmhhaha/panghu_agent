@@ -5,6 +5,8 @@ const CREATION_ENGINES = Object.freeze(['html-svg','canvas','three']);
 const CREATION_LABELS = Object.freeze({'html-svg':'HTML/SVG',canvas:'Canvas 2D',three:'Three.js'});
 const MOTION_TOOLS = Object.freeze(['native-js','gsap','animejs']);
 const DEPENDENCY_TOOLS = Object.freeze(['manim','gsap','animejs']);
+const CREATION_FIELDS = Object.freeze({'html-svg':'creation_html_svg',canvas:'creation_canvas',three:'creation_three',manim:'creation_manim'});
+const MOTION_FIELDS = Object.freeze({'native-js':'motion_native_js',gsap:'motion_gsap',animejs:'motion_animejs'});
 const SHA256 = /^[0-9a-f]{64}$/;
 
 export function toolLayer(id) {
@@ -115,19 +117,73 @@ export function renderCapabilityLabels(doc,value,noSample=false) {
 }
 
 export function resourceAuthoringRequest(fields,durationSeconds) {
-  if (fields.use_manim_resource !== 'on') return {};
+  const selected=name=>fields[name]==='on'||fields[name]===true;
+  const creation=Object.entries(CREATION_FIELDS).filter(([,name])=>selected(name)).map(([id])=>id);
+  const manimOnly=creation.length===1&&creation[0]==='manim';
+  const motion=manimOnly?[]:Object.entries(MOTION_FIELDS).filter(([,name])=>selected(name)).map(([id])=>id);
+  // Each checkbox has its own name, so Object.fromEntries(new FormData(form))
+  // preserves combinations without relying on repeated-key form fields.
+  const request=creation.length||motion.length?{capability_selection:{creation,motion}}:{};
+  if (!creation.includes('manim')&&fields.use_manim_resource!=='on') return request;
   const seconds=Number(fields.manim_resource_seconds),frames=seconds*24;
   if (!Number.isFinite(seconds) || seconds<.5 || seconds>2.5 || !Number.isInteger(frames)
       || !Number.isFinite(durationSeconds) || seconds>durationSeconds) {
     throw Error('Manim 片段时长需为 0.5 至 2.5 秒，且不能超过样片时长。');
   }
-  return {resource_authoring:{kind:'manim',width:640,height:360,frame_count:frames,
+  return {...request,resource_authoring:{kind:'manim',width:640,height:360,frame_count:frames,
     global_start_frame:0,seed:17}};
 }
 
 export function mountAuthoringControls(doc,onFilter) {
   const engine=doc.getElementById('gallery-engine'),form=doc.getElementById('experiment-form');
-  let select,checkbox,seconds,note;
+  const choices={creation:new Map(),motion:new Map()},selectionNotes={};
+  let select,seconds,length,note,availability=null,busy=false,collaboration=false;
+  const selectedIds=layer=>[...choices[layer]].filter(([,input])=>input.checked).map(([id])=>id);
+  const isManimOnly=()=>{
+    const creation=selectedIds('creation');
+    return creation.length===1&&creation[0]==='manim';
+  };
+  const refreshSelection=()=>{
+    const manimOnly=isManimOnly();
+    if(manimOnly)for(const input of choices.motion.values()) {
+      input.checked=false;input.disabled=true;input.title='由 Manim 自身编排动画，无需浏览器动作编排。';
+    }
+    for(const layer of ['creation','motion']) {
+      if(selectionNotes[layer])selectionNotes[layer].textContent=layer==='motion'&&manimOnly
+        ?'由 Manim 自身编排动画。'
+        :selectedIds(layer).length?'Agent 从选中能力中选择或组合使用。'
+          :'自动选择：由 Agent 根据表达目标决定。';
+    }
+    const manim=choices.creation.get('manim');
+    if(length)length.hidden=!manim?.checked;
+    if(seconds)seconds.disabled=!manim?.checked||manim.disabled;
+  };
+  const applyAvailability=()=>{
+    const enabled=availability?.enabled===true;
+    const engines=Array.isArray(availability?.allowed_engines)?availability.allowed_engines:['html-svg'];
+    const manim=availability?.resource_authoring?.manim?.enabled===true;
+    const library=id=>{
+      const entry=availability?.authoring_libraries?.[id];
+      return entry&&typeof entry==='object'&&entry.enabled!==false
+        &&typeof entry.version==='string'&&Boolean(entry.version.trim());
+    };
+    const motions=Array.isArray(availability?.motion_tools)?availability.motion_tools
+      :['native-js',...(Object.hasOwn(availability?.authoring_libraries??{},'gsap')
+        ?library('gsap')?['gsap']:[]:engines.includes('html-svg')?['gsap']:[]),
+      ...(library('animejs')?['animejs']:[])];
+    for(const [layer,entries]of Object.entries(choices))for(const [id,input]of entries) {
+      const admitted=layer==='creation'?(id==='manim'?manim:engines.includes(id)):motions.includes(id);
+      input.disabled=!enabled||busy||!admitted||(id==='manim'&&collaboration);
+      input.title=id==='manim'&&collaboration?'Manim 预制资源暂未接入协作创作。'
+        :!admitted?'该能力暂未开放生成。':'';
+    }
+    const manimInput=choices.creation.get('manim');
+    if(collaboration&&manimInput)manimInput.checked=false;
+    if(note)note.textContent=collaboration
+      ?'协作创作可使用已开放的 HTML/SVG、Canvas 2D 和 Three.js；Manim 预制资源暂未接入协作。'
+      :'勾选项限定本次可用能力；Agent 先决定实际采用或组合的能力，仅在采用 Manim 时制作资源。Manim 片段为 24 fps、0.5 至 2.5 秒。动作编排选项仅用于浏览器画面，Manim 使用自身的动画 API。';
+    refreshSelection();
+  };
   if (engine?.parentNode?.parentNode?.append) {
     const label=doc.createElement('label'); label.textContent='动作编排';
     label.htmlFor='gallery-authoring-tool'; select=doc.createElement('select'); select.id='gallery-authoring-tool';
@@ -137,40 +193,66 @@ export function mountAuthoringControls(doc,onFilter) {
     select.value='all';select.addEventListener('change',onFilter);label.append(select);engine.parentNode.parentNode.append(label);
   }
   if (form?.append) {
-    const section=doc.createElement('details');section.className='form-details';
-    const summary=doc.createElement('summary');summary.textContent='Manim 画面（可选）';
-    note=doc.createElement('p');note.className='small muted';
-    const label=doc.createElement('label');checkbox=doc.createElement('input');
-    checkbox.type='checkbox';checkbox.name='use_manim_resource';checkbox.disabled=true;
-    const caption=doc.createElement('span');caption.textContent='使用 Manim 制作数学或几何动画片段';
-    label.append(checkbox,caption);
-    const length=doc.createElement('label');length.textContent='Manim 片段时长（秒）';
-    seconds=doc.createElement('input');seconds.type='number';seconds.name='manim_resource_seconds';
-    seconds.min='.5';seconds.max='2.5';seconds.step='.25';seconds.value='2';seconds.disabled=true;
-    length.append(seconds);checkbox.addEventListener('change',()=>{seconds.disabled=checkbox.disabled||!checkbox.checked;});
+    const section=doc.createElement('section');section.className='authoring-capabilities';
     const help=doc.createElement('p');help.className='small muted';
-    help.textContent='画面创作可组合 HTML/SVG、Canvas、Three.js 和 Manim；GSAP、Anime.js 属于动作编排。Manim 片段由 Agent 创作后加入完整样片。';
-    section.append(summary,note,label,length,help);
+    help.textContent='两组默认自动选择。可分别勾选一项或多项，让 Agent 从选中的能力中选择或组合；画面创作与动作编排可搭配使用。';
+    const groups=doc.createElement('div');groups.className='form-row authoring-capability-groups';
+    for(const [layer,title,fields]of [['creation','画面创作',CREATION_FIELDS],['motion','动作编排',MOTION_FIELDS]]) {
+      const group=doc.createElement('fieldset');group.className='form-details authoring-capability-group';
+      group.dataset.capabilityLayer=layer;
+      const legend=doc.createElement('legend');legend.textContent=title;group.append(legend);
+      const automatic=doc.createElement('p');automatic.className='small muted';
+      selectionNotes[layer]=automatic;group.append(automatic);
+      for(const [id,name]of Object.entries(fields)) {
+        const label=doc.createElement('label');label.className='checkbox-label';
+        const input=doc.createElement('input');input.type='checkbox';input.name=name;
+        input.id='experiment-'+name.replaceAll('_','-');input.disabled=true;
+        const caption=doc.createElement('span');caption.textContent=layer==='creation'?(CREATION_LABELS[id]??LABELS[id]):LABELS[id];
+        label.htmlFor=input.id;label.append(input,caption);group.append(label);
+        choices[layer].set(id,input);input.addEventListener('change',applyAvailability);
+      }
+      if(layer==='creation') {
+        length=doc.createElement('label');length.textContent='Manim 片段时长（秒）';length.hidden=true;
+        seconds=doc.createElement('input');seconds.type='number';seconds.name='manim_resource_seconds';
+        seconds.min='.5';seconds.max='2.5';seconds.step='.25';seconds.value='2';seconds.disabled=true;
+        length.append(seconds);group.append(length);
+      }
+      groups.append(group);
+    }
+    note=doc.createElement('p');note.className='small muted';
+    section.append(help,groups,note);
     const footer=form.querySelector?.('.form-footer');
     if (footer?.before) footer.before(section);else form.append(section);
+    applyAvailability();
   }
   return {
     get selected(){return select?.value??'all';},
-    resetFilter(){if(select)select.value='all';},
-    resetExperiment(resource){
-      if(!checkbox)return;
-      checkbox.checked=resource?.kind==='manim'&&Number.isInteger(resource.frame_count);
-      if(checkbox.checked)seconds.value=String(resource.frame_count/24);
-      seconds.disabled=checkbox.disabled||!checkbox.checked;
+    get requestFields(){
+      // FormData omits disabled controls. Preserve a requested capability that
+      // lost admission so the server rejects it rather than silently choosing.
+      const fields={};
+      for(const [layer,entries]of Object.entries(choices))for(const [id,input]of entries) {
+        if(layer==='motion'&&isManimOnly())continue;
+        if(input.checked)fields[(layer==='creation'?CREATION_FIELDS:MOTION_FIELDS)[id]]='on';
+      }
+      if(choices.creation.get('manim')?.checked)fields.manim_resource_seconds=seconds.value;
+      return fields;
     },
-    update(availability,busy){
-      if(!checkbox)return;
-      const manim=availability?.resource_authoring?.manim?.enabled===true;
-      checkbox.disabled=!manim||availability?.enabled!==true||busy;
-      seconds.disabled=checkbox.disabled||!checkbox.checked;
-      const anime=Boolean(availability?.authoring_libraries?.animejs);
-      note.textContent=(manim?'Manim 画面已开放。':'Manim 画面暂未开放生成。')
-        +(anime?'Anime.js 动作编排已开放，Agent 可按目标选用。':'Anime.js 动作编排暂未开放生成。');
+    resetFilter(){if(select)select.value='all';},
+    resetExperiment(resource,selection,context){
+      if(!seconds)return;
+      if(context&&Object.hasOwn(context,'collaboration'))collaboration=context.collaboration===true;
+      for(const [layer,entries]of Object.entries(choices))for(const [id,input]of entries) {
+        input.checked=Array.isArray(selection?.[layer])&&selection[layer].includes(id);
+      }
+      if(resource?.kind==='manim'&&Number.isInteger(resource.frame_count))choices.creation.get('manim').checked=true;
+      seconds.value=resource?.kind==='manim'&&Number.isInteger(resource.frame_count)?String(resource.frame_count/24):'2';
+      applyAvailability();
+    },
+    update(nextAvailability,nextBusy,context){
+      availability=nextAvailability;busy=Boolean(nextBusy);
+      if(context&&Object.hasOwn(context,'collaboration'))collaboration=context.collaboration===true;
+      applyAvailability();
     }
   };
 }

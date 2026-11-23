@@ -1,0 +1,675 @@
+import {PICTURE_API, MAX_REFERENCE_BYTES, buildPictureProject, buildPictureExperiment, buildPictureAnimation, validateReferenceFile,
+  pictureAssetUrl, pictureCandidates, latestPictureExperiment, pictureProjectState, pictureState,
+  pictureIsActive, pictureDefaultCandidate, pictureCandidateRole, pictureProjectMatches,
+  pictureStopReason, pictureRequestPath, pictureArtifactPath, pictureId, rows, text} from './picture-model.mjs';
+import {readLearningControls, restoreLearningControls, updateLearningControls, renderLearningProgress, renderInternalAttempts} from './learning-controls.mjs';
+import {REMOTE_VIDEO_SOURCE, remoteReferenceBody, validRemoteReferenceBody, isRemoteReference,
+  renderRemoteReference, remoteReferenceErrorMessage} from './remote-reference.mjs';
+
+const PENDING_KEY = 'video.picture-learning.pending.v1';
+const ownerKey = value => typeof value === 'string' && value.length > 0 && value.length <= 300;
+const pendingKey = owner => PENDING_KEY + ':' + encodeURIComponent(owner);
+export function picturePendingStorage(indexedDB = globalThis.indexedDB) {
+  let opened;
+  const database = () => opened ??= new Promise((resolve, reject) => {
+    if (!indexedDB?.open) { reject(Error('浏览器不支持保存原请求，请启用网站存储后再提交')); return; }
+    let request;
+    try { request = indexedDB.open('video.picture-learning', 1); }
+    catch { reject(Error('无法打开本地请求存储，请启用网站存储后再提交')); return; }
+    request.onupgradeneeded = () => { if (!request.result.objectStoreNames.contains('pending')) request.result.createObjectStore('pending'); };
+    request.onsuccess = () => {
+      request.result.onversionchange = () => request.result.close(); resolve(request.result);
+    };
+    request.onerror = () => reject(Error('无法打开本地请求存储，请启用网站存储后再提交'));
+    request.onblocked = () => reject(Error('本地请求存储正在更新，请关闭其他图片学习页面后重试'));
+  });
+  const transaction = async (mode, operation) => {
+    const db = await database();
+    return new Promise((resolve, reject) => {
+      let tx, result;
+      try {
+        tx = db.transaction('pending', mode);
+        const request = operation(tx.objectStore('pending'));
+        request.onsuccess = () => { result = request.result; };
+        tx.oncomplete = () => resolve(result);
+        tx.onabort = tx.onerror = () => reject(Error('无法保存或读取原请求，请检查网站存储空间后重试'));
+      } catch { reject(Error('无法使用本地请求存储，请刷新后重试')); }
+    });
+  };
+  const compareAndSetItem = async (key, previous, value) => {
+    const db = await database();
+    return new Promise((resolve, reject) => {
+      let conflict = false;
+      const tx = db.transaction('pending', 'readwrite'), store = tx.objectStore('pending'), request = store.get(key);
+      request.onsuccess = () => {
+        if ((request.result ?? null) !== previous) { conflict = true; tx.abort(); return; }
+        if (value === null) store.delete(key); else store.put(value, key);
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => {
+        const error = Error(conflict ? '另一个页面保存了待核对请求，请刷新核对后再提交' : '无法保存原请求，请检查网站存储空间后重试');
+        if (conflict) error.code = 'pending_conflict'; reject(error);
+      };
+    });
+  };
+  return {getItem: key => transaction('readonly', store => store.get(key)), compareAndSetItem,
+    setItem: (key, value) => transaction('readwrite', store => store.put(value, key)),
+    removeItem: key => transaction('readwrite', store => store.delete(key))};
+}
+const browserStorage = () => picturePendingStorage();
+const ERROR_MESSAGES = {
+  picture_learning_unavailable: '图片学习执行器尚未配置。', picture_reference_invalid: '参考图片无法读取，请选择有效的 PNG 或 JPEG。',
+  picture_project_active: '项目仍在运行，请先停止或等待本次实验结束。', picture_budget_exhausted: '本次实验预算已用完。',
+  picture_reference_too_large: '参考图片超过大小上限，请缩小后再上传。', picture_request_conflict: '同一请求编号的内容不一致，请核对原请求。',
+  picture_learning_baseline_not_rendered: '这份作品尚未生成图片，请技术重试或从零重做。',
+  picture_learning_candidate_not_rendered: '这份作品尚未生成图片，暂时不能采用为默认作品。',
+  picture_learning_retry_input_frozen: '技术重试沿用原始需求和预算；需要更改时，请继续优化或从零重做。',
+};
+const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验'};
+function errorMessage(error) {
+  return remoteReferenceErrorMessage(error) ?? ERROR_MESSAGES[error?.code] ?? (error?.status === 403 ? '登录或页面授权已失效，请重新登录后刷新。'
+    : error?.status === 413 ? '提交内容过大，请缩小参考图片后重试。' : text(error?.message) || '请求未完成，请刷新核对。');
+}
+function pendingOperation(value) {
+  const valid = value && value.schema === 'video.picture-learning-pending.v1'
+    && ownerKey(value.owner_key)
+    && typeof value.path === 'string' && /^api\/picture-lab\/(?:references|projects(?:\/[A-Za-z0-9_.:%-]+\/(?:experiments|adopt|stop|animations))?)$/.test(value.path)
+    && typeof value.body === 'object' && value.body !== null && !Array.isArray(value.body);
+  if (!valid) return null;
+  if (value.path === PICTURE_API + 'references') {
+    if (value.continuation?.path !== PICTURE_API + 'projects' || !value.continuation?.body?.request_id
+      || !(value.body.source_type === REMOTE_VIDEO_SOURCE ? validRemoteReferenceBody(value.body, {picture: true})
+        : typeof value.body.content_base64 === 'string' && value.body.content_base64.length <= Math.ceil(MAX_REFERENCE_BYTES / 3) * 4)) return null;
+  } else if (value.continuation !== undefined) return null;
+  return value;
+}
+export async function referenceBody(file, requestId) {
+  const description = validateReferenceFile(file), bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.byteLength !== file.size || bytes.byteLength > MAX_REFERENCE_BYTES) throw Error('参考文件在读取时发生变化，请重新选择');
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+  return {request_id: requestId, ...description, content_base64: btoa(binary)};
+}
+export class PictureLibraryController {
+  constructor({request, root, storage = null, uuid = () => globalThis.crypto.randomUUID(),
+    schedule = (fn, ms) => setTimeout(fn, ms), unschedule = id => clearTimeout(id), onChange = () => {}}) {
+    this.request = request; this.root = root; this.storage = storage; this.uuid = uuid;
+    this.schedule = schedule; this.unschedule = unschedule; this.onChange = onChange; this.timer = null; this.closed = false;
+    this.readEpoch = 0; this.detailEpoch = 0; this.ownerEpoch = 0; this.ownerLoad = null; this.writeReady = false;
+    this.state = {catalog: null, detail: null, busy: false, message: '', pending: null, pendingInvalid: false, pendingLoading: false, owner_key: null, lastRead: null};
+  }
+  changed() { this.onChange(this.state); }
+  enabled() { return this.writeReady && this.state.catalog?.availability?.enabled === true; }
+  locked() { return this.state.busy || Boolean(this.state.pending) || this.state.pendingInvalid || this.state.pendingLoading; }
+  setMessage(value) { this.state.message = value; this.changed(); }
+  async useOwner(owner) {
+    if (this.state.owner_key === owner && !this.state.pendingInvalid) return this.ownerLoad;
+    const epoch = ++this.ownerEpoch;
+    this.writeReady = false;
+    this.state.owner_key = owner; this.state.detail = null; this.detailEpoch++;
+    this.state.animationLink = null;
+    this.state.pending = null; this.state.pendingInvalid = false; this.state.pendingLoading = true;
+    this.ownerLoad = (async () => {
+      try {
+        const raw = await this.storage?.getItem(pendingKey(owner));
+        if (epoch !== this.ownerEpoch || this.closed) return;
+        if (raw !== null && raw !== undefined) {
+          const saved = pendingOperation(JSON.parse(raw));
+          if (!saved || saved.owner_key !== owner) throw Error('invalid');
+          this.state.pending = saved;
+        }
+      } catch {
+        if (epoch === this.ownerEpoch && !this.closed) {
+          this.state.pendingInvalid = true;
+          this.state.message = '本浏览器保存的原请求无法读取。请先核对原实验并检查网站存储，当前不会创建新任务。';
+        }
+      } finally { if (epoch === this.ownerEpoch) this.state.pendingLoading = false; }
+    })();
+    return this.ownerLoad;
+  }
+  async setPending(operation, owner = this.state.owner_key) {
+    if (!ownerKey(owner)) throw Error('请先刷新，取得当前账号的授权与身份');
+    const epoch = this.ownerEpoch;
+    const previous = this.state.pending?.owner_key === owner ? JSON.stringify(this.state.pending) : null;
+    const save = async value => {
+      try {
+        if (this.storage?.compareAndSetItem) await this.storage.compareAndSetItem(pendingKey(owner), previous, value);
+        else if (value === null) await this.storage?.removeItem(pendingKey(owner));
+        else await this.storage?.setItem(pendingKey(owner), value);
+      } catch (error) {
+        if (error?.code === 'pending_conflict') {
+          if (owner === this.state.owner_key && epoch === this.ownerEpoch) this.state.pendingInvalid = true;
+          throw error;
+        }
+        throw Error('无法保存本次请求，请释放浏览器存储空间后再提交');
+      }
+    };
+    if (operation) {
+      const value = {schema: 'video.picture-learning-pending.v1', owner_key: owner, ...structuredClone(operation)};
+      await save(JSON.stringify(value));
+      if (owner === this.state.owner_key && epoch === this.ownerEpoch && !this.closed) this.state.pending = value;
+    } else {
+      await save(null);
+      if (owner === this.state.owner_key && epoch === this.ownerEpoch && !this.closed) this.state.pending = null;
+    }
+    return owner === this.state.owner_key && epoch === this.ownerEpoch && !this.closed;
+  }
+  poll() {
+    if (this.timer !== null) this.unschedule(this.timer);
+    this.timer = null;
+    if (!this.closed && (pictureIsActive(this.state.detail) || rows(this.state.catalog?.projects).some(pictureIsActive) || this.state.pending)) {
+      this.timer = this.schedule(() => { this.timer = null; return this.refresh(); }, 5000);
+    }
+  }
+  async refresh() {
+    const epoch = ++this.readEpoch;
+    try {
+      const catalog = await this.request(PICTURE_API + 'catalog');
+      if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
+      if (!ownerKey(catalog?.owner_key) || !text(catalog?.csrf_token)) throw Error('目录缺少当前账号的授权信息，请刷新核对');
+      await this.useOwner(catalog.owner_key);
+      if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
+      this.state.catalog = catalog; this.writeReady = !this.state.pendingInvalid;
+      const detailId = this.state.detail?.id, detailEpoch = this.detailEpoch;
+      if (detailId) {
+        const detail = await this.request(pictureRequestPath(detailId));
+        if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
+        if (detailEpoch === this.detailEpoch && this.state.detail?.id === detailId) this.state.detail = detail;
+      }
+      const recovered = await this.reconcilePending();
+      if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
+      if (recovered && !Array.isArray(recovered.experiments)) {
+        const detailEpoch = this.detailEpoch, owner = this.state.owner_key;
+        const detail = await this.request(pictureRequestPath(recovered.id));
+        if (epoch === this.readEpoch && detailEpoch === this.detailEpoch && owner === this.state.owner_key) this.state.detail = detail;
+      }
+      this.state.lastRead = new Date();
+      if (!this.state.pending && !this.state.pendingInvalid) this.state.message = '';
+    } catch (error) {
+      if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
+      this.writeReady = false; if (this.state.catalog) this.state.catalog = {...this.state.catalog, csrf_token: ''};
+      this.state.message = errorMessage(error);
+    }
+    this.changed(); this.poll(); return this.state.catalog;
+  }
+  async reconcilePending() {
+    const pending = this.state.pending, requestId = pending?.body?.request_id;
+    if (pending?.path === PICTURE_API + 'references') return;
+    const projects = [...rows(this.state.catalog?.projects), ...(this.state.detail ? [this.state.detail] : [])];
+    if (pending && !requestId) {
+      const match = /^api\/picture-lab\/projects\/([^/]+)\/(stop|adopt)$/.exec(pending.path);
+      const project = match && projects.find(row => row.id === decodeURIComponent(match[1]));
+      if (project && (match[2] === 'stop' && !pictureIsActive(project)
+        || match[2] === 'adopt' && project.adopted_candidate_id === pending.body.candidate_id)) await this.setPending(null);
+      return;
+    }
+    if (!requestId) return;
+    if (pending.path.endsWith('/animations')) {
+      const linked = rows(this.state.detail?.animation_links).find(row => row.request_id === requestId);
+      if (linked) { await this.setPending(null); this.state.animationLink = linked; }
+      return;
+    }
+    const found = projects.find(project => project.request_id === requestId || project.latest_experiment_request_id === requestId
+      || rows(project.experiments).some(experiment => experiment.request_id === requestId));
+    if (found) {
+      const owner = this.state.owner_key, epoch = this.ownerEpoch;
+      await this.setPending(null);
+      if (owner !== this.state.owner_key || epoch !== this.ownerEpoch || this.closed) return;
+      if (!this.state.detail) this.state.detail = found; return found;
+    }
+  }
+  async open(projectId) {
+    const epoch = ++this.detailEpoch, owner = this.state.owner_key;
+    try {
+      const detail = await this.request(pictureRequestPath(projectId));
+      if (epoch !== this.detailEpoch || owner !== this.state.owner_key || this.closed) return null;
+      this.state.detail = detail; this.state.message = '';
+    } catch (error) { if (epoch === this.detailEpoch) this.state.message = errorMessage(error); }
+    this.changed(); this.poll(); return this.state.detail;
+  }
+  async send(path, body, continuation) {
+    if (!this.writeReady || this.locked()) return false;
+    this.state.busy = true; this.changed();
+    let saved;
+    try { saved = await this.setPending({path, body, ...(continuation ? {continuation} : {})}); }
+    finally { this.state.busy = false; this.changed(); }
+    return saved && this.writeReady ? this.replayPending() : false;
+  }
+  async replayPending() {
+    if (!this.writeReady || this.state.busy || !this.state.pending || this.state.pending.owner_key !== this.state.owner_key) return false;
+    let operation = structuredClone(this.state.pending);
+    const epoch = this.ownerEpoch, current = () => epoch === this.ownerEpoch && operation.owner_key === this.state.owner_key && !this.closed;
+    this.state.busy = true; this.state.message = ''; this.changed();
+    try {
+      let result = await this.request(operation.path, {method: 'POST', body: JSON.stringify(operation.body)});
+      if (!current()) return false;
+      if (operation.path === PICTURE_API + 'references') {
+        const referenceId = result?.reference?.id ?? result?.reference_id ?? result?.id;
+        pictureId(referenceId);
+        const next = structuredClone(operation.continuation);
+        next.body.reference_ids = [referenceId];
+        if (!await this.setPending(next, operation.owner_key) || !current() || !this.writeReady) return false;
+        operation = structuredClone(this.state.pending);
+        this.changed();
+        result = await this.request(operation.path, {method: 'POST', body: JSON.stringify(operation.body)});
+        if (!current()) return false;
+      }
+      if (result?.schema === 'video.picture-animation-link.v1') {
+        pictureId(result.commission_id);
+        await this.setPending(null, operation.owner_key);
+        if (!current()) return false;
+        this.state.message = '已建立关联动画项目，原图片与绘制源码版本保持。';
+        this.state.animationLink = result;
+        return true;
+      }
+      const projectId = result?.project?.id ?? result?.project_id ?? result?.id;
+      pictureId(projectId);
+      await this.setPending(null, operation.owner_key);
+      if (!current()) return false;
+      const detailEpoch = ++this.detailEpoch;
+      const detail = result?.project ?? (Array.isArray(result?.experiments) ? result : await this.request(pictureRequestPath(projectId)));
+      if (!current() || detailEpoch !== this.detailEpoch) return false;
+      this.state.detail = detail;
+      return true;
+    } catch (error) {
+      if (!current()) return false;
+      // Only definitive client rejection clears the immutable paid-operation key.
+      if (Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && error.status !== 408) await this.setPending(null, operation.owner_key);
+      if (!current()) return false;
+      this.state.message = errorMessage(error) + (this.state.pending ? ' 原请求已保留，请核对或重送，勿重新提交。' : '');
+      return false;
+    } finally {
+      this.state.busy = false; this.changed(); this.poll();
+    }
+  }
+  async start(fields, file) {
+    if (!this.enabled() || this.locked()) return false;
+    // Validate the inexpensive form before uploading any pixels.
+    const project = buildPictureProject(fields, ['reference-validation'], this.uuid());
+    if (fields.reference_id) {
+      project.reference_ids = [pictureId(fields.reference_id)];
+      return this.send(PICTURE_API + 'projects', project);
+    }
+    if ((fields.reference_source ?? fields.source_type) === REMOTE_VIDEO_SOURCE || !fields.reference_source && fields.source_url) {
+      const body = remoteReferenceBody(fields, this.uuid(), {picture: true});
+      project.reference_ids = [];
+      return this.send(PICTURE_API + 'references', body, {path: PICTURE_API + 'projects', body: project});
+    }
+    const owner = this.state.owner_key, epoch = this.ownerEpoch;
+    this.state.busy = true; this.state.message = '正在保存参考图片…'; this.changed();
+    let body;
+    try { body = await referenceBody(file, this.uuid()); }
+    catch (error) { this.state.message = errorMessage(error); return false; }
+    finally { this.state.busy = false; this.changed(); }
+    if (owner !== this.state.owner_key || epoch !== this.ownerEpoch || !this.enabled()) { this.setMessage('当前登录身份或授权已变化，请刷新后重新提交'); return false; }
+    project.reference_ids = [];
+    return this.send(PICTURE_API + 'references', body, {path: PICTURE_API + 'projects', body: project});
+  }
+  async experiment(fields) {
+    const detail = this.state.detail;
+    if (!detail?.id || !this.enabled() || this.locked() || pictureIsActive(detail)) return false;
+    const base = pictureDefaultCandidate(detail, fields.base_candidate_id);
+    if ((fields.mode ?? 'continue') === 'continue'
+      && (!pictureImageUrl(base, detail, this.root) || (base?.role ?? base?.work_kind) === 'transfer')) {
+      this.setMessage('请先选择一份已实际生成图片的复现作品。只有源码时，可以技术重试或从零重做。'); return false;
+    }
+    return this.send(pictureRequestPath(detail.id, 'experiments'), buildPictureExperiment(fields, this.uuid()));
+  }
+  async stop() {
+    if (!this.state.detail?.id || this.locked() || !pictureIsActive(this.state.detail)) return false;
+    return this.send(pictureRequestPath(this.state.detail.id, 'stop'), {});
+  }
+  async adopt(candidateId) {
+    if (!this.state.detail?.id || this.locked() || pictureIsActive(this.state.detail)) return false;
+    pictureId(candidateId);
+    const candidate = pictureCandidates(this.state.detail).find(row => row.id === candidateId);
+    if (!candidate || !pictureImageUrl(candidate, this.state.detail, this.root)
+      || (candidate.role ?? candidate.work_kind) === 'transfer') return false;
+    return this.send(pictureRequestPath(this.state.detail.id, 'adopt'), {candidate_id: candidateId});
+  }
+  async animate(fields, candidateId) {
+    const detail = this.state.detail;
+    if (!detail?.id || !this.enabled() || this.locked() || pictureIsActive(detail)) return false;
+    const candidate = pictureCandidates(detail).find(row => row.id === candidateId);
+    if (!pictureImageUrl(candidate, detail, this.root)) return false;
+    return this.send(pictureRequestPath(detail.id, 'animations'), buildPictureAnimation(fields, candidateId, this.uuid()));
+  }
+  destroy() { this.closed = true; if (this.timer !== null) this.unschedule(this.timer); this.timer = null; }
+}
+
+function el(doc, tag, className = '', content = null) {
+  const result = doc.createElement(tag); if (className) result.className = className;
+  if (content !== null) result.textContent = String(content); return result;
+}
+function button(doc, label, handler, {className = 'button secondary', disabled = false} = {}) {
+  const result = el(doc, 'button', className, label); result.type = 'button'; result.disabled = disabled;
+  result.addEventListener('click', handler); return result;
+}
+function externalArtifactLink(doc, label, value, root, download = false) {
+  const url = pictureAssetUrl(value, root); if (!url) return null;
+  const link = el(doc, 'a', 'button secondary', label); link.href = url;
+  if (download) link.download = ''; else { link.target = '_blank'; link.rel = 'noopener'; }
+  return link;
+}
+function candidateArtifact(candidate, kind, projectId) {
+  const direct = candidate?.[kind + '_url'];
+  if (direct) return direct;
+  const row = candidate?.artifacts?.[kind];
+  if (typeof row === 'string') return pictureArtifactPath(projectId, row);
+  if (row?.url) return row.url;
+  if (row?.id) return pictureArtifactPath(projectId, row.id);
+  const id = candidate?.[kind + '_artifact_id'];
+  return id ? pictureArtifactPath(projectId, id) : null;
+}
+export function pictureImageUrl(candidate, project, root) {
+  return pictureAssetUrl(candidateArtifact(candidate, 'picture', project?.id) ?? candidateArtifact(candidate, 'image', project?.id)
+    ?? candidate?.media_url, root);
+}
+function referenceUrl(reference, root) {
+  if (isRemoteReference(reference)) return pictureAssetUrl(reference.frame_url, root);
+  return pictureAssetUrl(reference?.media_url ?? reference?.image_url ?? reference?.url
+    ?? (reference?.id ? PICTURE_API + 'references/' + encodeURIComponent(pictureId(reference.id)) + '/media' : null), root);
+}
+function pictureFigure(doc, title, url, note, root) {
+  const figure = el(doc, 'figure', 'picture-figure'), caption = el(doc, 'figcaption', '', title), well = el(doc, 'div', 'picture-image-well');
+  if (url) {
+    const image = el(doc, 'img'); image.src = url; image.alt = title; image.decoding = 'async'; well.append(image);
+    const open = externalArtifactLink(doc, '查看原图', url, root); if (open) caption.append(open);
+  } else well.append(el(doc, 'p', '', '图片尚未生成。完成后会在这里展示实际渲染结果。'));
+  figure.append(caption, well); if (note) figure.append(el(doc, 'footer', '', note)); return figure;
+}
+function jsonSection(doc, title, value, open = false) {
+  const section = el(doc, 'details', 'technical-details'); section.open = open;
+  section.append(el(doc, 'summary', '', title), el(doc, 'pre', 'picture-json', JSON.stringify(value, null, 2))); return section;
+}
+function reviewPanel(doc, review) {
+  const panel = el(doc, 'section', 'panel'); panel.append(el(doc, 'h3', '', '独立比较与剩余问题'));
+  if (!review) { panel.append(el(doc, 'p', 'muted', '尚无评审结果。图片存在不代表效果已达标。')); return panel; }
+  const summary = text(review.summary) || text(review.verdict) || text(review.conclusion);
+  if (summary) panel.append(el(doc, 'p', '', summary));
+  if (Number.isFinite(review.score)) panel.append(el(doc, 'p', 'small muted', '模型对照评分：' + review.score + ' / 100；不代替开发者验收。'));
+  for (const [key, label] of [['strengths', '实际观察到的进展'], ['issues', '仍需改善'], ['limitations', '尚未验证']]) {
+    const items = rows(review[key]); if (!items.length) continue;
+    panel.append(el(doc, 'h4', '', label)); const list = el(doc, 'ul');
+    for (const item of items) list.append(el(doc, 'li', '', typeof item === 'string' ? item : text(item.description) || text(item.issue) || JSON.stringify(item)));
+    panel.append(list);
+  }
+  panel.append(jsonSection(doc, '查看完整评审记录', review)); return panel;
+}
+export function renderPictureCard(doc, project, {root, onOpen}) {
+  const article = el(doc, 'article', 'effect-card picture-card'), candidate = pictureDefaultCandidate(project), url = pictureImageUrl(candidate, project, root) ?? pictureAssetUrl(project.preview_url, root);
+  if (url) { const image = el(doc, 'img', 'picture-card-image'); image.src = url; image.alt = text(project.title); image.loading = 'lazy'; article.append(image); }
+  else article.append(el(doc, 'div', 'picture-card-placeholder', '▧'));
+  const body = el(doc, 'div', 'card-body'); body.append(button(doc, project.title || '未命名学习项目', () => onOpen(project.id), {className: 'effect-title'}));
+  body.append(el(doc, 'p', 'card-goal', project.goal), el(doc, 'span', 'badge', pictureState(pictureProjectState(project))));
+  if (project.adopted_candidate_id) body.append(el(doc, 'span', 'badge', '已选默认作品'));
+  body.append(el(doc, 'div', 'card-meta', (project.experiments_count ?? rows(project.experiments).length) + ' 次实验'
+    + (pictureCandidates(project).length ? ' · ' + pictureCandidates(project).length + ' 份作品' : ''))); article.append(body); return article;
+}
+export function renderPictureDetail(doc, project, {root, selection = null, onSelect = () => {}, onBack = () => {}, onStop = () => {}, onExperiment = () => {}, onAdopt = () => {}, onAnimate = null, onInspect = null, locked = false}) {
+  const fragment = doc.createDocumentFragment(), header = el(doc, 'div', 'detail-heading');
+  const intro = el(doc, 'div'); intro.append(el(doc, 'p', 'eyebrow', '图片学习项目'), el(doc, 'h1', '', project.title), el(doc, 'p', 'muted', project.goal));
+  header.append(intro); fragment.append(button(doc, '返回图片学习库', onBack), header);
+  const current = latestPictureExperiment(project), active = pictureIsActive(project), candidate = pictureDefaultCandidate(project, selection);
+  const selectedPictureUrl = pictureImageUrl(candidate, project, root);
+  const toolbar = el(doc, 'div', 'picture-details-toolbar');
+  if (active) toolbar.append(button(doc, ['stopping', 'cancelling'].includes(pictureProjectState(project)) ? '正在核实停止' : '停止本次实验', onStop,
+    {className: 'button danger', disabled: locked || ['stopping', 'cancelling'].includes(pictureProjectState(project))}));
+  else {
+    if (candidate && selectedPictureUrl && (candidate.role ?? candidate.work_kind) !== 'transfer') toolbar.append(button(doc, '继续优化', () => onExperiment('continue'), {className: 'button primary', disabled: locked}));
+    toolbar.append(button(doc, '从零重做', () => onExperiment('fresh'), {disabled: locked}));
+    if (pictureProjectState(project) === 'failed') toolbar.append(button(doc, '技术重试', () => onExperiment('retry'), {disabled: locked}));
+    if (candidate && selectedPictureUrl && onAnimate) toolbar.append(button(doc, '用此版本创作动画', () => onAnimate(candidate.id), {disabled: locked}));
+  }
+  const status = el(doc, 'div', 'picture-status'); status.append(el(doc, 'strong', '', pictureState(pictureProjectState(project))));
+  const reason = pictureStopReason(current?.stop_reason ?? project.stop_reason); if (reason) status.append(el(doc, 'p', 'small muted', reason));
+  status.append(el(doc, 'p', 'small muted', active ? '本次需求、参考和知识版本已经冻结。运行中只查看或停止，新的意见用于下一次实验。'
+    : '内部最佳与默认作品分别保存。采用一幅图片不会发布知识，也不代表运动已经验证。'));
+  if (typeof current?.frozen?.use_wikiskill === 'boolean') status.append(el(doc, 'p', 'small muted',
+    current.frozen.use_wikiskill === false ? '本次未加载已发布 WikiSkill。'
+      : current.frozen.library_binding?.release_id ? '本次固定 WikiSkill 版本：' + current.frozen.library_binding.release_id
+        : '本次选择加载 WikiSkill，但尚无可用发布版，未注入技法正文。'));
+  const failure = text(current?.error_code) || text(current?.error?.code) || text(current?.error);
+  if (failure) status.append(el(doc, 'p', 'small muted', '执行信息：' + failure));
+  fragment.append(toolbar, status);
+  const progress = renderLearningProgress(doc, current); if (progress) fragment.append(progress);
+  const candidates = pictureCandidates(project), versions = el(doc, 'div', 'picture-versions');
+  for (let i = 0; i < candidates.length; i++) {
+    const row = candidates[i], labels = [pictureCandidateRole(row) + ' ' + (i + 1)];
+    if (!pictureImageUrl(row, project, root)) labels.push('图片未完成');
+    if (row.id === project.best_candidate_id) labels.push('内部最佳');
+    if (row.id === project.adopted_candidate_id) labels.push('默认作品');
+    const choice = button(doc, labels.join(' · '), () => onSelect(row.id)); choice.setAttribute('aria-pressed', String(candidate?.id === row.id)); versions.append(choice);
+  }
+  if (candidates.length) fragment.append(versions);
+  const references = rows(project.references), reference = references[0] ?? (rows(project.reference_ids)[0] ? {id: project.reference_ids[0]} : null);
+  const work = el(doc, 'div', 'picture-workspace');
+  work.append(isRemoteReference(reference) ? renderRemoteReference(doc, reference,
+    {frameUrl: referenceUrl(reference, root), title: '从源视频读取的参考帧'})
+    : pictureFigure(doc, '参考图片', referenceUrl(reference, root), reference?.file_name ?? '', root));
+  const pictureUrl = selectedPictureUrl;
+  work.append(pictureFigure(doc, candidate ? pictureCandidateRole(candidate) : '实际绘制结果', pictureUrl,
+    pictureUrl ? candidate?.picture_sha256 || candidate?.sha256 ? '图片 SHA-256：' + (candidate.picture_sha256 ?? candidate.sha256) : '由源码真实渲染；不使用参考截图充当成品。'
+      : candidate ? '绘制源码已保存；图片尚未完成，不能据此判断画面效果。' : '完成后展示由绘制源码实际渲染的图片。', root)); fragment.append(work);
+  if (candidate) {
+    const actions = el(doc, 'div', 'picture-result-links');
+    if (pictureUrl) { const link = externalArtifactLink(doc, '下载图片', pictureUrl, root, true); if (link) actions.append(link); }
+    for (const [kind, label] of [['source', '下载绘制源码'], ['receipt', '下载渲染回执']]) {
+      const link = externalArtifactLink(doc, label, candidateArtifact(candidate, kind, project.id), root, true); if (link) actions.append(link);
+    }
+    if (!active && pictureUrl && (candidate.role ?? candidate.work_kind) !== 'transfer') actions.append(button(doc, candidate.id === project.adopted_candidate_id ? '已作为默认作品' : '采用为默认作品',
+      () => onAdopt(candidate.id), {disabled: locked || candidate.id === project.adopted_candidate_id}));
+    fragment.append(actions);
+  }
+  const evidence = el(doc, 'div', 'picture-evidence-grid'); evidence.append(reviewPanel(doc, candidate?.review ?? candidate?.assessment));
+  const scope = el(doc, 'section', 'panel'); scope.append(el(doc, 'h3', '', '本次验证范围'));
+  const transfer = candidates.filter(row => (row.role ?? row.work_kind) === 'transfer');
+  scope.append(el(doc, 'p', 'muted', '图片学习验证造型、笔触、材质、光影等静态效果；连续运动与声音尚未验证。'),
+    el(doc, 'p', '', transfer.length ? '已有换内容验证作品，请切换作品查看实际结果与评审。' : '换内容验证尚无产物；复现进展不能替代迁移通过。'));
+  if ((candidate?.role ?? candidate?.work_kind) === 'transfer') {
+    const experiment = rows(project.experiments).find(row => rows(row.candidates).some(item => item.id === candidate.id));
+    if (experiment?.transfer_task) scope.append(jsonSection(doc, '本次换内容验证的任务', experiment.transfer_task, true));
+  }
+  if (candidate?.method) scope.append(jsonSection(doc, '查看本次形成的方法', candidate.method));
+  if (candidate?.observation_receipts) scope.append(jsonSection(doc, '参考与结果的实际输入记录', candidate.observation_receipts));
+  evidence.append(scope); fragment.append(evidence);
+  const history = el(doc, 'details', 'technical-details'); history.append(el(doc, 'summary', '', '实验历史与冻结需求（' + rows(project.experiments).length + '）'));
+  const historyList = el(doc, 'ol', 'picture-history');
+  for (const experiment of rows(project.experiments)) {
+    const item = el(doc, 'li'), content = el(doc, 'div');
+    content.append(el(doc, 'strong', '', (MODE_NAMES[experiment.mode] ?? '首次学习') + ' · ' + pictureState(experiment.state)));
+    const feedback = experiment.frozen?.feedback ?? experiment.feedback;
+    if (feedback) content.append(el(doc, 'p', 'small muted', feedback));
+    const submitted = experiment.frozen ?? experiment.input ?? experiment.request ?? experiment;
+    content.append(jsonSection(doc, '查看本次提交与冻结输入', submitted));
+    const attempts = renderInternalAttempts(doc, experiment, attempt => {
+      const section = el(doc, 'section', 'panel');
+      section.append(pictureFigure(doc, '内部小样：' + (attempt.probe_id || attempt.id), pictureImageUrl(attempt, project, root), '内部技法验证；不是完整作品。', root));
+      for (const [kind, label] of [['source', '下载小样源码'], ['receipt', '下载小样渲染回执']]) {
+        const link = externalArtifactLink(doc, label, candidateArtifact(attempt, kind, project.id), root, true); if (link) section.append(link);
+      }
+      section.append(reviewPanel(doc, attempt.review)); return section;
+    });
+    if (attempts) content.append(attempts);
+    if (onInspect) {
+      const inspection = el(doc, 'details', 'technical-details'); inspection.append(el(doc, 'summary', '', '查看实际 Agent 输入'));
+      inspection.append(el(doc, 'p', 'small muted', '展开时只读取已保存的本次角色输入；不代表完整系统提示词，也不会启动创作。'));
+      let loaded = false;
+      inspection.addEventListener('toggle', async () => {
+        if (!inspection.open || loaded) return;
+        loaded = true; const output = el(doc, 'pre', 'picture-json', '正在读取…'); inspection.append(output);
+        try { output.textContent = JSON.stringify(await onInspect(experiment.id), null, 2); }
+        catch (error) { output.textContent = errorMessage(error); loaded = false; }
+      }); content.append(inspection);
+    }
+    item.append(content, el(doc, 'small', '', typeof experiment.created_at === 'number'
+      ? new Date(experiment.created_at * 1000).toLocaleString() : experiment.created_at ?? experiment.id)); historyList.append(item);
+  }
+  history.append(historyList); fragment.append(history);
+  if (rows(project.animation_links).length) {
+    const links = el(doc, 'section', 'panel'); links.append(el(doc, 'h3', '', '由图片继续创作的动画'));
+    for (const row of project.animation_links) {
+      if (!IDENTIFIER_FOR_LINK(row.commission_id)) continue;
+      const link = el(doc, 'a', 'button secondary', '打开关联动画');
+      link.href = new URL('./?commission=' + encodeURIComponent(row.commission_id), root).href;
+      links.append(link, el(doc, 'p', 'small muted', '沿用图片版本：' + text(row.candidate_id)));
+    }
+    fragment.append(links);
+  }
+  return fragment;
+}
+
+function IDENTIFIER_FOR_LINK(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(value); }
+
+export function mountPictureLibrary(doc, {root = new URL('./', globalThis.location?.href), fetcher = globalThis.fetch,
+  storage = browserStorage(), uuid, schedule, unschedule, URLObject = globalThis.URL} = {}) {
+  const $ = id => doc.getElementById(id), app = $('picture-library-app'); if (!app) return null;
+  let formMode = null, shown = 'home', selectedId = null, animationCandidateId = null, previewUrl = null, detailSignature = '', referencesSignature = '', controller;
+  const request = async (path, options = {}) => {
+    const headers = {Accept: 'application/json'};
+    if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
+      'X-Animation-Lab-Token': controller.state.catalog?.csrf_token ?? '', 'X-CSRF-Token': controller.state.catalog?.csrf_token ?? ''});
+    const response = await fetcher(new URL(path, root), {...options, headers, credentials: 'same-origin', redirect: 'error', cache: 'no-store'});
+    if (!response.ok) {
+      const error = Error('请求未完成（HTTP ' + response.status + '）'); error.status = response.status;
+      try { error.code = text((await response.json())?.error); } catch {} throw error;
+    }
+    return response.json();
+  };
+  const clearPreview = () => { if (previewUrl) URLObject.revokeObjectURL(previewUrl); previewUrl = null; };
+  const syncReferenceSource = () => {
+    const source = $('picture-reference-source').value;
+    const locked = Boolean(formMode) || controller?.locked();
+    $('picture-url-fields').hidden = source !== REMOTE_VIDEO_SOURCE;
+    $('picture-upload-fields').hidden = source !== 'upload';
+    $('picture-saved-fields').hidden = source !== 'saved';
+    $('picture-reference').required = !formMode && source === 'upload';
+    $('picture-source-url').required = !formMode && source === REMOTE_VIDEO_SOURCE;
+    $('picture-timestamp').required = !formMode && source === REMOTE_VIDEO_SOURCE;
+    $('picture-saved-reference').required = !formMode && source === 'saved';
+    for (const id of ['picture-source-url', 'picture-timestamp', 'picture-crop-x', 'picture-crop-y', 'picture-crop-width', 'picture-crop-height']) $(id).disabled = locked || source !== REMOTE_VIDEO_SOURCE;
+    $('picture-reference').disabled = locked || source !== 'upload';
+    $('picture-saved-reference').disabled = locked || source !== 'saved';
+    $('picture-reference-source').disabled = locked;
+  };
+  const show = mode => { shown = mode; $('picture-home').hidden = mode !== 'home'; $('picture-detail').hidden = mode !== 'detail'; $('picture-form-panel').hidden = mode !== 'form'; if ($('picture-animation-panel')) $('picture-animation-panel').hidden = mode !== 'animation'; };
+  const renderCards = () => {
+    const projects = rows(controller.state.catalog?.projects), query = $('picture-search').value;
+    const filtered = projects.filter(project => pictureProjectMatches(project, query));
+    $('picture-cards').replaceChildren(...filtered.map(project => renderPictureCard(doc, project, {root, onOpen: async id => {
+      await controller.open(id); if (controller.state.detail?.id === id) { show('detail'); detailSignature = ''; render(controller.state); }
+    }})));
+    $('picture-count').textContent = projects.length + ' 个学习项目';
+    $('picture-empty').hidden = projects.length > 0;
+    if (projects.length && !filtered.length) $('picture-cards').append(el(doc, 'p', 'muted', '没有符合条件的学习项目。'));
+  };
+  const render = state => {
+    $('picture-message').hidden = !state.message; $('picture-message').textContent = state.message;
+    $('picture-pending').hidden = !state.pending; $('picture-pending-retry').disabled = state.busy;
+    $('picture-new').disabled = !controller.enabled() || controller.locked(); $('picture-empty-new').disabled = $('picture-new').disabled;
+    $('picture-sync').textContent = state.busy ? '正在提交…' : state.lastRead ? '最近读取：' + state.lastRead.toLocaleTimeString() : '正在读取图片学习库…';
+    $('picture-availability').textContent = state.catalog?.availability?.enabled === false ? text(state.catalog.availability.reason) || '图片学习执行器尚未启用。' : '';
+    $('picture-submit').disabled = !controller.enabled() || controller.locked();
+    for (const element of $('picture-form').elements) element.disabled = state.busy || Boolean(state.pending)
+      || formMode === 'retry' && element.id !== 'picture-submit';
+    $('picture-submit').disabled = !controller.enabled() || controller.locked();
+    updateLearningControls(doc, 'picture', state.catalog, {locked: state.busy || Boolean(state.pending), retry: formMode === 'retry'});
+    const references = state.catalog?.owner_key === state.owner_key ? rows(state.catalog?.references) : [];
+    const referenceSignature = JSON.stringify([state.owner_key, references.map(row => [row.id, row.file_name, row.source_url])]);
+    if (referenceSignature !== referencesSignature) {
+      referencesSignature = referenceSignature;
+      const select = $('picture-saved-reference'), previous = select.value, blank = el(doc, 'option', '', '请选择参考'); blank.value = '';
+      select.replaceChildren(blank);
+      for (const reference of references) {
+        const option = el(doc, 'option', '', (reference.file_name || reference.source_url || reference.id)
+          + (isRemoteReference(reference) ? ' · 视频链接' : ' · 上传图片'));
+        option.value = reference.id; select.append(option);
+      }
+      select.value = references.some(row => row.id === previous) ? previous : '';
+    }
+    syncReferenceSource();
+    renderCards();
+    if (state.detail && shown === 'detail') {
+      const signature = JSON.stringify({detail: state.detail, locked: controller.locked(), selectedId});
+      if (signature !== detailSignature) {
+        detailSignature = signature;
+        $('picture-detail').replaceChildren(renderPictureDetail(doc, state.detail, {root, selection: selectedId, locked: controller.locked(),
+          onSelect: id => { selectedId = id; detailSignature = ''; render(state); }, onBack: () => show('home'),
+          onStop: () => void controller.stop(), onExperiment: mode => openForm(mode), onAdopt: id => void controller.adopt(id),
+          onAnimate: $('picture-animation-panel') ? id => { animationCandidateId = id; $('picture-animation-form').reset(); show('animation'); $('picture-animation-goal').focus(); } : null,
+          onInspect: experimentId => request(pictureRequestPath(state.detail.id, 'experiments/' + encodeURIComponent(pictureId(experimentId)) + '/input'))}));
+      }
+    }
+  };
+  const openForm = (mode = null) => {
+    if (controller.locked()) return;
+    formMode = mode; clearPreview(); $('picture-form').reset(); $('picture-reference-preview').replaceChildren(); $('picture-reference-preview').hidden = true;
+    $('picture-saved-reference').value = '';
+    $('picture-new-fields').hidden = Boolean(mode); $('picture-feedback-label').hidden = !mode || mode === 'retry';
+    $('picture-budget-fields').hidden = mode === 'retry';
+    $('picture-form-title').textContent = mode ? MODE_NAMES[mode] : '新建图片学习';
+    $('picture-submit').textContent = mode ? '开始' + MODE_NAMES[mode] : '开始图片学习';
+    $('picture-form-note').hidden = !mode;
+    $('picture-form-note').textContent = mode === 'fresh' ? '保留同一参考和学习目标，从零创作。旧源码、布局和专用方法不会作为起点；可在下方填写精简的问题。'
+      : mode === 'retry' ? '保留原来的目标、参考、标准、预算和确切知识版本，重试失败环节。需要改变要求或预算时，请发起继续优化或从零重做。'
+        : '保留同一参考和学习目标，在已有作品上继续改善。下方意见会冻结进下一次实验，不修改历史需求。';
+    for (const id of ['picture-name', 'picture-goal', 'picture-width', 'picture-height']) $(id).required = !mode;
+    syncReferenceSource();
+    $('picture-feedback').required = mode === 'continue';
+    $('picture-use-wikiskill').checked = mode === 'retry' ? latestPictureExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
+    restoreLearningControls(doc, 'picture', mode ? latestPictureExperiment(controller.state.detail)?.frozen : {});
+    $('picture-skill-help').hidden = mode === 'retry';
+    show('form'); render(controller.state); (mode === 'retry' ? $('picture-submit') : mode ? $('picture-feedback') : $('picture-name')).focus();
+  };
+  controller = new PictureLibraryController({request, root, storage, uuid, schedule, unschedule, onChange: render});
+  $('picture-refresh').addEventListener('click', () => void controller.refresh());
+  $('picture-new').addEventListener('click', () => openForm()); $('picture-empty-new').addEventListener('click', () => openForm());
+  $('picture-pending-retry').addEventListener('click', () => void controller.replayPending());
+  $('picture-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); detailSignature = ''; render(controller.state); });
+  $('picture-search').addEventListener('input', renderCards);
+  $('picture-learning-options')?.addEventListener('change', () => updateLearningControls(doc, 'picture', controller.state.catalog,
+    {locked: controller.state.busy || Boolean(controller.state.pending), retry: formMode === 'retry'}));
+  $('picture-reference').addEventListener('change', () => {
+    $('picture-reference-source').value = 'upload'; $('picture-saved-reference').value = ''; syncReferenceSource();
+    clearPreview(); const host = $('picture-reference-preview'); host.replaceChildren(); host.hidden = true;
+    const file = $('picture-reference').files?.[0]; if (!file) return;
+    try {
+      validateReferenceFile(file); previewUrl = URLObject.createObjectURL(file);
+      const image = el(doc, 'img'); image.src = previewUrl; image.alt = '待上传的参考图片';
+      host.append(image, el(doc, 'p', 'small muted', file.name)); host.hidden = false; controller.setMessage('');
+    } catch (error) { $('picture-reference').value = ''; controller.setMessage(errorMessage(error)); }
+  });
+  $('picture-reference-source').addEventListener('change', () => {
+    $('picture-saved-reference').value = ''; $('picture-reference').value = ''; clearPreview();
+    $('picture-reference-preview').replaceChildren(); $('picture-reference-preview').hidden = true; syncReferenceSource();
+  });
+  $('picture-saved-reference').addEventListener('change', () => {
+    $('picture-reference-source').value = 'saved'; syncReferenceSource();
+  });
+  $('picture-form').addEventListener('submit', async event => {
+    event.preventDefault(); if (controller.locked()) return;
+    const fields = Object.fromEntries(new FormData($('picture-form'))); fields.use_wikiskill = $('picture-use-wikiskill').checked;
+    Object.assign(fields, readLearningControls(doc, 'picture'));
+    if (formMode === 'continue') fields.base_candidate_id = pictureDefaultCandidate(controller.state.detail, selectedId)?.id;
+    try {
+      const success = formMode ? await controller.experiment({...fields, mode: formMode}) : await controller.start(fields, $('picture-reference').files?.[0]);
+      if (success && controller.state.detail) { clearPreview(); show('detail'); selectedId = null; detailSignature = ''; render(controller.state); void controller.refresh(); }
+    } catch (error) { controller.setMessage(errorMessage(error)); }
+  });
+  $('picture-animation-close')?.addEventListener('click', () => { show('detail'); render(controller.state); });
+  $('picture-animation-form')?.addEventListener('submit', async event => {
+    event.preventDefault(); if (controller.locked()) return;
+    const fields = Object.fromEntries(new FormData($('picture-animation-form')));
+    fields.use_wikiskill = $('picture-animation-wikiskill').checked;
+    $('picture-animation-submit').disabled = true;
+    try {
+      if (await controller.animate(fields, animationCandidateId)) {
+        show('detail'); detailSignature = ''; await controller.open(controller.state.detail.id); render(controller.state);
+      }
+    } catch (error) { controller.setMessage(errorMessage(error)); }
+    finally { $('picture-animation-submit').disabled = false; }
+  });
+  const ready = controller.refresh();
+  return {controller, ready, destroy: () => { clearPreview(); controller.destroy(); }};
+}
+if (typeof document !== 'undefined' && document.getElementById('picture-library-app')) mountPictureLibrary(document);

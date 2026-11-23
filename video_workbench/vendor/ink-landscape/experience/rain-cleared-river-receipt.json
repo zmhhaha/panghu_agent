@@ -1,0 +1,37 @@
+{
+  "source": "file:///D:/codex-work/operations/ink-free-landscape-20261120/result/scene.js",
+  "source_sha256": "0add57fb3577bfe2c4ab38fff2328bbc4f11d2ccd717926674b18bcdb94cd18b",
+  "source_revision": "b6c96a5e94124bfad8113aaa136ede2298151b5f",
+  "library_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+  "output": "D:\\codex-work\\operations\\ink-free-landscape-20261120\\result\\rain-cleared-river.png",
+  "width": 1600,
+  "height": 1000,
+  "bytes": 414035,
+  "png_sha256": "2797bfdc8b57095ac717543dfcc853436f0f6487468bd81bcbc7a16d1bd04d01",
+  "repeat_sha256": "2797bfdc8b57095ac717543dfcc853436f0f6487468bd81bcbc7a16d1bd04d01",
+  "renderer": "@napi-rs/canvas 0.1.80 / Skia, procedural Canvas 2D",
+  "image_inputs": 0,
+  "network_inputs": 0,
+  "actual_library_api_calls": [
+    {
+      "name": "createInkScene",
+      "calls": 1436
+    },
+    {
+      "name": "drawContactStroke",
+      "calls": 359
+    },
+    {
+      "name": "renderCanvas",
+      "calls": 6
+    },
+    {
+      "name": "createBrushDocument",
+      "calls": 359
+    }
+  ],
+  "offscreen_surfaces": 5,
+  "render_seconds": 1.56,
+  "authored_metadata": null,
+  "scope": "Actual fixed-module execution; visible contribution and artistic quality are also inspected separately"
+}

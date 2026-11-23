@@ -174,6 +174,105 @@ def test_recipe_directory_can_read_published_producer_skill_without_reusing_old_
     assert gateway.submissions == executor.calls == 2
 
 
+def test_continuation_authors_new_recipe_with_exact_previous_python_and_learning_context(tmp_path):
+    coordinator, gateway, executor, run = setup(tmp_path)
+    assert finish(coordinator, run) == 'completed'
+    previous = coordinator._get(OWNER, run['id'])
+    descriptor = coordinator.context(OWNER, run['id'])
+    before = coordinator.source_context(OWNER, descriptor)
+    assert before['request'] == previous['recipe']['result']['request']
+    assert 'assets' not in before and 'envelope' not in before
+    assert gateway.submissions == executor.calls == 1
+
+    continued = deepcopy(run)
+    continued['id'] = 'continued-experiment'
+    criteria = [dict(id='causality', description='The geometric change explains the invariant.')]
+    methods = [dict(guidance='Track corresponding vertices before presenting the result.',
+        skill_package={'files': {'SKILL.md': 'Keep correspondence visible.'}})]
+    review = dict(outcome='failed', findings=['The key correspondence is not yet visible.'])
+    opinion = dict(id='opinion-one', comment='Change the geometry, not only the surrounding labels.')
+    continued['frozen'].update(feedback='Show the shared base more clearly.',
+        manim_iteration=dict(baseline_descriptor=descriptor, criteria=criteria, methods=methods,
+            review=review, developer_feedback=[opinion]))
+    class RevisingRecipeGateway(RecipeGateway):
+        def collect(self, job_id, checksum, document):
+            result = super().collect(job_id, checksum, document)
+            result['result']['request']['source'] += '\n# distinct synthetic revision from the recipe peer\n'
+            return result
+    revised_gateway = RevisingRecipeGateway()
+    coordinator.gateway = revised_gateway
+    assert finish(coordinator, continued) == 'completed'
+    after = coordinator._get(OWNER, continued['id'])
+    guidance = after['input']['guidance']
+    context = json.loads(guidance.split('\n', 1)[1])
+    assert context['baseline'] == before
+    assert context['baseline']['request']['source'] == previous['envelope']['request']['source']
+    assert context['criteria'] == criteria and context['methods'] == methods
+    assert context['review'] == review and context['developer_feedback'] == [opinion]
+    assert context['feedback'] == continued['frozen']['feedback']
+    assert 'Manim expression itself' in guidance
+    assert after['scope'] != previous['scope']
+    assert after['plan']['request']['resource_id'] != previous['plan']['request']['resource_id']
+    assert after['envelope']['request']['source'] != previous['envelope']['request']['source']
+    assert after['envelope']['request'] == after['recipe']['result']['request']
+    assert gateway.submissions == revised_gateway.submissions == 1 and executor.calls == 2
+
+
+@pytest.mark.parametrize('change', ['owner', 'descriptor', 'oversized'])
+def test_invalid_iteration_context_does_not_claim_another_recipe(tmp_path, change):
+    coordinator, gateway, executor, run = setup(tmp_path)
+    assert finish(coordinator, run) == 'completed'
+    baseline = coordinator.context(OWNER, run['id'])
+    continued = deepcopy(run)
+    continued['id'] = 'invalid-continuation'
+    continued['frozen']['manim_iteration'] = dict(baseline_descriptor=baseline)
+    if change == 'owner':
+        baseline['scope']['owner'] = 'another-owner'
+    elif change == 'descriptor':
+        baseline['sha256'] = '0' * 64
+    else:
+        continued['frozen']['feedback'] = 'x' * 16000
+    with pytest.raises(ServiceError, match='iteration'):
+        coordinator.advance(OWNER, continued)
+    assert coordinator._get(OWNER, continued['id']) is None
+    assert gateway.submissions == executor.calls == 1
+
+
+def test_reserved_recipe_reuses_frozen_iteration_after_restart(tmp_path):
+    coordinator, gateway, executor, run = setup(tmp_path)
+    assert finish(coordinator, run) == 'completed'
+    continued = deepcopy(run)
+    continued['id'] = 'frozen-continuation'
+    continued['frozen'].update(feedback='Preserve the correspondence.',
+        manim_iteration=dict(baseline_descriptor=coordinator.context(OWNER, run['id'])))
+    assert coordinator.advance(OWNER, continued) == 'reserved'
+    reserved = deepcopy(coordinator._get(OWNER, continued['id'])['input'])
+    continued['frozen']['feedback'] = 'A later comment must not rewrite reserved inputs.'
+    resumed = ManimMethodCoordinator(coordinator.root, gateway=gateway, executor=executor,
+        skill_adapter=coordinator.skill_adapter, candidate=True)
+    assert finish(resumed, continued) == 'completed'
+    assert resumed._get(OWNER, continued['id'])['input'] == reserved
+    assert gateway.submissions == executor.calls == 2
+
+
+@pytest.mark.parametrize('motion', [[], ['native-js'], ['animejs', 'gsap']])
+def test_initial_manim_scene_receives_two_axis_choices_without_python_browser_library_requirement(tmp_path, motion):
+    coordinator, gateway, executor, run = setup(tmp_path)
+    run['frozen'].update(manim_iteration={},
+        capability_selection=dict(creation=['manim'], motion=motion))
+    assert coordinator.advance(OWNER, run) == 'reserved'
+    document = coordinator._get(OWNER, run['id'])['input']
+    instructions, raw = document['guidance'].split('\n', 1)
+    context = json.loads(raw)
+    assert context['capability_selection']['creation'] == ['manim']
+    assert set(context['capability_selection']['motion']) == set(motion)
+    assert 'native Manim APIs' in instructions
+    assert 'not to Python' in instructions and 'Do not import JavaScript libraries' in instructions
+    assert 'primary geometry and transformation' in instructions
+    assert 'baseline' not in context
+    assert gateway.submissions == executor.calls == 0
+
+
 @pytest.mark.parametrize('changes', [dict(frame_count=61), dict(frame_count=240), dict(seed=-1),
     dict(width=1280, height=720, frame_count=48), dict(global_start_frame=72), dict(image='untrusted'),
     dict(kind='manim-js'), dict(source='not accepted')])
@@ -206,12 +305,15 @@ def test_actual_method_service_waits_for_prelude_then_delivers_resources_to_unch
     author, reviewer = ProducerGateway(), Gateway(True)
     service = AnimationMethodService(tmp_path/'lab', author_gateway=author, review_gateway=reviewer,
         renderer=Renderer(tmp_path/'renders'), manim_coordinator=coordinator)
+    # Match deployed recipe wiring: a laboratory freezes a whole WikiSkill
+    # release and the producer imports that exact binding, including no release.
+    coordinator.skill_adapter = service.library_adapter
     queued = start(service, resource_authoring=dict(kind='manim', width=320, height=180, frame_count=3))
     assert queued['resource_authoring']['status'] == 'pending'
     for _ in range(15):
         service.advance('developer', queued['id'])
-        if service.resource_stage.view('developer', queued['id'])['status'] == 'completed': break
-    assert service.resource_stage.view('developer', queued['id'])['status'] == 'completed'
+        if service.resource_stage.view('developer', queued['id'], resource_round=0)['status'] == 'completed': break
+    assert service.resource_stage.view('developer', queued['id'], resource_round=0)['status'] == 'completed'
     assert author.submissions == reviewer.submissions == []
     completed = finish_service(service, queued['id'])
     assert completed['state'] == 'completed'
@@ -224,12 +326,12 @@ def test_actual_method_service_waits_for_prelude_then_delivers_resources_to_unch
         assert set(descriptor['assets_sha256']) <= set(context['assets'])
         assert 'prepareManimMethodFrames' in context['constraints']['generated_resource_usage']
     assert completed['resource_authoring']['status'] == 'completed'
-    first = service.resource_stage.context('developer', queued['id'])
+    first = service.resource_stage.context('developer', queued['id'], resource_round=0)
     # Continuing a Manim method repeats the producer for this new content/run;
     # it cannot silently reuse the earlier task's immutable PNG resources.
     continued = start(service, base_commission_id=queued['id'], feedback='Use a different composition')
     again = finish_service(service, continued['id'])
-    second = service.resource_stage.context('developer', continued['id'])
+    second = service.resource_stage.context('developer', continued['id'], resource_round=0)
     assert again['state'] == 'completed' and second['scope'] != first['scope']
     assert second['manifest']['resource_id'] != first['manifest']['resource_id']
     assert gateway.submissions == executor.calls == 2

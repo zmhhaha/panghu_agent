@@ -119,8 +119,9 @@ def work(tmp_path):
 
 
 def start(service, **options):
-    body = dict(request_id=str(uuid4()), goal='Explain an intervention and its consequence',
-                budget=dict(max_rounds=1, max_seconds=300), duration_seconds=18)
+    body = dict(request_id=str(uuid4()), budget=dict(max_rounds=1, max_seconds=300))
+    if 'retry_of_commission_id' not in options:
+        body.update(goal='Explain an intervention and its consequence', duration_seconds=18)
     body.update(options)
     return service.start('developer', body)
 
@@ -147,6 +148,8 @@ def test_admitted_engines_and_assets_freeze_before_agent_work_and_replay_keeps_o
         document = service._document('developer', frozen, mode)
         assert document['constraints']['allowed_engines'] == ['html-svg', 'canvas']
         assert document['constraints']['runtime_identity'] == admitted['runtime_identity']
+        assert document['constraints']['native_drawing_context_budget']['max_contexts'] == 500
+        assert 'every detached or internal canvas buffer' in document['constraints']['native_drawing_context_budget']['instruction']
         assert document['assets'] == admitted['assets']
     # A configuration expansion must neither reinterpret the frozen task nor
     # turn an HTTP replay into a fresh commission or an idempotency conflict.
@@ -187,6 +190,82 @@ def finish(service, run_id, steps=50):
             return row
         service.advance('developer', run_id)
     pytest.fail('commission failed to reach a terminal state')
+
+
+def test_fresh_rebuild_has_no_old_implementation_and_keeps_default_until_explicit_adoption(work):
+    service, creator, _, _ = work
+    old = finish(service, start(service)['id'])
+    effect = service.catalogue('developer')['effects'][0]
+    original_id = effect['best_candidate']['id']
+    new = start(service, creation_mode='fresh', effect_id=effect['id'], use_wikiskill=False,
+        problem_summary=[dict(text='The material should feel like ink', source='developer')])
+    frozen = service.commissions.get('developer', new['id'])
+    assert not any(frozen['frozen'].get(key) for key in ('base_candidate', 'base_commission_id', 'method_versions'))
+    for mode in ('plan',):
+        document = service._document('developer', frozen, mode,
+            base=service.commissions.get('developer', old['id'])['candidates'][0])
+        assert document['base_source'] is None
+        assert document['methods'] == [] and document['criteria'] == []
+        assert document['constraints']['authoring_policy']['creation_mode'] == 'fresh'
+        assert document['constraints']['library_binding']['use_wikiskill'] is False
+        assert original_id not in str(document)
+    completed = finish(service, new['id'])
+    assert completed['state'] == 'completed'
+    for operation in service.commissions.get('developer', new['id'])['operations']:
+        if operation['stage'] == 'creator':
+            assert operation['input']['base_source'] is None
+            assert original_id not in str(operation['input'])
+    effect = service.catalogue('developer')['effects'][0]
+    assert len(service.catalogue('developer')['effects']) == 1
+    assert effect['best_candidate']['id'] == original_id
+    candidate_id = completed['best_candidate_id']
+    assert candidate_id != original_id
+    service.adopt('developer', new['id'], dict(request_id=str(uuid4()), effect_id=effect['id'],
+        candidate_id=candidate_id, expected_revision=effect['representative_revision']))
+    assert service.catalogue('developer')['effects'][0]['best_candidate']['id'] == candidate_id
+
+
+@pytest.mark.parametrize('fresh', [False, True])
+def test_technical_retry_keeps_plan_source_knowledge_and_reuses_verified_render(work, fresh):
+    service, creator, reviewer, renderer = work
+    options = {}
+    if fresh:
+        first = finish(service, start(service)['id'])
+        options.update(creation_mode='fresh', effect_id=first['effect_id'])
+    original = start(service, use_wikiskill=False, **options)
+    # Fail only the review operation, after the valid plan, source and media exist.
+    for _ in range(30):
+        run = service.commissions.get('developer', original['id'])
+        active = next((op for op in run['operations'] if op['stage'] == 'review'), None)
+        if active:
+            service.commissions.claim('developer', active['id'])
+            service.commissions.fail('developer', active['id'], 'fixture_review_transport_failed')
+            break
+        service.advance('developer', original['id'])
+    old = finish(service, original['id'])
+    assert old['state'] == 'failed'
+    source_run = service.commissions.get('developer', original['id'])
+    offset = len(creator.submissions), len(renderer.calls)
+    body = dict(request_id=str(uuid4()), retry_of_commission_id=original['id'],
+        budget=dict(max_rounds=1, max_seconds=300))
+    retry = service.start('developer', body)
+    assert service.start('developer', body)['id'] == retry['id']
+    restored = service.commissions.get('developer', retry['id'])
+    assert restored['frozen']['library_binding'] == source_run['frozen']['library_binding']
+    assert restored['frozen']['use_wikiskill'] is False
+    assert [op['input'] for op in restored['operations']] == [op['input'] for op in source_run['operations']
+        if op['stage'] == 'creator']
+    completed = finish(service, retry['id'])
+    assert completed['state'] == 'completed'
+    assert (len(creator.submissions), len(renderer.calls)) == offset
+    assert completed['usage']['creator'] == completed['usage']['render'] == 0
+    assert completed['usage']['review'] == 1
+    assert service.artifact('developer', retry['id'], completed['best_candidate_id'], 'media')[0]
+    for change in ({'goal': 'Change creative direction'}, {'use_wikiskill': True},
+                   {'creation_mode': 'fresh'}, {'criteria': deepcopy(CRITERIA)}):
+        with pytest.raises(ServiceError, match='creative_contract_changed'):
+            service.start('developer', dict(body, request_id=str(uuid4()), **change))
+    assert service.commissions.get('developer', original['id']) == source_run
 
 
 def test_complete_bounded_commission_and_readonly_get(work):
@@ -270,7 +349,7 @@ def test_reference_documents_keep_existing_constraints_and_method_records(work):
         document = service._document('developer', run, mode, base=base)
         expected = dict(width=1280, height=720, fps=24, duration_seconds=18, allowed_engines=['html-svg'])
         assert {key: value for key, value in document['constraints'].items()
-                if key != 'result_requirements'} == expected
+                if key not in {'result_requirements', 'authoring_policy', 'library_binding', 'animation_knowledge'}} == expected
         assert ('result_requirements' in document['constraints']) == (mode == 'plan')
         assert document['methods'] == [service.methods.get_method('developer', version_id)
                                        for version_id in base['method_versions']]

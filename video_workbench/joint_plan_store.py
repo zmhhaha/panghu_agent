@@ -172,8 +172,17 @@ class JointPlanStore:
 
     def start(self, owner, project_id, request, idem, *, timeout=600):
         _require(type(request) is dict and {'expected_revision', 'brief'} <= set(request)
-                 and set(request) <= {'expected_revision', 'brief', 'instruction', 'preserve_script', 'library_release_id'}
+                 and set(request) <= {'expected_revision', 'brief', 'instruction', 'preserve_script', 'library_release_id', 'use_wikiskill'}
                  and type(request['expected_revision']) is int and request['expected_revision'] >= 1)
+        use_wikiskill = request.get('use_wikiskill', True)
+        _require(type(use_wikiskill) is bool, 'production_skill_loading_policy_invalid')
+        _require(use_wikiskill or request.get('library_release_id') is None,
+                 'production_skill_loading_policy_conflict')
+        # Explicit true and omission have identical meaning, and older HTTP
+        # requests retain their original fingerprint when replayed after deploy.
+        request = dict(request)
+        if use_wikiskill:
+            request.pop('use_wikiskill', None)
         _require(type(idem) is str and 1 <= len(idem) <= 128 and all(33 <= ord(c) <= 126 for c in idem))
         _require(type(timeout) in (int, float) and 1 <= timeout <= 600)
         fingerprint = digest(dict(project_id=project_id, request=request, timeout=timeout))
@@ -191,9 +200,15 @@ class JointPlanStore:
                 return self._public(json.loads(replay['document']))
             library_binding = self.skill_adapter.pin(owner,
                 'video-joint-plan-request:' + digest(dict(owner=owner, project_id=project_id, idem=idem)),
-                request.get('library_release_id'))
+                request.get('library_release_id'), use_wikiskill=use_wikiskill)
         else:
             _require(request.get('library_release_id') is None, 'production_skill_library_unavailable', 503)
+            if not use_wikiskill:
+                # An explicitly disabled batch needs no publication service,
+                # but still carries a policy into every later consumer.
+                library_binding = dict(batch_id='video-joint-plan-request:' + digest(
+                    dict(owner=owner, project_id=project_id, idem=idem)), use_wikiskill=False,
+                    release_id=None, release_sha256=None, publisher_owner=None, release_sequence=None)
         with self.store.transaction() as db:
             existing = db.execute('SELECT request_hash,document FROM joint_plan_operations WHERE owner=? AND idem=?',
                                   (owner, idem)).fetchone()
@@ -243,7 +258,8 @@ class JointPlanStore:
             return op
         content = self._content_from_document(op['document'])
         snapshot = None
-        if adapter is not None:
+        if adapter is not None and (op.get('library_binding', {}).get('use_wikiskill', True)
+                or callable(getattr(adapter, 'pin', None))):
             task = planning_method_task(content)
             snapshot = adapter.freeze(op['owner'], 'video-joint-plan:' + op['id'], task,
                 content['allowed_engines'], **(dict(library_binding=op['library_binding'], discovery_only=True)

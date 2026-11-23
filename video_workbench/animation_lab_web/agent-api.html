@@ -62,7 +62,9 @@
     <nav aria-label="文档目录">
       <a href="#auth">授权方式</a>
       <a href="#start">提交与查询</a>
+      <a href="#capabilities">选择创作能力</a>
       <a href="#results">状态与下载</a>
+      <a href="#inspection">需求与逐轮输入</a>
       <a href="#iterate">继续优化</a>
       <a href="#feedback">反馈与取消</a>
       <a href="#client">Python 客户端</a>
@@ -87,7 +89,7 @@
         <pre><code>curl --fail-with-body --cookie cookies.txt \
   https://video-service.panghuer.top/dev/animations/api/method-lab/catalog \
   --output catalog.json</code></pre>
-        <p>检查返回的 <code>availability.enabled</code>；为 <code>false</code> 时当前制作执行器不可用，目录仍可读取。从 JSON 取得当前 <code>csrf_token</code>。登录重定向或 HTML 表示需要检查授权。</p>
+        <p>检查返回的 <code>availability.enabled</code>；为 <code>false</code> 时当前制作执行器不可用，目录仍可读取。<code>availability.allowed_engines</code>、<code>availability.motion_tools</code>、<code>availability.resource_authoring.manim.enabled</code> 分别给出浏览器画面、动作编排与 Manim 的实际准入情况。从 JSON 取得当前 <code>csrf_token</code>。登录重定向或 HTML 表示需要检查授权。</p>
         <h3>1. 保存 request.json</h3>
         <pre><code>{
   "request_id": "17c8a3ea-52b4-42d0-b875-f55ab241e2db",
@@ -108,13 +110,14 @@
               <tr><td><code>goal</code></td><td>必填，非空文本，最长 16000 字符；<code>title</code> 可选，最长 500 字符。</td></tr>
               <tr><td><code>duration_seconds</code></td><td>默认 18，范围 1–60 秒，必须落在 24 fps 的整帧边界。</td></tr>
               <tr><td><code>budget</code></td><td><code>max_rounds</code> 整数 1–8；<code>max_seconds</code> 整数 60–3600。</td></tr>
-              <tr><td><code>collaboration</code></td><td>可选，新建实验显式开启，继续优化或重新运行可继承原协作配置。先确认 <code>availability.collaboration=true</code>；对象中 <code>max_components</code> 为整数 2–4，同时要求 <code>budget.max_rounds=1</code>。普通制作省略此字段。</td></tr>
+              <tr><td><code>collaboration</code></td><td>可选，新建实验显式开启，继续优化或技术重试可继承原协作配置。技术重试不重传此字段。先确认 <code>availability.collaboration=true</code>；对象中 <code>max_components</code> 为整数 2–4，同时要求 <code>budget.max_rounds=1</code>。普通制作省略此字段。</td></tr>
               <tr><td><code>criteria</code></td><td>可省略。提供时为 1–16 项，唯一的 <code>id</code> 与非空 <code>description</code>；可选 <code>requires_motion</code>、<code>requires_audio</code> 布尔值和 <code>observation</code> 文本。</td></tr>
+              <tr><td><code>capability_selection</code></td><td>可选，分别选择 <code>creation</code> 画面创作与 <code>motion</code> 动作编排。默认省略，让 Agent 自选；组省略或空数组也表示该组自动。见下方能力规则。</td></tr>
             </tbody>
           </table>
         </div>
         <p>标准的描述及 observation 最长 4000 字符。运动与音频标准需要对应的实际观察证据，静帧评审不能推断已经满足。</p>
-        <details><summary>复杂效果：按职责分工创作（可选）</summary><p>统筹先规划，部件分别创作，再整合为一条完整样片；无需调用方管理图层。首版支持 Canvas 2D，不与 Manim 预制资源或迁移任务合用。新建实验加入以下字段，并把本次探索轮数设为 1；继续优化或重新运行继承原配置，仍需设置本次预算为 1 轮：</p><pre><code>"budget": {"max_rounds": 1, "max_seconds": 1800},
+        <details><summary>复杂效果：按职责分工创作（可选）</summary><p>统筹先规划，部件分别创作，再整合为一条完整样片；无需调用方管理图层。当前支持 HTML/SVG、Canvas 2D 和 Three.js，具体以目录中的 <code>availability.allowed_engines</code> 和本次任务冻结的准入能力为准。画面创作与动作编排是两个维度；GSAP／Anime.js 等编排库仍需分别准入，并遵循绝对时钟规范。协作暂不与 Manim 预制资源或迁移任务合用。新建实验加入以下字段，并把本次探索轮数设为 1；继续优化或技术重试继承原配置，仍需设置本次预算为 1 轮。技术重试只传原委托、请求编号和预算，不重传协作配置：</p><pre><code>"budget": {"max_rounds": 1, "max_seconds": 1800},
 "collaboration": {"max_components": 3}</code></pre><p>最多 <code>max_components+2</code> 个创作任务（统筹、部件与整合），另有 1 次完整样片渲染、1 次评审。实际规划可少于指定部件数；全部工作共用这次总时限，建议预留 30 分钟。未启用时请省略该字段，不能仅凭执行器可用就推断协作已开放。详情中的创作任务额度包含已预留任务，不代表模型请求数。</p></details>
         <h3>2. 提交制作</h3>
         <pre><code>curl --fail-with-body --cookie cookies.txt \
@@ -130,6 +133,31 @@
         <p class="note">GET 只读，不启动制作、执行模型、续跑或增加轮次。轮询应设置间隔和总等待上限。<code>202</code> 代表请求已接受，完成情况需查询。</p>
       </section>
 
+      <section id="capabilities">
+        <h2>选择创作能力</h2>
+        <p>能力是两个并列维度，可以搭配或组合。把下面的字段片段加入制作请求；无需让外部 Agent 操作网页表单。</p>
+        <pre><code>{
+  "capability_selection": {
+    "creation": ["canvas", "three"],
+    "motion": ["gsap", "animejs"]
+  }
+}</code></pre>
+        <div class="table"><table>
+          <thead><tr><th>维度</th><th>允许的值</th><th>实际可用性</th></tr></thead>
+          <tbody>
+            <tr><td><code>creation</code> 画面创作</td><td><code>html-svg</code>、<code>canvas</code>、<code>three</code>、<code>manim</code></td><td>前三项检查 <code>availability.allowed_engines</code>；Manim 检查 <code>availability.resource_authoring.manim.enabled=true</code>。</td></tr>
+            <tr><td><code>motion</code> 动作编排</td><td><code>native-js</code>、<code>gsap</code>、<code>animejs</code></td><td>检查 <code>availability.motion_tools</code>。历史样片标签或库名称不能证明当前准入。</td></tr>
+          </tbody>
+        </table></div>
+        <p>每组单选约束使用该能力；多选允许 Agent 从所选集合中选择或组合，并非每项都必须使用。仅选 <code>creation:["manim"]</code> 时，动作由 Manim 自身编排，<code>motion</code> 必须省略或为空数组，非空值会被 API 拒绝，网页也会禁用浏览器动作选项。数组不能重复或包含未知名称。实际采用浏览器画面能力且动作组非空时，须实质使用至少一种所选工具，不能仅加载依赖，也不能使用未选的动作库；否则任务明确失败。原生 JavaScript、GSAP 与 Anime.js 都跟随同一 HyperFrames 绝对时钟。</p>
+        <p>Manim 与 SVG、Canvas、Three.js 同属画面创作，但先预制资源再加入样片。新请求的 <code>capability_selection.creation</code> 包含 <code>manim</code> 时，先由规划 Agent 决定实际采用的能力，宿主冻结决定后再继续；只有采用 Manim 才预占资源制作额度、调用 recipe Agent 并生成资源，未采用时不制作。仅选 <code>manim</code> 时，主几何和其变形必须来自真实 Manim 资源，HTML/SVG 只做辅助标记及构图。混选浏览器画面能力时，仍可选择浏览器动作工具；最后只采用 Manim 时，采用决定的 <code>motion</code> 为空，不强迫添加浏览器装饰动作。</p>
+        <p><code>capability_selection</code> 是用户允许的范围，<code>adopted_capabilities</code> 是规划后宿主冻结的只读决定，规划前为 <code>null</code>。其中 <code>creation</code>、<code>engine</code>、<code>uses_manim</code> 是采用的画面方案，<code>motion</code> 是规划后仍适用的浏览器动作允许范围，并非每项都已采用；<code>plan_operation_id</code>、<code>plan_result_sha256</code> 关联规划结果。这些字段不能由请求方提交，也不等于实际样片的渲染证据。方法只有确实需要 Manim 才携带 producer 依赖。历史冻结请求及原幂等键重放保持原流程。</p>
+        <p>当 HTML/SVG 不在原画面选集且仅为 Manim 辅助承载时，<code>creation</code> 只列 <code>manim</code>，<code>motion</code> 为空；若原选集显式包含 <code>html-svg</code> 且规划采用 HTML/SVG 和 Manim，则同时列两项，浏览器动作约束仍适用。</p>
+        <p>选择 Manim 时，可省略 <code>resource_authoring</code>；规划采用 Manim 后使用默认资源参数：640×360、24 fps、从第 0 帧开始，默认 48 帧或不足 48 帧的视频总帧数。需要控制时，可传 <code>{"kind":"manim","frame_count":48,"global_start_frame":0}</code>。在新选集包含 Manim 的请求里，这是按需候选参数，本身不触发制作；没有提供或继承 <code>capability_selection</code> 而显式提供 <code>resource_authoring</code> 时，仍表示在主动画规划前预制真实资源。API 允许 1–60 帧，且资源不能超出整片时间线；网页表单限定 0.5–2.5 秒。非空画面选择不含 Manim 时不能同时传 Manim 资源。协作暂不支持 Manim。</p>
+        <p>详情的资源状态 <code>awaiting_plan</code> 表示等待规划，<code>not_adopted</code> 表示规划未采用 Manim、资源制作次数为零。两者均不代表资源或样片已完成。</p>
+        <p class="note">这项选择只用于动画实验室及其 API。正式视频制作不增加能力选择表单，由 Agent 根据表达目标和已发布的 WikiSkill 按需选择。请求选择不等于实际使用证据，也不代表视觉质量已经认可。</p>
+      </section>
+
       <section id="results">
         <h2>状态与下载</h2>
         <div class="table">
@@ -143,6 +171,8 @@
               <tr><td><code>summary</code> / <code>error</code></td><td>结果说明 / 失败代码，可能为空。</td></tr>
               <tr><td><code>best_candidate_id</code></td><td>当前选中候选，可能为空。</td></tr>
               <tr><td><code>candidates</code></td><td>候选的 <code>id</code>、<code>media_url</code>、<code>source_url</code>、<code>technical_status</code> 等。</td></tr>
+              <tr><td><code>capability_selection</code></td><td>本次公开的冻结选择，旧自动任务可能不返回此字段。它是创作约束，不能当成样片实际使用能力的标签。</td></tr>
+              <tr><td><code>adopted_capabilities</code></td><td>规划后宿主冻结的只读采用决定，规划前为 <code>null</code>，旧任务可省略；不能当作渲染或质量证据。</td></tr>
               <tr><td><code>collaboration</code></td><td>可选的只读协作进度：<code>stage</code>、<code>components</code> 的标题与状态、<code>completed</code>/<code>total</code> 和 <code>author_calls_used</code>/<code>author_calls_max</code>。创作计数含已预留任务，不代表模型请求数。缺少计数不等于零，不把部件完成当作样片认可。</td></tr>
             </tbody>
           </table>
@@ -159,6 +189,22 @@ curl --fail-with-body --cookie cookies.txt \
         <p>媒体为 <code>video/mp4</code>，支持单段字节 Range；源码为 <code>application/json</code> 文件。</p>
       </section>
 
+      <section id="inspection">
+        <h2>查看需求与逐轮 Agent 输入</h2>
+        <p>表达目标不是完整 prompt。以下两个 GET 沿用现有登录与开发者权限，无需 CSRF，不启动、续跑任务或唤醒执行器。按需读取，避免加入详情的高频轮询；每个 UTF-8 JSON 响应上限 6 MiB。</p>
+        <pre><code>GET /commissions/{commission_id}/prompt-inspection
+GET /commissions/{commission_id}/operations/{operation_id}/input</code></pre>
+        <p>第一个入口返回 <code>submission</code>、<code>effective_request</code> 和 <code>operations</code> 索引。<code>submission.origin=captured_request</code>、<code>is_original=true</code> 是新请求保存的原提交 JSON；历史数据为 <code>reconstructed_frozen_fields</code>、<code>false</code>，明确表示按冻结字段还原。有效需求另列默认值和继承后的实际冻结内容；两份文档都带 <code>sha256</code>。</p>
+        <p>操作索引包含 ID、阶段、状态、轮次及依据、输入摘要和 <code>input_url</code>。主规划轮次为 0，创作按实际顺序从 1 开始，评审关联对应候选；无法核实为 <code>null</code>。协作阶段另含 <code>phase</code>、<code>component_id</code>，仍遵守原有单轮合同。已有预占输入不表示模型已经执行或制作成功。</p>
+        <p>个别输入不能安全读取时，该项返回 <code>available:false</code>、<code>input_url:null</code> 和稳定原因码 <code>unavailable_reason</code>，其余可读项仍可查看；账本整体完整性异常则可能拒绝读取。<code>effective_request</code> 的预算是冻结执行计数，不可原样当成新制作请求。</p>
+        <p>第二个入口按需返回真实冻结的 <code>input</code> 与 <code>input_sha256</code>，可能包含需求、方法、约束、观察与知识快照。摘要针对 canonical JSON，不是下载文件排版后的字节；输入中的 URL 不会被递归重写。使用索引中的站点根相对 <code>input_url</code> 时，不要重复添加 <code>/dev/animations</code>。其他用户、已删除委托或跨委托的操作不可读取。</p>
+        <p class="note">当前范围是主委托的规划、创作、评审及协作 Agent 输入。渲染和独立资源账本中的 Manim recipe 不在索引中。不提供运行凭据，也不猜测没有冻结证据的历史系统提示词；不能把目标文本或候选源码当成完整 prompt。</p>
+        <pre><code>curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/prompt-inspection \
+  --output experiment-requirements.json</code></pre>
+        <p>操作输入可按返回的 <code>input_url</code> 使用同样方式保存；操作 ID 应原样使用并进行路径段编码。网页也提供复制与 JSON 导出。</p>
+      </section>
+
       <section id="iterate">
         <h2>继续优化</h2>
         <p>仍用 <strong>POST /commissions</strong>，新建 <code>request_id</code>，传入基线和改进目标。保存为新的 JSON 文件，再使用前述提交命令。</p>
@@ -173,6 +219,12 @@ curl --fail-with-body --cookie cookies.txt \
   "feedback": "保留总体与选中点的对应关系，增大右侧标签间距，避免遮挡。"
 }</code></pre>
         <p>基线必须存在且当前用户可访问。省略 <code>base_candidate_id</code> 时使用基线的 <code>best_candidate_id</code>；省略 <code>criteria</code> 时继承基线标准。新请求创建新委托，原委托保留。</p>
+        <p>继续优化省略 <code>capability_selection</code> 时继承原选择；显式提交时采用本次选择，提交 <code>{"creation":[],"motion":[]}</code> 可恢复自动选择。详情中的 <code>resource_authoring</code> 是只读进度，不能直接作为下一次请求的资源参数。</p>
+        <h3>在同一效果下从零重做</h3><p>提交 <code>creation_mode:"fresh"</code>、所属 <code>effect_id</code>、本次 <code>goal</code> 和预算；不提交旧的基线或方法。可附 <code>problem_summary:[{"text":"已确认的问题","source":"developer"}]</code>。旧源码、布局与分工不作为创作起点。标准可省略，由 Agent 拟定记录后继续，不等待第二次确认。新作品先作为候选，保留原卡片默认展示，之后由你明确采用。</p>
+        <p>新建、继续优化和从零重做统一默认 <code>use_wikiskill:true</code>；设为 <code>false</code> 可不加载动效知识，平台工具和 HyperFrames 规范仍提供。实际选择与版本固定保留在本次输入中，不会因线上发版在中途改变。</p>
+        <h3>技术重试</h3><p>只有原执行已确认停止才能技术重试。使用新请求编号，仅提交 <code>{"request_id":"新UUID","retry_of_commission_id":"原委托ID","budget":{"max_rounds":1,"max_seconds":600}}</code>。服务保留原需求、标准、知识与已完成方案，只修失败环节。要改方向、技术选择或知识开关，请另开继续优化或从零重做实验；不得把技术重试当重新策划。</p>
+        <p>默认重试保留原冻结运行环境。若首次普通画面渲染失败、Agent 已完成源码且原任务确认停止，可在上述请求显式增加 <code>"renderer_rebind":"current-admitted"</code>，并保持 <code>max_rounds:1</code>。服务在新冻结的已准入环境重新渲染同一源码，不再调用创作 Agent；原输入、Job、源码及账本均保留。此入口暂不支持协作、Manim 或已有候选，资产哈希和库版本必须兼容。同一请求编号重放不会切换到后来环境。可在输入查看的 <code>renderer_rebind</code> 与 <code>render_replays</code> 核对新旧环境及分开的作者、渲染输入哈希；不能自行提交或修改绑定收据。网页原有“重试”按钮仍使用默认语义。</p>
+        <h3>采用默认展示作品</h3><p>明确选择后调用 <code>POST /commissions/{id}/adopt</code>，提交 <code>request_id</code>、<code>effect_id</code>、<code>candidate_id</code> 和详情中的 <code>representative_revision</code> 作为 <code>expected_revision</code>。发生冲突须重新读取，不自动覆盖。采用只更新效果卡片，不发布 WikiSkill 或授予审美认可。</p>
         <p>可附 <code>reference: {"url":"https://example.com/reference.mp4","start_seconds":0,"end_seconds":8}</code>。参考 URL 与片段时间只作为需求资料，链接不会自动读取或观看原片。请将关键视觉、节奏及目标效果写入 <code>goal</code> 或 <code>feedback</code>。</p>
       </section>
 

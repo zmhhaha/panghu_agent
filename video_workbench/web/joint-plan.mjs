@@ -39,7 +39,7 @@ export function jointPlanErrorLabel(code) {
 }
 
 export function jointPlanDraft() {
-  return { audience: '', goal: '', tone: 'conversational', instruction: '', preserve_script: false, library_release_id: '', dirty: false };
+  return { audience: '', goal: '', tone: 'conversational', instruction: '', preserve_script: false, use_wikiskill: true, library_release_id: '', dirty: false };
 }
 
 export function createJointPlanRequest(project, draft) {
@@ -50,10 +50,12 @@ export function createJointPlanRequest(project, draft) {
   }
   if (!TONES.has(draft.tone) || typeof draft.preserve_script !== 'boolean') throw new Error('请选择有效的讲述方式与原稿选项。');
   if (draft.library_release_id != null && (typeof draft.library_release_id !== 'string' || draft.library_release_id.length > 200)) throw new Error('请选择有效的技能版本。');
+  if (draft.use_wikiskill !== undefined && typeof draft.use_wikiskill !== 'boolean') throw new Error('请明确是否加载动效 WikiSkill。');
+  if (draft.use_wikiskill === false && draft.library_release_id) throw new Error('关闭动效 WikiSkill 时不能同时指定技能版本。');
   return Object.freeze({ path: `/api/projects/${encodeURIComponent(project.id)}/joint-plan`,
     body: Object.freeze({ expected_revision: project.revision,
       brief: Object.freeze({ audience: draft.audience.trim(), goal: draft.goal.trim(), tone: draft.tone }),
-      instruction: draft.instruction.trim(), preserve_script: draft.preserve_script,
+      instruction: draft.instruction.trim(), preserve_script: draft.preserve_script, use_wikiskill: draft.use_wikiskill !== false,
       ...(draft.library_release_id ? { library_release_id: draft.library_release_id } : {}) }) });
 }
 
@@ -117,7 +119,9 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
     if (!version) return;
     const result = version.result ?? {}, estimate = jointPlanEstimate(version);
     target.append(text('h3', '整片方案'), text('p', result.summary ?? '', 'preserve-whitespace'));
-    if (version.library_binding) target.append(text('p', version.library_binding.release_id
+    if (version.library_binding) target.append(text('p', version.library_binding.use_wikiskill === false
+      ? '本次统筹及后续制作关闭动效 WikiSkill，平台运行规范仍提供。'
+      : version.library_binding.release_id
       ? `本次统筹及后续制作固定使用技能版本 ${version.library_binding.release_sequence}。`
       : '本次统筹及后续制作固定使用空技能目录，可自由创作。', 'field-note'));
     if (result.skill_decisions?.length) {
@@ -214,7 +218,9 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
     $('joint-plan-preserve-script').checked = draft.preserve_script;
     $('joint-plan-preserve-script').disabled = !context.configured;
     const releaseSelect = $('joint-plan-library-release');
-    const retiredSelection = Boolean(library && draft.library_release_id
+    $('joint-plan-use-wikiskill').checked = draft.use_wikiskill !== false;
+    $('joint-plan-use-wikiskill').disabled = !context.configured || unresolved || submitting;
+    const retiredSelection = Boolean(draft.use_wikiskill !== false && library && draft.library_release_id
       && !(library.releases ?? []).some(row => row.id === draft.library_release_id));
     const releaseOptions = [text('option', '当前正式版（默认）'), ...(library?.releases ?? []).map(release => {
       const option = text('option', `版本 ${release.sequence}${release.id === library.active_release_id ? ' · 当前正式版' : ''}${release.summary ? ` · ${release.summary}` : ''}`);
@@ -226,8 +232,10 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
       retired.value = draft.library_release_id; retired.disabled = true; releaseOptions.push(retired);
     }
     releaseSelect.replaceChildren(...releaseOptions); releaseSelect.value = draft.library_release_id;
-    releaseSelect.disabled = !context.configured || unresolved || submitting || libraryUnavailable;
-    $('joint-plan-library-note').textContent = libraryUnavailable
+    releaseSelect.disabled = draft.use_wikiskill === false || !context.configured || unresolved || submitting || libraryUnavailable;
+    $('joint-plan-library-note').textContent = draft.use_wikiskill === false
+      ? '本次不加载动效 WikiSkill；平台工具和 HyperFrames 运行规范仍提供。统筹、资源、画面与打磨保持关闭，采用旧方案继续制作仍沿用旧方案的选择。'
+      : libraryUnavailable
       ? '暂时无法读取可选技能版本；已有方案与制作保留。可重新读取方案后再选择。'
       : '从统筹到画面制作、打磨始终使用同一版；重试不会更新版本。重新统筹默认使用当前正式版，可选最近五版。';
     $('generate-joint-plan').disabled = !context.configured || !fresh || !project.script?.trim() || unresolved || submitting || blocked || retiredSelection;
@@ -334,7 +342,7 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
     if (!project || !context.configured || context.unsaved || context.projectBusy || busy.has(project.id)
         || revisions.get(project.id) !== project.revision || isUnresolvedProductionOperation(dataFor(project.id)?.operation)
         || !$('joint-plan-form').reportValidity()) return;
-    if (library && draftFor(project.id).library_release_id
+    if (draftFor(project.id).use_wikiskill !== false && library && draftFor(project.id).library_release_id
         && !(library.releases ?? []).some(row => row.id === draftFor(project.id).library_release_id)) {
       onError(new Error('此历史技能版已退出最近五版，请重新选择。')); return;
     }
@@ -344,7 +352,9 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
       cache.set(project.id, { ...(dataFor(project.id) ?? { versions: [], head_version_id: null }), operation });
       const draft = draftFor(project.id), body = intent.body;
       if (draft.audience.trim() === body.brief.audience && draft.goal.trim() === body.brief.goal
-          && draft.tone === body.brief.tone && draft.instruction.trim() === body.instruction && draft.preserve_script === body.preserve_script) draft.dirty = false;
+          && draft.tone === body.brief.tone && draft.instruction.trim() === body.instruction && draft.preserve_script === body.preserve_script
+          && (draft.use_wikiskill !== false) === body.use_wikiskill
+          && draft.library_release_id === (body.library_release_id ?? '')) draft.dirty = false;
       onSuccess('整片方案已开始生成。完成后查看旁白、画面与衔接，再一次确认整份方案。');
     });
   }
@@ -384,6 +394,11 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
   $('joint-plan-library-release').addEventListener('change', event => {
     const id = current().project?.id; if (!id) return;
     Object.assign(draftFor(id), { library_release_id: event.target.value, dirty: true }); render();
+  });
+  $('joint-plan-use-wikiskill').addEventListener('change', event => {
+    const id = current().project?.id; if (!id) return;
+    Object.assign(draftFor(id), {use_wikiskill: event.target.checked,
+      ...(event.target.checked ? {} : {library_release_id: ''}), dirty: true}); render();
   });
   $('joint-plan-library-options').addEventListener('toggle', async () => {
     if (!$('joint-plan-library-options').open) return;

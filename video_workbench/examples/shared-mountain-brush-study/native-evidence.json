@@ -1,0 +1,223 @@
+{
+  "schema": "video.shared-mountain-brush-native-study.v1",
+  "date": "2026-11-23",
+  "scope": "actual_native_static_pixels_not_artistic_acceptance",
+  "source_sha256": "5a9ea515a521027e38d511c8ab98add1ca8595934d09408905f9f4642fe7485f",
+  "source_strategy": {
+    "description": "The same shared mountain geometry and fixed composition with sparse grouped wet and dry brush contacts, deliberate light-side gaps, short broken ridge accents, subdued distant ink, fuller pine clusters and fine pigment granulation.",
+    "tradeoffs": "Lighting is an authored upper-right backlight convention for contact placement, not a diffuse shaded underpainting. Smoothed normals/flow guide brushwork only; raw depth, position, geometry and occlusion stay unchanged. Fixed view remains a static artistic study pending review."
+  },
+  "before_source_sha256": "9b163af86fb091efae2caea64caa5e60720157caac016b9b02e9d8b4817b13b2",
+  "invariants": {
+    "geometry_and_field_source_sha256": "92c228541a4588fae4d8b347b7dddfd8fb85d97a67a0107641f7b674dbf50ac5",
+    "coverage_source_sha256": "205580f399089c1d2480bed9f2f2e70cc562e8beb910d97c04e4cac4cbef5fa9",
+    "plan_file_sha256": "21ef5296f64ce8bce2993e2a16cfa591714608bcee3bee04646338343e2162ae",
+    "geometry_unchanged": true,
+    "coverage_unchanged": true,
+    "plan_unchanged": true,
+    "runtime_unchanged": true,
+    "source_scope": "manual_artwork_example_not_runtime_or_learning_defaults"
+  },
+  "result": {
+    "checks": {
+      "repeat_passed": true,
+      "reverse_passed": true,
+      "reload_passed": true,
+      "samples": [
+        {
+          "frame": 0,
+          "sha256": "4743a5352c20d5f4d6212b3c9f35b3608b4bc489c0265bbf0123207007488a71"
+        }
+      ]
+    },
+    "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+    "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+    "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+    "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+    "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+    "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+    "scene_space_observation": {
+      "schema": "video.scene-space-compositor-observation.v1",
+      "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+      "objects_painted": 10,
+      "frames_composited": 4,
+      "cache_hits": 40,
+      "cache_pixels": 1890993,
+      "peak_work_pixels": 2764800,
+      "coverage_callbacks": 10,
+      "coverage_objects": 2,
+      "coverage_peak_pixels": 921600,
+      "coverage_contexts": 1,
+      "surface_helper_calls": {},
+      "geometry_helper_calls": {
+        "createTerrainMesh": 2,
+        "projectMesh": 2,
+        "sampleProjection": 235600,
+        "projectPoint": 186
+      },
+      "recipes_executed": 0,
+      "scope": "host_compositor_execution_not_visual_acceptance",
+      "runtime_revision": "scene-space-compositor-3",
+      "surface_field_usage": {
+        "fields_created": 0,
+        "fields_reserved": 0,
+        "numeric_bytes_reserved": 0,
+        "max_fields": 64,
+        "max_total_field_bytes": 16777216
+      },
+      "geometry_resource_usage": {
+        "meshes_created": 2,
+        "projections_created": 2,
+        "handles_reserved": 4,
+        "numeric_bytes_reserved": 3798576,
+        "max_handles": 32,
+        "max_total_bytes": 16777216
+      },
+      "frame_range": {
+        "end_frame": 1,
+        "start_frame": 0
+      },
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "artwork_api_revision": 3
+    },
+    "engine_observation": {
+      "engine": "canvas",
+      "revision": "animation-engine-runtime-1",
+      "contexts": [
+        {
+          "kind": "2d",
+          "width": 1280,
+          "height": 720,
+          "connected": true,
+          "visible": true
+        },
+        {
+          "kind": "2d",
+          "width": 1280,
+          "height": 720,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 0,
+          "height": 0,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 54,
+          "height": 54,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 112,
+          "height": 76,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 1280,
+          "height": 185,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 570,
+          "height": 330,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 250,
+          "height": 190,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 710,
+          "height": 210,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 0,
+          "height": 0,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 145,
+          "height": 135,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 95,
+          "height": 102,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 1280,
+          "height": 240,
+          "connected": false,
+          "visible": false
+        },
+        {
+          "kind": "2d",
+          "width": 1280,
+          "height": 720,
+          "connected": false,
+          "visible": false
+        }
+      ]
+    },
+    "loaded_scripts": [
+      "/assets/ink-landscape.mjs",
+      "/runtime/scene-space-runtime.mjs",
+      "/runtime/scene_space_geometry.mjs",
+      "/runtime/scene_space_geometry_budget.mjs",
+      "/runtime/scene_space_surface.mjs",
+      "/runtime/scene_space_surface_budget.mjs",
+      "/scene.js"
+    ]
+  },
+  "source_files_sha256": {
+    "scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
+    "scene.js": "376273ac5a24243fc2062dedc2d1c002984eff46a4882e1875e092b83344153f"
+  },
+  "trials": {
+    "native_candidate_count": 6,
+    "retained_candidate": "final-native",
+    "rejected": [
+      "isolated_short_marks",
+      "granular_grey_base",
+      "hard_wet_footprint_patches",
+      "soft_grey_base_with_sparse_marks"
+    ],
+    "note": "Earlier previews remain in the operation directory; image quality is not inferred from execution checks."
+  },
+  "artistic_acceptance": false,
+  "effect_adopted": false,
+  "wikiskill_published": false,
+  "model_calls": 0,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false
+}

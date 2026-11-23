@@ -1,0 +1,334 @@
+"""Authenticated private queue for the versioned scene-space renderer.
+
+GET is read-only. A durable claim is written before invoking the renderer;
+uncertain work is reconciled by the same ID and is never automatically rerun.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+from contextlib import contextmanager
+import hashlib
+import json
+from pathlib import Path
+import sqlite3
+import time
+from urllib.parse import quote, unquote
+
+from agent_service.contracts import ServiceError, canonical_bytes, digest
+from .animation_creation_http import CreationAPIClient, CreationTransportError
+from .picture_learning_store import owner_id, identifier, _plain
+from .scene_space_plan import freeze_plan, technical_retry
+
+PREFIX='/api/scene-space-renders'
+MAX_BODY=24*1024*1024
+
+
+def _require(ok,code='scene_space_render_request_invalid',status=422):
+    if not ok:raise ServiceError(code,status)
+
+
+class SceneSpaceRenderClient(CreationAPIClient):
+    def _request(self,*args,**kwargs):
+        try:return super()._request(*args,**kwargs)
+        except CreationTransportError as error:
+            raise ServiceError(error.code,error.status) from None
+
+    def start(self,owner,request,request_key):
+        identifier(request_key)
+        return self._request(owner,'POST',PREFIX,dict(request,request_id=request_key))
+
+    def lookup(self,owner,request_key):
+        identifier(request_key)
+        try:return self._request(owner,'GET',PREFIX+'/requests/'+quote(request_key,safe=''))
+        except ServiceError as error:
+            if error.status==404:return None
+            raise
+
+    def get(self,owner,operation_id):
+        identifier(operation_id)
+        return self._request(owner,'GET',PREFIX+'/'+quote(operation_id,safe=''))
+
+    def cancel(self,owner,operation_id):
+        identifier(operation_id)
+        return self._request(owner,'POST',PREFIX+'/'+quote(operation_id,safe='')+'/cancel',{})
+
+    def video(self,owner,operation_id):
+        identifier(operation_id)
+        return self._request(owner,'GET',PREFIX+'/'+quote(operation_id,safe='')+'/video',artifact=True)
+
+    def capabilities(self,owner):
+        return self._request(owner,'GET',PREFIX+'/capabilities')
+
+
+class SceneSpaceRenderService:
+    def __init__(self,root,renderer,*,clock=time.time,monotonic=time.monotonic):
+        self.root=_plain(root);self.root.mkdir(parents=True,exist_ok=True)
+        self.path=self.root/'queue.sqlite3';self.renderer=renderer
+        self.clock,self.monotonic=clock,monotonic
+        with self._db() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS operations(owner TEXT NOT NULL,id TEXT NOT NULL,'
+                'request_id TEXT NOT NULL,request_sha256 TEXT NOT NULL,document TEXT NOT NULL,'
+                'PRIMARY KEY(owner,id),UNIQUE(owner,request_id))')
+
+    @contextmanager
+    def _db(self):
+        _plain(self.path)
+        db=sqlite3.connect(self.path,timeout=15)
+        db.row_factory=sqlite3.Row
+        try:
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback();raise
+        finally:db.close()
+
+    @staticmethod
+    def _load(db,owner,operation_id):
+        owner_id(owner);identifier(operation_id)
+        row=db.execute('SELECT document FROM operations WHERE owner=? AND id=?',
+            (owner,operation_id)).fetchone()
+        _require(row is not None,'scene_space_render_not_found',404)
+        return json.loads(row['document'])
+
+    @staticmethod
+    def _public(row):
+        result={key:deepcopy(row[key]) for key in ('id','status','stop_proven','request_sha256',
+            'plan_sha256','source_sha256','created_at','updated_at','result','usage','error')}
+        if row.get('stop_verification_error') is not None:
+            result['stop_verification_error']=row['stop_verification_error']
+        return result
+
+    def _put(self,db,row):
+        row['updated_at']=self.clock()
+        db.execute('UPDATE operations SET document=? WHERE owner=? AND id=?',
+            (canonical_bytes(row).decode(),row['owner'],row['id']))
+
+    def capabilities(self,owner):
+        owner_id(owner)
+        value=deepcopy(self.renderer.capabilities())
+        provider=getattr(self.renderer,'authoring_constraints',None)
+        if callable(provider):value['authoring_constraints']=provider()
+        return value
+
+    def _runtime_identity(self,operation_id,value):
+        prepare=getattr(self.renderer,'validate_request',None)
+        if callable(prepare):
+            binding=prepare(operation_id,value['source'],value['document'],scene_space=value['scene_space'],
+                deadline_at=value.get('deadline_at'),frame_range=value.get('frame_range'))
+            if type(binding) is dict and type(binding.get('request')) is dict:
+                return dict(identity_sha256=digest(dict(request=binding['request'],image=binding['image'],
+                    timeout_seconds=binding['configured_timeout_seconds'])),request_sha256=binding['request_sha256'])
+        return dict(identity_sha256=digest(self.renderer.capabilities()),request_sha256=None)
+
+    def start(self,owner,request,request_key=None):
+        owner_id(owner)
+        _require(type(request) is dict and {'source','document','scene_space'}<=set(request)
+            <={'source','document','scene_space','deadline_at','request_id','frame_range'})
+        request_key=request_key if request_key is not None else request.get('request_id')
+        identifier(request_key)
+        value={key:deepcopy(item) for key,item in request.items() if key!='request_id'}
+        _require(len(canonical_bytes(value))<=MAX_BODY,'scene_space_render_request_too_large',413)
+        fingerprint=digest(value)
+        # Replays retain their original deadline and runtime, including after
+        # completion or a later deployment. Only fresh requests preflight anew.
+        with self._db() as db:
+            previous=db.execute('SELECT document,request_sha256 FROM operations WHERE owner=? AND request_id=?',
+                (owner,request_key)).fetchone()
+            if previous:
+                _require(previous['request_sha256']==fingerprint,'scene_space_render_idempotency_conflict',409)
+                return self._public(json.loads(previous['document']))
+        plan=value['scene_space']
+        frozen=(technical_retry(plan,plan.get('plan_sha256')) if type(plan) is dict
+            and plan.get('schema')=='video.scene-space-frozen-plan.v1' else freeze_plan(plan))
+        source=value['source']
+        _require(type(source) is dict and source.get('engine')=='canvas'
+            and type(value['document']) is dict,'scene_space_render_source_invalid')
+        from agent_service.profiles.video_animation_experiment import _validate_source_output
+        from agent_service.profiles.video_animation_create import source_sha256
+        checked=_validate_source_output({key:source.get(key) for key in ('engine','strategy','files')})
+        source_hash=source_sha256(checked)
+        _require(source.get('source_sha256',source_hash)==source_hash,'scene_space_render_source_changed',409)
+        frame_range=value.get('frame_range')
+        if frame_range is not None:
+            _require(type(frame_range) is dict and set(frame_range)=={'start_frame','end_frame'}
+                and all(type(frame_range[key]) is int for key in frame_range)
+                and 0<=frame_range['start_frame']<frame_range['end_frame']<=frozen['plan']['duration_frames'],
+                'scene_space_render_frame_range_invalid')
+        if value.get('deadline_at') is not None:
+            deadline=value['deadline_at']
+            _require(type(deadline) in (int,float) and self.clock()+30<=deadline<=self.clock()+3600,
+                'scene_space_render_deadline_invalid')
+        identity='ss-'+digest([owner,request_key])[:48]
+        runtime_identity=self._runtime_identity(identity,value)
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            previous=db.execute('SELECT document,request_sha256 FROM operations WHERE owner=? AND request_id=?',
+                (owner,request_key)).fetchone()
+            if previous:
+                _require(previous['request_sha256']==fingerprint,'scene_space_render_idempotency_conflict',409)
+                return self._public(json.loads(previous['document']))
+            active=db.execute("SELECT count(*) FROM operations WHERE owner=? AND json_extract(document,'$.status') "
+                "IN ('queued','running','reconciling','cancelling')",(owner,)).fetchone()[0]
+            _require(active<16,'scene_space_render_queue_full',429)
+            row=dict(owner=owner,id=identity,request_id=request_key,request_sha256=fingerprint,
+                request=value,plan_sha256=frozen['plan_sha256'],source_sha256=source_hash,
+                runtime_identity_sha256=runtime_identity['identity_sha256'],
+                render_request_sha256=runtime_identity['request_sha256'],
+                status='queued',stop_proven=False,created_at=self.clock(),updated_at=self.clock(),
+                cancel_requested=False,result=None,usage=None,error=None)
+            db.execute('INSERT INTO operations VALUES (?,?,?,?,?)',
+                (owner,identity,request_key,fingerprint,canonical_bytes(row).decode()))
+            return self._public(row)
+
+    def get(self,owner,operation_id):
+        with self._db() as db:return self._public(self._load(db,owner,operation_id))
+
+    def lookup(self,owner,request_key):
+        owner_id(owner);identifier(request_key)
+        with self._db() as db:
+            row=db.execute('SELECT document FROM operations WHERE owner=? AND request_id=?',
+                (owner,request_key)).fetchone()
+            _require(row is not None,'scene_space_render_not_found',404)
+            return self._public(json.loads(row['document']))
+
+    def pending(self,limit=100):
+        _require(type(limit) is int and 1<=limit<=100)
+        with self._db() as db:
+            rows=db.execute("SELECT owner,id FROM operations WHERE json_extract(document,'$.status') "
+                "IN ('queued','running','reconciling','cancelling') ORDER BY rowid LIMIT ?",(limit,)).fetchall()
+        return [dict(owner=row['owner'],id=row['id']) for row in rows]
+
+    def cancel(self,owner,operation_id):
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=self._load(db,owner,operation_id)
+            if row['status'] in {'completed','failed','cancelled'}:return self._public(row)
+            row['cancel_requested']=True
+            if row['status']=='queued':row.update(status='cancelled',stop_proven=True)
+            else:row['status']='cancelling'
+            self._put(db,row)
+            return self._public(row)
+
+    def advance(self,owner,operation_id):
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=self._load(db,owner,operation_id)
+            if row['status'] in {'completed','failed','cancelled'}:return self._public(row)
+            execute=row['status']=='queued'
+            if execute:
+                try:
+                    current_identity=self._runtime_identity(operation_id,row['request'])
+                    _require(current_identity['identity_sha256']==row['runtime_identity_sha256']
+                        and current_identity['request_sha256']==row['render_request_sha256'],
+                        'scene_space_render_frozen_runtime_changed',409)
+                    deadline=row['request'].get('deadline_at')
+                    _require(deadline is None or deadline>=self.clock()+30,
+                        'scene_space_render_deadline_insufficient',409)
+                except ServiceError as error:
+                    if error.status>=500:
+                        row['error']='scene_space_render_preflight_unavailable'
+                    else:
+                        row.update(status='failed',stop_proven=True,error=error.code,
+                            usage=dict(model_calls=0,model_tokens=0,render_seconds=0))
+                    self._put(db,row);return self._public(row)
+                row['status']='running';self._put(db,row)
+        elapsed=None
+        try:
+            if execute:
+                started=self.monotonic()
+                request=row['request']
+                result=self.renderer.render(operation_id,request['source'],request['document'],
+                    scene_space=request['scene_space'],deadline_at=request.get('deadline_at'),
+                    **({'frame_range':request['frame_range']} if 'frame_range' in request else {}),
+                    **({'expected_request_sha256':row['render_request_sha256']} if row['render_request_sha256'] else {}))
+                elapsed=self.monotonic()-started
+            else:result=self.renderer.lookup(operation_id)
+            with self._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                current=self._load(db,owner,operation_id)
+                if current['status'] in {'completed','failed','cancelled'}:
+                    return self._public(current)
+                if result is None or result.get('stop_proven') is not True:
+                    current['status']='cancelling' if current['cancel_requested'] else 'reconciling'
+                    self._put(db,current);return self._public(current)
+                current['stop_proven']=True
+                current['usage']=dict(model_calls=0,model_tokens=0,render_seconds=elapsed)
+                if current['cancel_requested']:
+                    current.update(status='cancelled',error='scene_space_render_cancelled')
+                elif result.get('technical_passed') is True and result.get('status')=='rendered':
+                    path=Path(result['artifact_path']);raw=path.read_bytes()
+                    _require(0<len(raw)<=32*1024*1024 and hashlib.sha256(raw).hexdigest()==result['sha256'],
+                        'scene_space_render_media_changed',409)
+                    frozen=current['request']['scene_space']
+                    plan=frozen['plan'] if frozen.get('schema')=='video.scene-space-frozen-plan.v1' else frozen
+                    _require(result.get('scene_space',{}).get('plan_sha256')==current['plan_sha256']
+                        and result.get('source_sha256')==current['source_sha256'],
+                        'scene_space_render_result_changed',409)
+                    _require(current['render_request_sha256'] is None
+                        or result.get('render_request_sha256')==current['render_request_sha256'],
+                        'scene_space_render_frozen_runtime_changed',409)
+                    metadata={key:deepcopy(value) for key,value in result.items() if not key.endswith('_path')}
+                    static='duration_seconds' not in current['request']['document'].get('constraints',{})
+                    frame_range=current['request'].get('frame_range',dict(start_frame=0,end_frame=1 if static else plan['duration_frames']))
+                    expected_count=frame_range['end_frame']-frame_range['start_frame']
+                    _require(result.get('frame_count')==expected_count and type(result.get('frame_count')) is int
+                        and result.get('fps')==24 and result.get('mime')==('image/png' if static else 'video/mp4'),
+                        'scene_space_render_media_clock_changed',409)
+                    metadata.update(bytes=len(raw),frame_count=expected_count,fps=24,
+                        snapshot_sha256=result['scene_space_sha256'],
+                        plan_sha256=current['plan_sha256'],source_sha256=current['source_sha256'])
+                    current.update(status='completed',result=metadata,artifact_path=str(path))
+                else:current.update(status='failed',error='scene_space_render_failed')
+                self._put(db,current);return self._public(current)
+        except Exception as error:
+            with self._db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                current=self._load(db,owner,operation_id)
+                if current['status'] in {'completed','failed','cancelled'}:
+                    return self._public(current)
+                # A renderer exception alone cannot prove the container stopped.
+                try:
+                    proof=self.renderer.stopping_proof(operation_id)
+                except Exception as proof_error:
+                    proof=None
+                    current['stop_verification_error']=getattr(proof_error,'code',
+                        'scene_space_render_stop_verification_failed')
+                stopped=bool(type(proof) is dict and proof.get('stop_proven') is True
+                    or isinstance(error,ServiceError) and getattr(error,'not_dispatched',False) is True)
+                if stopped and execute and elapsed is None:
+                    elapsed=max(0,self.monotonic()-started)
+                current.update(status='failed' if stopped else 'reconciling',stop_proven=stopped,
+                    error=getattr(error,'code','scene_space_render_executor_error'),
+                    usage=dict(model_calls=0,model_tokens=0,render_seconds=elapsed))
+                self._put(db,current);return self._public(current)
+
+    def video(self,owner,operation_id):
+        with self._db() as db:row=self._load(db,owner,operation_id)
+        _require(row['status']=='completed' and row['stop_proven'],'scene_space_render_media_unavailable',409)
+        path=_plain(row['artifact_path']);raw=path.read_bytes()
+        _require(len(raw)==row['result']['bytes'] and hashlib.sha256(raw).hexdigest()==row['result']['sha256'],
+            'scene_space_render_media_changed',409)
+        return raw,row['result'].get('mime','video/mp4')
+
+
+def route_private(handler,owner,method,path,body=None):
+    if not (path==PREFIX or path.startswith(PREFIX+'/')):return False
+    service=getattr(handler.server,'scene_space_service',None)
+    _require(service is not None,'scene_space_render_unavailable',503)
+    pieces=path[len(PREFIX):].strip('/').split('/')
+    if method=='GET':
+        if pieces==['capabilities']:value=service.capabilities(owner)
+        elif len(pieces)==2 and pieces[0]=='requests':value=service.lookup(owner,unquote(pieces[1]))
+        elif len(pieces)==2 and pieces[1]=='video':
+            raw,mime=service.video(owner,unquote(pieces[0]));handler._send(raw,raw=True,mime=mime);return True
+        elif len(pieces)==1 and pieces[0]:value=service.get(owner,unquote(pieces[0]))
+        else:raise ServiceError('scene_space_render_not_found',404)
+        handler._send(value);return True
+    if method=='POST' and path==PREFIX:
+        value=service.start(owner,body)
+        if getattr(handler.server,'scene_space_pump',None):handler.server.scene_space_pump.notify()
+        handler._send(value,202);return True
+    if method=='POST' and len(pieces)==2 and pieces[1]=='cancel':
+        _require(body=={})
+        handler._send(service.cancel(owner,unquote(pieces[0])));return True
+    raise ServiceError('scene_space_render_not_found',404)

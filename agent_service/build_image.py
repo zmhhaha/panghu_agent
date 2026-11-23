@@ -55,8 +55,16 @@ PRODUCTION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'production-procedure/SK
 # older observe/review resources still referenced by immutable accepted Hosts.
 # These pins deliberately remain independent of importing the service runtime.
 ANIMATION_RUNTIME_BUNDLES = (
+    ('reference-learning-v1', '4bfbd0f9bb20c8a055417287c67e6be14fc05089fba28d8618dad16d40eb119e',
+     frozenset({'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md'})),
+    ('picture-learning-v1', 'f99ab90f2863220a59a6d760bb5a422717830d46774d76df45ef2ccd1a8ecde6',
+     frozenset({'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md'})),
     ('animation-collaboration-v1', 'd8c3070184a0d18e0d2224c6245879cf6c934512d341a9423712617af0af42a5',
      frozenset({'CONTRACT.md', 'LICENSE', 'collaboration-procedure/SKILL.md'})),
+    ('animation-wikiskill-v4', '46d5522c97127e9de73e7c8006462eb6cf7a8d31b8e0474c67934cfa29e3e661',
+     frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
+    ('animation-wikiskill-v3', '528e7d1f8daccff8425de2f4c763683d45137b989bebbaad998fe4a95f97c10c',
+     frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
     ('animation-wikiskill-v2', '8c9d0891c0d7dceb965ea63fc8b5c95dc82353bda7eee93b977473161d6eaa78',
      frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
     ('animation-wikiskill-v1', 'cbc8665c75cfaff22299f8444cd6863fb63c0eb13d2ce2b994cee58825572292',
@@ -68,6 +76,8 @@ ANIMATION_RUNTIME_BUNDLES = (
     ('animation-manim-recipe-v1', '051093b78ffa0d338627461094816831ca3075ec23f3b201ebd6f44f4f16ec98',
      frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
     ('animation-film-module-v1', 'fc40e7b8cab8bbbefc5ede30f9001aa64f197f296e84e9113fb45880106a628f',
+     frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
+    ('animation-film-module-v2', '53d43557bbd8e672ee2c45e536cff046f2f522b0b6086adc38d19ed5af01c414',
      frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
     ('video-joint-plan-v1', 'bc38815a2f394181383fa4cea3811380dc899f0cf3ad1e61a7e15f84552cc9ca',
      frozenset({'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md'})),

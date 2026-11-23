@@ -1,5 +1,9 @@
 # 动态视频工作台
 
+2026-11-24主线合并纳入视频学习及场景空间/共享几何实现；源码、历史运行记录和未完成
+范围见[合并验证](docs/mainline-scene-merge-20261124.md)。本页后续旧日期的设计补充保留
+当时语境，不覆盖新的[当前架构检查点](docs/current-architecture.md)。
+
 video-service 管理总文稿、整体方案、项目统一音色、资源、动画工程、候选、采用和交付；创作由通用 Agent / Pi 完成。开发者效果库积累完整表达片段，通过显式发版生成分层 WikiSkill，正式制作按需读取固定版本，为新内容创作。
 
 [当前架构与实施边界](docs/current-architecture.md)是当前实现入口，[文档导航](docs/README.md)区分操作指南、能力合同和历史验收。[统一设计](docs/agent-creation-effect-library-plan.md)记录完整目标；未完成任务以根仓库映射的 OpenSpec 项目为准。旧文档中的静态逐镜工作流、早期分支、任务计数和部署版本不覆盖当前状态。

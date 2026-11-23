@@ -1,0 +1,294 @@
+{
+  "schema": "video.sword-cloud-micro-native-study.v1",
+  "date": "2026-11-23",
+  "scope": "same_composition_manual_code_micro_refinement_pending_user_review",
+  "source_sha256": "252051e53abd6d1f94b13ce186420743f6bb152d5928b2cf0b076f6f1114a359",
+  "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+  "png_sha256": "3ff7e3c1b1312268bed688516cca26bb30a616cc82366d6cec83d6bf89b588e0",
+  "host_sha256": "357a4eac449540a59bdb04b52163e3c4e6c29f5edeb349871e7a976562b0f9be",
+  "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+  "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+  "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+  "checks": {
+    "repeat_passed": true,
+    "reverse_passed": true,
+    "reload_passed": true,
+    "samples": [
+      {
+        "frame": 0,
+        "sha256": "3ff7e3c1b1312268bed688516cca26bb30a616cc82366d6cec83d6bf89b588e0"
+      }
+    ]
+  },
+  "observation": {
+    "schema": "video.scene-space-compositor-observation.v1",
+    "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+    "objects_painted": 10,
+    "frames_composited": 4,
+    "cache_hits": 40,
+    "cache_pixels": 1890993,
+    "peak_work_pixels": 2764800,
+    "coverage_callbacks": 10,
+    "coverage_objects": 2,
+    "coverage_peak_pixels": 921600,
+    "coverage_contexts": 1,
+    "surface_helper_calls": {},
+    "recipes_executed": 0,
+    "scope": "host_compositor_execution_not_visual_acceptance",
+    "runtime_revision": "scene-space-compositor-2",
+    "surface_field_usage": {
+      "fields_created": 0,
+      "fields_reserved": 0,
+      "numeric_bytes_reserved": 0,
+      "max_fields": 64,
+      "max_total_field_bytes": 16777216
+    },
+    "frame_range": {
+      "end_frame": 1,
+      "start_frame": 0
+    },
+    "runtime_sha256": "a278f01dcfad2ca817f1243113f84f4f311cd80fd36a9b10f7a50fae249807c5",
+    "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+    "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+    "artwork_api_revision": 2
+  },
+  "native_contexts": 16,
+  "source_files_sha256": {
+    "scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
+    "scene.js": "f1b43ecb3935dd9609009509c994654a691cc23baef6faf8eb5d2d188030cdf1"
+  },
+  "source_layout": "seven_layers_ten_objects_with_separate_cloud_object_static_one_frame",
+  "new_external_model_calls": 0,
+  "render_seconds": null,
+  "render_seconds_scope": "native_probe_does_not_measure_complete_controller_operation",
+  "upstream": {
+    "repository": "https://github.com/LingDong-/shan-shui-inf",
+    "revision": "9f754d2b2e73495db7883d4d4055a7b0903b0454",
+    "license": "MIT",
+    "scope": "small_Canvas_adaptation_of_stroke_and_point_grid_texture_not_original_scene_generator"
+  },
+  "visual_review": {
+    "images_viewed": true,
+    "changes": [
+      "Sparse short broken folds and cavity ink interrupt selected vertical mountain contacts; bright seam fragments are shortened and weakened.",
+      "Only the right-hand bank-to-cloud contact is softened, retaining the foreground frame crop and root support.",
+      "Pine clusters use eccentric centres, nonuniform needle directions and back-pale/front-dark overlap."
+    ],
+    "lighting_scope": "Existing upper-right backlit intent retained; no unrelated left-front light or mandatory left-white/right-black rule.",
+    "remaining": [
+      "Long descending texture still dominates the overall peak style.",
+      "Pine clusters remain a procedural approximation."
+    ],
+    "artistic_acceptance": false
+  },
+  "adopted": false,
+  "deployed": false,
+  "wikiskill_published": false,
+  "formal_learning_runs_modified": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false,
+  "artifacts": [
+    {
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/brush/output.png",
+      "sha256": "3ff7e3c1b1312268bed688516cca26bb30a616cc82366d6cec83d6bf89b588e0"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/source.json",
+      "sha256": "9bf018e0cac38bf8ddb1b7de2e9102db2cb219bbd941bbd36c7df4577e3038a4"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/binding.json",
+      "sha256": "27c50fdf4040e2920347061e9ac2965fa77b402cd1a55bb9ed59f28cb9411ded"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final/plan.json",
+      "sha256": "350ee57652a60bbf7641613acd3c97e1544e0b169f0ae1b40be5cc0f6df9cd97"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/final-summary.json",
+      "sha256": "a9dcd4f84e8e220b5c33e571359b9dd4a910782397000fa4a4d1adeecb70f970"
+    },
+    {
+      "path": "D:/codex-work/operations/sword-cloud-micro-20261123/detail-comparison.png",
+      "sha256": "79daa685b44f6dca3f8c3d79675f60c7068869d525ab35e0f2a24c201cc2954b"
+    }
+  ],
+  "engine_observation": {
+    "engine": "canvas",
+    "revision": "animation-engine-runtime-1",
+    "contexts": [
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 720,
+        "connected": true,
+        "visible": true
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 720,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 54,
+        "height": 54,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 112,
+        "height": 76,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 185,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 570,
+        "height": 330,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 250,
+        "height": 190,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 710,
+        "height": 210,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 0,
+        "height": 0,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 145,
+        "height": 135,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 95,
+        "height": 102,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 240,
+        "connected": false,
+        "visible": false
+      },
+      {
+        "kind": "2d",
+        "width": 1280,
+        "height": 720,
+        "connected": false,
+        "visible": false
+      }
+    ]
+  },
+  "drawing_api_execution": {
+    "schema": "video.learning-drawing-api-execution.v1",
+    "scope": "v8_executed_functions_not_visual_application",
+    "module_sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6",
+    "functions": [
+      {
+        "function_name": "ease",
+        "start_offset": 20739,
+        "end_offset": 20781,
+        "call_count": 90882
+      },
+      {
+        "function_name": "finite3",
+        "start_offset": 20783,
+        "end_offset": 20939,
+        "call_count": 94960
+      },
+      {
+        "function_name": "seedValue2",
+        "start_offset": 21220,
+        "end_offset": 21375,
+        "call_count": 4078
+      },
+      {
+        "function_name": "hash",
+        "start_offset": 21681,
+        "end_offset": 21938,
+        "call_count": 181764
+      },
+      {
+        "function_name": "createNoise1D",
+        "start_offset": 21939,
+        "end_offset": 22426,
+        "call_count": 4078
+      },
+      {
+        "function_name": "freeze",
+        "start_offset": 100030,
+        "end_offset": 100232,
+        "call_count": 6014
+      },
+      {
+        "function_name": "getTechniqueReading",
+        "start_offset": 224144,
+        "end_offset": 224242,
+        "call_count": 200
+      },
+      {
+        "function_name": "entry",
+        "start_offset": 227948,
+        "end_offset": 229304,
+        "call_count": 200
+      }
+    ]
+  },
+  "previous_source_sha256": "0ab04ab93d5f23ab63b93321f6f2df54861e64f3e8d9107129132afa9e2652ae",
+  "previous_png_sha256": "3dec0e600b6c272bb9b07dc96a77c9759605db9f6c5a5bf6605581da1084e90a",
+  "composition_unchanged": true,
+  "user_feedback_on_previous_version": "Positive feedback on peak shape, cloud division, foreground dry texture and distant ridges; further micro refinement requested, no effect adoption requested."
+}

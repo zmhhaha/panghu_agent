@@ -1,0 +1,98 @@
+{
+  "schema": "video.lab-plan-before-resource-validation.v1",
+  "date": "2026-11-17",
+  "code_revision": "44224793afdcc2b1003fe88138e13aecf35c8e26",
+  "branch": "codex/video-capability-experiment-redesign",
+  "images": {
+    "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:b62e1ed52d0d7f949a52972a5a5939247b7f4346da39f7721c2b134044c8faef",
+    "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:8ca4a19d25b8a84786502d369e83f8f149f275c872373faed858e4cfc1a82f07"
+  },
+  "clean_git_full_source_build": true,
+  "python": {
+    "tests": 276,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 276
+  },
+  "node": {
+    "passed": 96,
+    "failed": 0,
+    "skipped": 0
+  },
+  "browser": {
+    "url": "https://video-service.panghuer.top/dev/animations/?planning=20261117",
+    "checks": {
+      "manim_only_native_text": true,
+      "manim_only_motion_disabled_and_cleared": true,
+      "mixed_motion_restored_and_cleared": true,
+      "mixed_can_select_anime": true,
+      "automatic_restored": true,
+      "plan_first_copy": true
+    },
+    "form_submitted": false
+  },
+  "invalid_requests": {
+    "checks": [
+      {
+        "case": "manim_motion_conflict",
+        "status": 422,
+        "code": "animation_creation_selection_manim_motion_conflict"
+      },
+      {
+        "case": "caller_resource_planning",
+        "status": 422,
+        "code": "animation_method_request_invalid"
+      },
+      {
+        "case": "caller_adopted_capabilities",
+        "status": 422,
+        "code": "animation_method_request_invalid"
+      }
+    ],
+    "commissions_created": 0,
+    "historical_effects_unchanged": true
+  },
+  "unchanged_historical_effects": 9,
+  "active_commissions": 0,
+  "database_backup": {
+    "count": 19,
+    "bytes": 82292736,
+    "quick_check_passed": true
+  },
+  "deployments": {
+    "executor": {
+      "replicas": 1,
+      "all_ready": true,
+      "source_verified": true
+    },
+    "lab": {
+      "replicas": 1,
+      "all_ready": true,
+      "source_verified": true
+    }
+  },
+  "model_requests": 0,
+  "cairo_runs": 0,
+  "new_renders": 0,
+  "wikiskill_publications": 0,
+  "observation_scope": "Controls, contracts, synthetic workflow regressions and live deployment; no new artistic quality claim",
+  "local_receipts": "D:\\codex-work\\operations\\plan-before-resource-20261117",
+  "server_receipts": "/root/video-releases/plan-before-resource-20261117",
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "change_id": "evolve-video-agent-creation-and-effect-library",
+    "revision": "7c71bf80771825661963172e91417f523c9c6387",
+    "valid": true,
+    "completed": [
+      "R.1",
+      "R.2",
+      "R.3"
+    ],
+    "task_status": {
+      "total": 88,
+      "completed": 61,
+      "remaining": 27
+    }
+  }
+}

@@ -12,11 +12,13 @@ from copy import deepcopy
 from agent_service.worker_entry import CATALOG_KEYS, HostConfig, WorkerConfigError, host_policy
 
 
-PROFILES = frozenset({'video.animation-wikiskill-compile.v1', 'video.animation-wikiskill-compile.v2', 'video.joint-plan.v2',
+PROFILES = frozenset({'video.animation-wikiskill-compile.v1', 'video.animation-wikiskill-compile.v2', 'video.animation-wikiskill-compile.v3', 'video.animation-wikiskill-compile.v4', 'video.joint-plan.v2',
                       'video.animation-create.v2', 'video.animation-review.v2',
                       'video.animation-review.v3', 'video.animation-review.v4',
                       'video.animation-method-author.v1', 'video.animation-method-review.v1',
                       'video.animation-method-author.v2', 'video.animation-method-review.v2',
+                      'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
+                      'video.reference-learning-author.v1', 'video.reference-learning-review.v1',
                       'video.animation-production.v1', 'video.animation-production.v2',
                       'video.animation-production.v3', 'video.animation-film-module.v1',
                       'video.animation-manim-recipe.v1',

@@ -1,0 +1,41 @@
+{
+  "date": "2026-11-16",
+  "application_revision": "5a93ea3323f065b0f4da6498f8c9ad44f13a0763",
+  "source_tree": "322c98c595343dae50c2da4bcea9fffe6372b324",
+  "build_mode": "ordinary-full-source-clean-pushed-git",
+  "images": {
+    "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:4c37f2c8b1007ab9bec29d7a392a8a64ab6010ec2f80d518fbd9eda243d4c584",
+    "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:de1b99cc4bc1d07903c4110a580a19602f67b7843303751985887a76221af498"
+  },
+  "deployment": {"ready": true, "runtime_digests_verified": true, "source_files_verified": 12, "configuration_preserved": true},
+  "checks": {
+    "clean_source_python_matrix": {"passed": 234, "skipped": 1},
+    "final_resource_stage_and_service_after_crash_fix": {"passed": 55, "overlaps_matrix": true},
+    "clean_source_node": {"passed": 88},
+    "database_backup": {"count": 19, "bytes": 82292736, "quick_check": "ok"}
+  },
+  "browser": {
+    "actual_authenticated_production": true,
+    "peer_creation_and_motion_groups": true,
+    "default_automatic": true,
+    "manim_duration_expands_when_selected": true,
+    "collaboration_preserves_canvas_and_anime_selection": true,
+    "collaboration_excludes_only_manim": true,
+    "form_restored_empty": true,
+    "experiment_submissions": 0
+  },
+  "live_catalogue": {"effects": 9, "active_commissions": 0, "historical_effect_projections_unchanged": true, "motion_tools": ["native-js", "gsap", "animejs"]},
+  "model_requests": 0,
+  "new_renders": 0,
+  "wikiskill_publications": 0,
+  "limits": [
+    "Automated producer, recipe and review peers are fixtures; these checks do not establish actual model-generated improvement or artistic acceptance.",
+    "Manim is not admitted in collaborative creation; the form exposes 24fps segments of 0.5 to 2.5 seconds.",
+    "Selecting Manim prepares a resource even in a mixed selection; unused mixed-selection methods currently retain the producer dependency.",
+    "Formal production tool selection and WikiSkill compilation/adoption are not changed or newly validated by this release."
+  ],
+  "private_receipts": {
+    "server": "/root/video-releases/lab-capability-selection-20261116",
+    "local": "D:/codex-work/operations/lab-capability-selection-20261116"
+  }
+}

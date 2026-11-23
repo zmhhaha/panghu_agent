@@ -1,0 +1,106 @@
+{
+  "schema": "video.scene-space-stage2-validation.v1",
+  "date": "2026-11-22",
+  "branch": "codex/scene-space-framework-20261122",
+  "base_commit": "11b1c40134092ad42c36408d3212a30654e80bb3",
+  "scope": "local_implementation_integration_and_native_browser_pixels",
+  "deployment": false,
+  "container_image_admission": false,
+  "real_paid_model_calls": 0,
+  "real_model_long_film_acceptance": false,
+  "wikiskill_published": false,
+  "source_temporal_observation_added": false,
+  "source_audio_observation_added": false,
+  "host_sha256": "134d50ac8da23c821bdcc3b69363cc258916874170972dad8f0a6047850cca1e",
+  "runtime_sha256": "6b0fd362c01f4cc30f6fa5e2b722dd62090e19c73ea8436b7c96ec903722a18a",
+  "final_focused": {
+    "passed": 244,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 103.03,
+    "selectors": [
+      "tests/agent_service/test_scene_space_contract.py",
+      "tests/video_workbench/test_scene_space_budget.py",
+      "tests/video_workbench/test_scene_space_effects.py",
+      "tests/video_workbench/test_scene_space_learning.py",
+      "tests/video_workbench/test_scene_space_learning_service.py",
+      "tests/video_workbench/test_scene_space_plan.py",
+      "tests/video_workbench/test_scene_space_preview.py",
+      "tests/video_workbench/test_scene_space_production.py",
+      "tests/video_workbench/test_scene_space_render_http.py",
+      "tests/video_workbench/test_scene_space_renderer.py",
+      "tests/video_workbench/test_scene_space_store.py"
+    ],
+    "native_browser_enabled": true,
+    "native_browser_cases": [
+      "video",
+      "still",
+      "mask",
+      "ink",
+      "ink-paint",
+      "font"
+    ],
+    "native_browser_evidence": "scene-space-native-browser-20261122.json"
+  },
+  "production_ui": {
+    "command": "node --test tests/video_workbench/production-runs-ui.test.mjs",
+    "passed": 21,
+    "failed": 0
+  },
+  "targeted_recheck": {
+    "passed": 2,
+    "failed": 0,
+    "selectors": [
+      "tests/video_workbench/test_animation_wikiskill_capture.py::test_hidden_representative_cannot_leak_through_effect_descriptor",
+      "tests/video_workbench/test_animation_method_trash_http.py::test_private_recycle_routes_require_exact_token_and_owner_before_read_or_write[/effects/{id}/trash]"
+    ]
+  },
+  "earlier_broad_compatibility": {
+    "passed": 1100,
+    "failed": 20,
+    "seconds": 693.49,
+    "final_broad_suite_rerun": false,
+    "baseline_recheck": {
+      "commit": "11b1c40134092ad42c36408d3212a30654e80bb3",
+      "same_failed_selectors": 20,
+      "reproduced_failures": 19,
+      "passed": 1
+    },
+    "subsequently_fixed": "Hidden adopted candidate ID leaked through the WikiSkill effect descriptor.",
+    "subsequently_rechecked": [
+      "hidden_effect_descriptor_leak",
+      "transient_Windows_socket_abort"
+    ],
+    "remaining_baseline_failures": {
+      "legacy_creation_fake_gateway": 15,
+      "video_import_host_changed": 3
+    },
+    "note": "These counts are from separate runs, not a claim that the final broad suite passed."
+  },
+  "execution_limits": {
+    "backends_admitted": [
+      "canvas"
+    ],
+    "cache_policies": [
+      "static"
+    ],
+    "svg_three_scope": "semantic_adapters_and_explicit_rejection_boundaries_only",
+    "preview_images_max": 3,
+    "preview_coverage": "start_greatest_zoom_end_and_each_world_first_frame_or_reject",
+    "preview_render_seconds_max": 60,
+    "render_window_seconds_min": 30,
+    "automatic_repairs": 0,
+    "production_audio_modes": [
+      "silent"
+    ],
+    "historical_source_contracts_preserved": true
+  },
+  "ink_compatibility": {
+    "zero_origin_object_bounds_required_for_direct_renderCanvas": true,
+    "document_dimensions_match_object_bounds": true,
+    "clear": false,
+    "nonzero_bounds": "Use an admitted budgeted local canvas then drawImage back into the object bounds.",
+    "actual_brush_pixel_count": 3833,
+    "artistic_acceptance": false
+  }
+}

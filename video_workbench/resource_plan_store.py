@@ -260,6 +260,31 @@ class ResourcePlanStore:
             plan['revision'] += 1
         return self.get(owner, operation_id)
 
+    def freeze_retry_source(self, owner, operation_id, source_operation_id):
+        """Bind one stopped source before a retry can reserve any producer task.
+
+        The business adapter verifies the unchanged creation intent and any
+        reusable media. This record only makes source choice durable; it does
+        not turn failed tasks into successful outputs or add attempt budget.
+        """
+        self._scope(owner, source_operation_id)
+        require(operation_id != source_operation_id, 'resource_plan_retry_source_invalid', 409)
+        with self._mutation(owner, operation_id) as plan:
+            with closing(self._connect()) as db:
+                source = self._read(db, owner, source_operation_id)
+            view = self._view(source)
+            require(view['stop_proven'] and view['status'] in {'completed', 'blocked', 'cancelled', 'timed_out'},
+                'resource_plan_retry_source_not_stopped', 409)
+            record = dict(operation_id=source_operation_id, request_sha256=source['request_sha256'],
+                source_sha256=digest(source))
+            current = plan.get('retry_source')
+            require(current is None or current == record, 'resource_plan_retry_source_changed', 409)
+            if current is None:
+                require(all(node['status'] == 'queued' and not node['attempts']
+                    for node in plan['nodes'].values()), 'resource_plan_retry_target_started', 409)
+                plan['retry_source'] = record
+        return self.get(owner, operation_id)
+
     def revise(self, owner, operation_id, changes, request_id, reason):
         text(reason)
         require(type(changes) is dict and changes, 'resource_plan_changes_invalid')

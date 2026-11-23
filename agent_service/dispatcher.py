@@ -43,6 +43,17 @@ class Dispatcher:
         return self.store.finish(job['job_id'], job['attempt_id'], job['fence'],
             {'state': 'quarantined', 'error_code': code, 'usage': None}, [], stopped=False)
 
+    def _control(self, job):
+        adapter = self.adapters.get(job['pins']['engine'])
+        read = getattr(self.store, 'worker_control', None)
+        if (getattr(adapter, 'provisioning', None) == 'kubernetes_per_attempt'
+                and callable(read)):
+            return read(job['job_id'], job['attempt_id'], job['fence'])
+        return None
+
+    def _poll_envelope(self, job):
+        return self._control(job) or self._envelope(job)
+
     @staticmethod
     def _receipt_key(adapter, envelope):
         derive = getattr(adapter, 'receipt_key_for', None)
@@ -93,6 +104,20 @@ class Dispatcher:
             except Exception:
                 return self._quarantine(job, 'worker_admission_uncertain')
         if observed.get('state') == 'running':
+            envelope = self._control(job) or envelope
+            # Cold admission can consume most of the first lease. Deliver a
+            # fresh bound lease now, before another tick rebuilds large inputs.
+            if not self.store.renew(job['job_id'], job['attempt_id'], job['fence'], self.lease_seconds):
+                return self._quarantine(job, 'lease_lost')
+            current = self.store.get_job(job['tenant'], job['caller'], job['job_id'])
+            if current['cancel_requested'] or self.clock() >= job['deadline_at']:
+                adapter.cancel(envelope)
+            else:
+                try:
+                    adapter.renew(envelope, float(current['lease_expires_at']))
+                except ServiceError:
+                    # Completion can win this race; reconcile the same attempt.
+                    pass
             self.store.mark_running(job['job_id'], job['attempt_id'], job['fence'])
         return self.store.get_job(job['tenant'], job['caller'], job['job_id'])
 
@@ -103,7 +128,7 @@ class Dispatcher:
             if not callable(recover):
                 return job
             try:
-                envelope = self._envelope(job)
+                envelope = self._poll_envelope(job)
                 unallocated = self._resolve_uncreated(adapter, envelope)
                 if unallocated is not None:
                     return unallocated
@@ -118,7 +143,7 @@ class Dispatcher:
         adapter = self.adapters.get(job['pins']['engine'])
         if adapter is None:
             return self._quarantine(job, 'worker_unavailable')
-        envelope = self._envelope(job)
+        envelope = self._poll_envelope(job)
         # Recheck the authoritative row; caller snapshots cannot undo a cancel.
         current = self.store.get_job(job['tenant'], job['caller'], job['job_id'])
         if current['state'] in TERMINAL_STATES:
@@ -132,10 +157,25 @@ class Dispatcher:
             if (observed.get('attempt_id') != envelope.attempt_id
                     or observed.get('request_sha256') != envelope.request_sha256):
                 return self._quarantine(job, 'worker_identity_invalid')
+            # inspect may have claimed the first native start of a cold Pod.
+            # All subsequent control uses its durable, fully measured identity.
+            envelope = self._control(job) or envelope
             # Transport failure must not extend an unobserved Worker's lease.
             if not self.store.renew(job['job_id'], job['attempt_id'], job['fence'], self.lease_seconds):
                 return self._quarantine(job, 'lease_lost')
             current = self.store.get_job(job['tenant'], job['caller'], job['job_id'])
+            if observed.get('state') not in TERMINAL_STATES:
+                if current['cancel_requested'] or self.clock() >= job['deadline_at']:
+                    adapter.cancel(envelope)
+                else:
+                    try:
+                        # Event pages can be slow or paginated. The Worker must
+                        # receive its renewed lease before that optional I/O.
+                        adapter.renew(envelope, float(current['lease_expires_at']))
+                    except ServiceError:
+                        # Completion/cancel can win the renew race. Next poll
+                        # reads this execution rather than launching a new one.
+                        pass
             if observed.get('state') == 'running' and current['state'] == 'starting':
                 self.store.mark_running(job['job_id'], job['attempt_id'], job['fence'])
                 current = self.store.get_job(job['tenant'], job['caller'], job['job_id'])
@@ -143,15 +183,6 @@ class Dispatcher:
             if synced['has_more']:
                 return current
             if observed.get('state') not in TERMINAL_STATES:
-                if current['cancel_requested'] or self.clock() >= job['deadline_at']:
-                    adapter.cancel(envelope)
-                else:
-                    try:
-                        adapter.renew(envelope, float(current['lease_expires_at']))
-                    except ServiceError:
-                        # Completion/cancel can win the renew race. Next poll
-                        # reads the same execution instead of losing its result.
-                        pass
                 return current
             result = adapter.result(envelope)
             if not verify_receipt(envelope, result, self._receipt_key(adapter, envelope), self.clock()):

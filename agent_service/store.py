@@ -20,7 +20,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 from pydantic import ValidationError
 
-from .contracts import (ExecutionBindingPins, ExecutionEnvelope, InlineFile, ServiceError,
+from .contracts import (ExecutionBindingPins, ExecutionControl, ExecutionEnvelope, InlineFile, ServiceError,
                         WorkerResult, MAX_INPUT_BYTES, MAX_ARTIFACT_BYTES, canonical_bytes, digest)
 from .artifacts import relative_path, unique_paths
 from .storage import FileStoreMixin, define_tables, execution_fields
@@ -618,6 +618,8 @@ class Store(FileStoreMixin):
             lease = min(self.clock() + lease_seconds, row['deadline_at'] + 45)
             intent = {'job_id': row['id'], 'attempt_id': attempt_id, 'fence': fence,
                       'pins': row['pins'], 'deadline_at': row['deadline_at'],
+                      'request_hash': row['request_hash'],
+                      'tenant': row['tenant'], 'caller': row['caller'],
                       'provisioning': provisioning.get(row['pins']['engine'], 'external_static')}
             conn.execute(insert(attempts).values(id=attempt_id, job_id=row['id'], fence=fence,
                          state='starting', created_at=self.clock(), lease_expires_at=lease,
@@ -668,6 +670,13 @@ class Store(FileStoreMixin):
             task=row["request"]["task"], inputs=files, **execution_fields(row['pins']))
 
     def _matching_worker_request(self, conn, envelope):
+        if isinstance(envelope, ExecutionControl):
+            row = self._find(conn, envelope.job_id)
+            expected = self._worker_control(conn, row)
+            if (expected is None or expected.model_dump(exclude={'lease_expires_at'})
+                    != envelope.model_dump(exclude={'lease_expires_at'})):
+                raise ServiceError("stale_attempt", 409)
+            return row
         if not isinstance(envelope, ExecutionEnvelope):
             raise ServiceError("invalid_worker_allocation", 422)
         row = self._find(conn, envelope.job_id)
@@ -675,6 +684,51 @@ class Store(FileStoreMixin):
                 or envelope.request_sha256 != self._worker_envelope(conn, row).request_sha256):
             raise ServiceError("stale_attempt", 409)
         return row
+
+    def _worker_control(self, conn, row):
+        """Recover authority without loading retained input blobs again.
+
+        reserve_worker measured all original bytes before persisting its digest.
+        An admission claim must already exist; legacy intents lacking a request
+        fingerprint use the full envelope path. Immutable request/pins and the
+        exact allocation remain checked on every control operation and restart.
+        """
+        allocation = conn.execute(select(worker_allocations).where(
+            worker_allocations.c.attempt_id == row['attempt_id'])).mappings().first()
+        attempt = conn.execute(select(attempts.c.dispatch_intent).where(
+            attempts.c.id == row['attempt_id'], attempts.c.job_id == row['id'],
+            attempts.c.fence == row['fence'])).first()
+        if allocation is None or not allocation['worker_start_claimed'] or attempt is None:
+            return None
+        intent = attempt.dispatch_intent
+        if not isinstance(intent, dict) or not {'request_hash', 'tenant', 'caller'} <= intent.keys():
+            return None
+        if (intent.get('job_id') != row['id'] or intent.get('attempt_id') != row['attempt_id']
+                or intent.get('fence') != row['fence'] or intent.get('pins') != row['pins']
+                or intent.get('deadline_at') != row['deadline_at']
+                or intent['tenant'] != row['tenant'] or intent['caller'] != row['caller']
+                or intent.get('provisioning') != 'kubernetes_per_attempt'
+                or intent['request_hash'] != row['request_hash']
+                or digest(row['request']) != row['request_hash']
+                or allocation['job_id'] != row['id'] or allocation['fence'] != row['fence']
+                or allocation['engine'] != row['pins']['engine']
+                or not allocation['create_claimed'] or not allocation['pod_uid']):
+            raise ServiceError('stale_attempt', 409)
+        return ExecutionControl(job_id=row['id'], attempt_id=row['attempt_id'], fence=row['fence'],
+            engine=row['pins']['engine'], profile=row['request']['profile'],
+            profile_revision=row['request']['profile_revision'], runtime_revision=row['pins']['runtime_revision'],
+            image_digest=row['pins']['image_digest'], execution_binding=row['pins'].get('execution_binding'),
+            request_sha256=allocation['request_sha256'], deadline_at=float(row['deadline_at']),
+            lease_expires_at=float(row['lease_expires_at']),
+            has_inputs=bool(row['request'].get('inputs') or row['request'].get('checkpoint_ref')),
+            **execution_fields(row['pins']))
+
+    def worker_control(self, job_id, attempt_id, fence):
+        with self._tx() as conn:
+            row = self._find(conn, job_id)
+            if row['attempt_id'] != attempt_id or row['fence'] != fence:
+                raise ServiceError('stale_attempt', 409)
+            return self._worker_control(conn, row)
 
     @staticmethod
     def _attempt_provisioning(conn, row):

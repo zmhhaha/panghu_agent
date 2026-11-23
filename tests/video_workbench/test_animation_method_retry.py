@@ -41,7 +41,7 @@ def test_failed_plan_retries_with_fresh_budget_and_deadline_without_reopening_ol
     events = service.commissions.events('developer', original['id'])
     now[0] += 150
     body = dict(request_id=str(uuid4()), retry_of_commission_id=original['id'],
-                goal=original['goal'], budget={'max_rounds': 2, 'max_seconds': 120})
+                budget={'max_rounds': 2, 'max_seconds': 120})
     queued = service.start('developer', body)
     fresh = service.commissions.get('developer', queued['id'])
     assert queued['id'] != original['id'] and queued['state'] == 'queued'
@@ -58,7 +58,7 @@ def test_failed_plan_retries_with_fresh_budget_and_deadline_without_reopening_ol
     assert service.commissions.events('developer', original['id']) == events
     assert creator.submissions == reviewer.submissions == renderer.calls == []
     with pytest.raises(ServiceError, match='idempotency_conflict'):
-        service.start('developer', dict(body, goal='Changed idempotent payload'))
+        service.start('developer', dict(body, budget={'max_rounds': 2, 'max_seconds': 180}))
     completed = finish(service, queued['id'])
     assert completed['state'] == 'completed'
     effect = effect_for(service, queued['id'])
@@ -82,7 +82,7 @@ def test_only_same_owner_stopped_failures_or_cancellations_can_retry(work, termi
         service.cancel('developer', original['id'], {})
     with pytest.raises(ServiceError, match='not_found'):
         service.start('other-owner', dict(request_id=str(uuid4()), retry_of_commission_id=original['id'],
-            goal='Private retry', budget={'max_rounds': 1, 'max_seconds': 300}))
+            budget={'max_rounds': 1, 'max_seconds': 300}))
     queued = retry(service, original['id'])
     completed = finish(service, queued['id'])
     with pytest.raises(ServiceError, match='retry_not_available'):
@@ -110,19 +110,21 @@ def test_failed_render_with_sample_stays_playable_while_retries_run_or_fail(work
     assert service.commissions.get('developer', failed['id']) == original
 
 
-def test_retry_inherits_continuation_baseline_server_side_and_allows_new_goal_criteria(work):
+def test_retry_inherits_continuation_contract_and_rejects_creative_changes(work):
     service, _, _, _ = work
     original = finish(service, start(service)['id'])
     failed = fail_run(service, start(service, base_commission_id=original['id'])['id'])
     before = service.commissions.get('developer', failed['id'])['frozen']
     criteria = [dict(id='new_goal', description='A distinct observable requirement')]
-    queued = retry(service, failed['id'], goal='Revised expression', duration_seconds=16, criteria=criteria)
+    queued = retry(service, failed['id'])
     frozen = service.commissions.get('developer', queued['id'])['frozen']
     for key in ('base_commission_id', 'base_candidate_id', 'method_versions', 'base_candidate'):
         assert frozen[key] == before[key]
-    assert frozen['criteria'] == criteria and queued['duration_seconds'] == 16
-    with pytest.raises(ServiceError, match='retry_relationship_invalid'):
-        retry(service, failed['id'], base_commission_id=failed['id'])
+    assert frozen['criteria'] == before['criteria'] and queued['duration_seconds'] == before['duration_seconds']
+    for changes in (dict(goal='Revised expression'), dict(duration_seconds=16),
+                    dict(criteria=criteria), dict(base_commission_id=failed['id'])):
+        with pytest.raises(ServiceError, match='creative_contract_changed'):
+            retry(service, failed['id'], **changes)
     completed = finish(service, queued['id'])
     effect = effect_for(service, completed['id'])
     assert effect['id'] == original['id'] and effect['open_commission_id'] == completed['id']
@@ -137,7 +139,7 @@ def test_retry_of_transfer_keeps_frozen_method_and_never_replaces_reference(work
         budget={'max_rounds': 1, 'max_seconds': 300}))
     failed = fail_run(service, transfer['id'])
     before = service.commissions.get('developer', failed['id'])['frozen']
-    queued = retry(service, failed['id'], goal='Explain a fork clearly')
+    queued = retry(service, failed['id'])
     frozen = service.commissions.get('developer', queued['id'])['frozen']
     for key in ('role', 'baseline_demonstration_id', 'structural_changes', 'method_versions'):
         assert frozen[key] == before[key]
@@ -177,20 +179,58 @@ def test_empty_failed_retry_branch_cannot_hide_the_only_successful_sample(work):
     assert effect['open_commission_id'] == original['id'] and effect['best_candidate'] is None
 
 
-def test_retry_uses_new_trusted_runtime_and_replay_keeps_its_snapshot(work, monkeypatch):
+def test_retry_retains_original_trusted_runtime_and_replay_keeps_its_snapshot(work, monkeypatch):
     service, _, _, renderer = work
     admitted = runtime_capabilities(['html-svg'])
     monkeypatch.setattr(renderer, 'capabilities', lambda: deepcopy(admitted), raising=False)
     original = fail_run(service, start(service)['id'])
     admitted.update(runtime_capabilities(['html-svg', 'canvas']))
-    body = dict(request_id=str(uuid4()), goal=original['goal'], retry_of_commission_id=original['id'],
+    body = dict(request_id=str(uuid4()), retry_of_commission_id=original['id'],
                 budget={'max_rounds': 1, 'max_seconds': 300})
     queued = service.start('developer', body)
     frozen = service.commissions.get('developer', queued['id'])['frozen']
-    assert frozen['constraints']['allowed_engines'] == ['html-svg', 'canvas']
+    assert frozen['constraints']['allowed_engines'] == ['html-svg']
     admitted.update(runtime_capabilities(['html-svg', 'canvas', 'three']))
     assert service.start('developer', body)['id'] == queued['id']
     assert service.commissions.get('developer', queued['id'])['frozen'] == frozen
+
+
+@pytest.mark.parametrize('failed_stage', ['creator', 'render', 'review'])
+def test_retry_repairs_only_the_later_failed_round_without_repaying_a_completed_review(work, failed_stage):
+    service, creator, reviewer, renderer = work
+    reviewer.incomplete = True
+    original = start(service, budget=dict(max_rounds=2, max_seconds=300))
+    failed_operation = None
+    for _ in range(80):
+        run = service.commissions.get('developer', original['id'])
+        completed_reviews = [op for op in run['operations'] if op['stage'] == 'review' and op['status'] == 'completed']
+        if completed_reviews:
+            failed_operation = next((op for op in run['operations'] if op['stage'] == failed_stage
+                and op['status'] == 'reserved' and (failed_stage != 'creator' or op['input'].get('mode') == 'create')), None)
+            if failed_operation:
+                service.commissions.claim('developer', failed_operation['id'])
+                service.commissions.fail('developer', failed_operation['id'], 'fixture_second_round_failure')
+                break
+        service.advance('developer', original['id'])
+    assert failed_operation is not None
+    stopped = finish(service, original['id'])
+    assert stopped['state'] == 'failed'
+    old = service.commissions.get('developer', original['id'])
+    assert len([op for op in old['operations'] if op['stage'] == 'review' and op['status'] == 'completed']) == 1
+    calls = len(creator.submissions), len(renderer.calls), len(reviewer.submissions)
+    reviewer.incomplete = False
+    retried = retry(service, original['id'])
+    completed = finish(service, retried['id'])
+    assert completed['state'] == 'completed'
+    assert (len(creator.submissions) - calls[0], len(renderer.calls) - calls[1], len(reviewer.submissions) - calls[2]) == (
+        1 if failed_stage == 'creator' else 0, 0 if failed_stage == 'review' else 1, 1)
+    repaired = service.commissions.get('developer', retried['id'])
+    new_review = next(op for op in repaired['operations'] if op['stage'] == 'review')
+    new_candidate = next(row for row in repaired['candidates'] if row['id'] == new_review['input']['comparison']['candidate_id'])
+    author = next(op for op in repaired['operations'] if op['id'] == new_candidate['provenance']['author_operation_id'])
+    assert author.get('reused_from', {}).get('operation_id') != next(
+        op['id'] for op in old['operations'] if op['stage'] == 'creator' and op['input'].get('mode') == 'create')
+    assert service.commissions.get('developer', original['id']) == old
 
 
 def test_store_enforces_owner_terminal_and_relationship_constraints_and_replay(state):

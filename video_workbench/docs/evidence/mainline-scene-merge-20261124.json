@@ -1,0 +1,344 @@
+{
+  "schema": "video.mainline-scene-merge-evidence.v1",
+  "date": "2026-11-24",
+  "integrity": {
+    "schema": "video.mainline-merge-integrity.v1",
+    "date": "2026-11-24",
+    "main_base": "3bb751e1b93de31ba656bd19d5f44bb6c900a8cc",
+    "source_tip": "fb31f5724de9cdaa624a3fc4ae0d8c9d4dcc4b24",
+    "non_documentation_entries": 2474,
+    "non_documentation_mode_and_blob_identical": true,
+    "preserved_main_archive_entries": 59,
+    "main_archive_mode_and_blob_identical": true,
+    "conflict_files": {
+      "picture-learning-library.md": "source_branch_body_preserved_with_dated_main_history",
+      "reference-learning-libraries-design.md": "source_branch_body_preserved_with_dated_main_history",
+      "video-learning-library.md": "source_branch_body_preserved_with_dated_main_history"
+    },
+    "unmerged_entries": 0,
+    "conflict_markers": 0,
+    "application_code_changed_by_conflict_resolution": false,
+    "scope": "comparison_to_source_branch_not_to_old_main"
+  },
+  "validation": {
+    "status": "passed",
+    "scope": "bounded_scene_space_defaults_library_and_native_host_regression_not_full_repo_or_deployment",
+    "original_local_summary_sha256": "b8ed82873027485d0fdee19f0a35022abfbcb938acc0fc22e224116323080436",
+    "python": {
+      "total": 264,
+      "passed": 264,
+      "failed": [],
+      "skipped": [],
+      "log_sha256": "642aab5a95359268f0b64799e7e0ce9911811d35ee34fdb5d9a77c89f493f05c",
+      "junit_sha256": "ff5d436bc299d953e0e5ab996340841c0b9c5186b677857fffa327e5d805d8db"
+    },
+    "strict_contract": {
+      "total": 64,
+      "passed": 64,
+      "failed": [],
+      "skipped": [],
+      "junit_sha256": "fd271e5f5ceb505201d1e9e8a44da842d9e0243a150be26b4d3550f0b23533d7"
+    },
+    "strict_contract_log_sha256": "72fe3a1336c2cdafff4636b86f781b6301abefde02b10a105bfbc5dd891b8f07",
+    "all_python_cases": 328,
+    "node": {
+      "total": 41,
+      "passed": 41,
+      "failed": 0,
+      "log_sha256": "69144568da143b83eccdb18ca000191547385b8d2fb2b2ff64754c12cd68f0b6"
+    },
+    "native": {
+      "test_functions": 3,
+      "total_scenes": 16,
+      "rendered_scenes": 13,
+      "expected_rejections": 3,
+      "repeated_reverse_reload_all_passed": true,
+      "historical_comparable_samples": [
+        {
+          "name": "video",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "still",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "mask",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "ink",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "ink-paint",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "font",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "legacy",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "solid",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "gradient",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "opacity-mask",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "form-wash",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "mesh-depth",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        },
+        {
+          "name": "fractional-coverage",
+          "same_source": true,
+          "same_scene_binding": true,
+          "pixel_samples_equal": true
+        }
+      ],
+      "comparison_scope": "Same stored source and scene-binding identity only; no container or artistic acceptance claimed.",
+      "historical_comparable_pixel_samples_all_unchanged": true
+    },
+    "native_report_sha256": [
+      "89c9df07f582bfc3c77eec808c029271fcbf106d0b8d7a2532ce66cc8f50c2c1",
+      "e6d427f5eeec17d71b90007b4e2c7efe81a61f23f85407e1025677553a0a939d",
+      "d7c9a513748ab521d14ac4b884522cb8cbadd411b701ee8b4fed96721bae2bc5"
+    ],
+    "native_pixel_evidence": [
+      {
+        "sha256": "de0005357dba75596edf2e1e20e065f7d3426733619f3c060efe92a1d4cbef6c",
+        "data": {
+          "dark_pixel_count": 3833,
+          "declared_screen_bounds": {
+            "height": 779.833080150463,
+            "width": 215.95377604166666,
+            "x": -31.763763996799213,
+            "y": -119.89728009259255
+          },
+          "pixel_bounds": [
+            8,
+            110,
+            146,
+            427
+          ],
+          "schema": "video.scene-space-ink-pixel-check.v1",
+          "scope": "two_actual_brush_strokes_zero_origin_object_cache_not_artistic_acceptance",
+          "transform_compatibility": "renderCanvas resets its internal transform; zero-origin document matches cache dimensions and finally restores the caller context"
+        }
+      },
+      {
+        "sha256": "29a02425525c4b65739b992f64472cacab3fdde29ff203968c76c015f53c326e",
+        "data": {
+          "artistic_acceptance": false,
+          "pixels": {
+            "form-wash": {
+              "grid_boundary_max_rgb_jump": 2,
+              "surface_value_range": 130
+            },
+            "gradient": {
+              "clipped": [
+                127,
+                155,
+                178
+              ],
+              "interior": [
+                197,
+                130,
+                143
+              ],
+              "outside": [
+                30,
+                90,
+                150
+              ]
+            },
+            "legacy": {
+              "clipped": [
+                29,
+                84,
+                140
+              ],
+              "interior": [
+                158,
+                38,
+                75
+              ],
+              "outside": [
+                29,
+                84,
+                140
+              ]
+            },
+            "opacity-mask": {
+              "clipped": [
+                30,
+                90,
+                150
+              ],
+              "interior": [
+                183,
+                85,
+                111
+              ],
+              "outside": [
+                30,
+                90,
+                150
+              ]
+            },
+            "solid": {
+              "clipped": [
+                223,
+                219,
+                205
+              ],
+              "interior": [
+                223,
+                219,
+                205
+              ],
+              "outside": [
+                30,
+                90,
+                150
+              ]
+            }
+          },
+          "scope": "actual_coverage_shape_gradient_local_mask_and_single_application_of_object_layer_alpha",
+          "source_reference": "same_faint_pigment_and_background_for_each_case"
+        }
+      },
+      {
+        "sha256": "1ead352eae4a8d0cd74fc23649daa1e2512e6ec5e05cd232950ce87bbf158e2b",
+        "data": {
+          "excludes": [
+            "connected_terrain_quality",
+            "camera_orbit",
+            "artistic_acceptance"
+          ],
+          "fractional_coverage": {
+            "cache_density": 1.3,
+            "interior_column_pixels": 471,
+            "interior_rgb": [
+              180,
+              40,
+              80
+            ],
+            "transform_translation": [
+              200.25,
+              30.25
+            ],
+            "uniform_interior": true
+          },
+          "pixels": {
+            "far": [
+              30,
+              90,
+              180
+            ],
+            "near": [
+              180,
+              40,
+              80
+            ],
+            "outside": [
+              30,
+              90,
+              150
+            ]
+          },
+          "scope": "actual_nearest_triangle_depth_and_mesh_silhouette_in_static_canvas_cache",
+          "source_fixture": "two_overlapping_disconnected_triangles_in_one_indexed_mesh"
+        }
+      }
+    ],
+    "source_files_unchanged": true,
+    "runtime_source_digests": {
+      "video_workbench/scene_space_host.mjs": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "video_workbench/motion_renderer/scene_space_runtime.mjs": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "video_workbench/motion_renderer/scene_space_surface.mjs": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "video_workbench/motion_renderer/scene_space_surface_budget.mjs": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+      "video_workbench/motion_renderer/scene_space_geometry.mjs": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "video_workbench/motion_renderer/scene_space_geometry_budget.mjs": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "agent_service/reference_learning_extension.mjs": "1be14e22d3908782e70245af0513345c5e69d04cffd1a41eb2d97c52b9ed2703"
+    },
+    "font_sha256": "d79c55e68b1131eea0cc1c47be4f572d964f28c682e143db2ad09c1e4cb07a3f",
+    "selected_python_files": [
+      "tests/video_workbench/test_scene_space_budget.py",
+      "tests/video_workbench/test_scene_space_effects.py",
+      "tests/video_workbench/test_scene_space_geometry.py",
+      "tests/video_workbench/test_scene_space_learning.py",
+      "tests/video_workbench/test_scene_space_learning_service.py",
+      "tests/video_workbench/test_scene_space_plan.py",
+      "tests/video_workbench/test_scene_space_preview.py",
+      "tests/video_workbench/test_scene_space_production.py",
+      "tests/video_workbench/test_scene_space_render_http.py",
+      "tests/video_workbench/test_scene_space_renderer.py",
+      "tests/video_workbench/test_scene_space_store.py",
+      "tests/video_workbench/test_scene_space_surface.py",
+      "tests/video_workbench/test_video_learning_timeouts.py",
+      "tests/video_workbench/test_ink_landscape_library.py",
+      "tests/video_workbench/test_ink_landscape_knowledge.py",
+      "tests/video_workbench/test_wikiskill_loading_policy.py"
+    ],
+    "node_test_files": [
+      "tests/video_workbench/scene-space-geometry.test.mjs",
+      "tests/video_workbench/scene-space-surface.test.mjs",
+      "tests/video_workbench/scene-space-coverage.test.mjs",
+      "tests/video_workbench/learning-controls.test.mjs"
+    ],
+    "counting_note": "Python surface/geometry wrappers invoke Node; native browser scenes are inside three Python cases. Do not add counts as independent full-suite coverage.",
+    "model_calls": 0,
+    "deployed": false,
+    "known_full_repo_baseline_failures_not_retested": 18
+  },
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "change": "add-scene-space-layer-camera-learning",
+    "tasks": 38,
+    "done": 29,
+    "pending": 9,
+    "archive": false
+  },
+  "artistic_acceptance": false,
+  "effect_adoption": false,
+  "wikiskill_published": false,
+  "arm_validation": false
+}

@@ -71,8 +71,54 @@ test('retry input keeps its origin without requiring feedback or changing it int
   assert.equal(Object.hasOwn(value, 'base_commission_id'), false);
   assert.equal(Object.hasOwn(value, 'base_candidate_id'), false);
   assert.equal(Object.hasOwn(value, 'transfer_commission_id'), false);
-  assert.equal(value.feedback, '');
+  assert.deepEqual(Object.keys(value).sort(), ['budget', 'request_id', 'retry_of_commission_id']);
   assert.throws(() => buildTransferRequest({...fields, retry_of_commission_id: 'failed-run'}, firstId), /不能同时/);
+});
+
+test('fresh creation keeps effect ownership and current constraints without inheriting a creative baseline', () => {
+  const value = buildCommissionRequest({...fields, creation_mode: 'fresh', effect_id: 'ink-effect',
+    base_commission_id: 'old-run', base_candidate_id: 'old-clip', feedback: '旧版的全部创作指令',
+    use_wikiskill: false, problem_summary_text: '岩石笔触像线束\n远山重复',
+    criteria_text: '新的笔触需要参与造型', criteria_metadata: [{id: 'old-standard', requires_audio: true}]}, firstId);
+  assert.equal(value.effect_id, 'ink-effect'); assert.equal(value.creation_mode, 'fresh');
+  assert.equal(value.use_wikiskill, false);
+  for (const field of ['base_commission_id', 'base_candidate_id', 'feedback', 'method_versions']) assert.equal(Object.hasOwn(value, field), false, field);
+  assert.deepEqual(value.problem_summary, [{text: '岩石笔触像线束', source: 'developer'}, {text: '远山重复', source: 'developer'}]);
+  assert.deepEqual(value.criteria, [{id: 'criterion-1', description: '新的笔触需要参与造型', requires_motion: true}]);
+  assert.equal(Object.hasOwn(buildCommissionRequest({...fields, creation_mode: 'fresh', effect_id: 'ink-effect'}, firstId), 'criteria'), false);
+  assert.equal(buildCommissionRequest({...fields, creation_mode: 'fresh', effect_id: 'ink-effect'}, firstId).use_wikiskill, true);
+  assert.throws(() => buildCommissionRequest({...fields, creation_mode: 'fresh'}, firstId), /所属效果/);
+  assert.throws(() => buildCommissionRequest({...fields, use_wikiskill: 'false'}, firstId), /明确是否/);
+  const fresh = {...fields, creation_mode: 'fresh', effect_id: 'ink-effect'};
+  assert.equal(buildCommissionRequest({...fresh, problem_summary_text: '山'.repeat(4000)}, firstId).problem_summary[0].text.length, 4000);
+  assert.throws(() => buildCommissionRequest({...fresh, problem_summary_text: '山'.repeat(4001)}, firstId), /4000/);
+  assert.throws(() => buildCommissionRequest({...fresh, problem_summary_text: Array(3).fill('山'.repeat(3000)).join('\n')}, firstId), /整体过长/);
+});
+
+test('technical retry never serializes editable creative fields or a new knowledge selection', () => {
+  const value = buildCommissionRequest({retry_of_commission_id: 'failed-run', max_rounds: 1, max_minutes: 5,
+    goal: '换一种完全不同的创作', creation_mode: 'fresh', effect_id: 'other', use_wikiskill: false,
+    criteria_text: '修改标准', capability_selection: {creation: ['three']}, problem_summary_text: '换方向'}, firstId);
+  assert.deepEqual(value, {request_id: firstId, retry_of_commission_id: 'failed-run', budget: {max_rounds: 1, max_seconds: 300}});
+});
+
+test('adopting a candidate uses the displayed effect revision without generating or publishing work', async () => {
+  const detail = run({state: 'completed', effect_id: 'effect-1', representative_revision: 4,
+    adopted_candidate_id: 'old', candidates: [candidate()], best_candidate_id: 'clip-1'});
+  const h = harness((path, options) => options?.method === 'POST' ? detail : path.endsWith('catalog') ? catalog([detail]) : detail);
+  await h.controller.refresh(); await h.controller.select(detail.id);
+  assert.equal(await h.controller.adoptCandidate('clip-1'), true);
+  const posts = h.requests.filter(row => row.options.method === 'POST');
+  assert.equal(posts.length, 1); assert.equal(posts[0].path, 'api/method-lab/commissions/commission-1/adopt');
+  assert.deepEqual(JSON.parse(posts[0].options.body), {request_id: firstId, effect_id: 'effect-1', candidate_id: 'clip-1', expected_revision: 4});
+  assert.equal(h.requests.some(row => /publish|transfer/.test(row.path)), false);
+  assert.equal(await h.controller.adoptCandidate('foreign-candidate'), false);
+  h.controller.state.detail.baseline_candidate = candidate('inherited-baseline');
+  h.controller.state.detail.candidates.push(candidate('inherited-baseline'));
+  assert.equal(await h.controller.adoptCandidate('inherited-baseline'), false, 'a copied baseline is owned by its original commission');
+  h.controller.state.detail.candidates.push({...candidate('retained-retry-baseline'), commission_id: 'previous-failed-run'});
+  assert.equal(await h.controller.adoptCandidate('retained-retry-baseline'), false);
+  assert.equal(h.requests.filter(row => row.options.method === 'POST').length, 1); h.controller.close();
 });
 
 test('only same-origin controlled method-lab media can be embedded', () => {
@@ -109,6 +155,9 @@ test('a transfer creates a materially different task from the selected sample an
     goal: '对象数量增加后仍能追踪筛选和汇总的关联'};
   const body = buildTransferRequest(input, firstId);
   assert.equal(body.base_candidate_id, 'exact-best'); assert.equal(body.base_commission_id, undefined);
+  assert.equal(Object.hasOwn(body, 'creation_mode'), false);
+  assert.equal(body.use_wikiskill, true);
+  assert.equal(buildTransferRequest({...input, use_wikiskill: false}, firstId).use_wikiskill, false);
   assert.equal(buildTransferRequest({...input, criteria_text: '不能用当前委托的新标准替换方法原标准'}, firstId).criteria, undefined);
   assert.deepEqual(body.structural_changes, {object_count: {before: 8, after: 40}});
   assert.throws(() => buildTransferRequest({...input, transfer_after: '8'}, firstId), /变化/);
@@ -118,6 +167,42 @@ test('a transfer creates a materially different task from the selected sample an
   const post = h.requests.find(row => row.options.method);
   assert.equal(post.path, 'api/method-lab/commissions/original-commission/transfer');
   assert.deepEqual(JSON.parse(post.options.body), body);
+  h.controller.close();
+});
+
+test('Skill transfers bind the exact original and new goals without sending reference material or approvals', () => {
+  const originalGoal = '  说明同一路径的请求如何依次完成  ';
+  const input = {...fields, transfer_protocol: 'skills', transfer_original_goal: originalGoal,
+    goal: '  解释多分支竞争后为何需要汇合  ', base_candidate_id: 'exact-reference',
+    reference_url: 'https://example.com/original-reference', reference_start: 2, reference_end: 6,
+    transfer_dimension: 'relations', transfer_before: '单一路径', transfer_after: '并行分支与汇合'};
+  const body = buildTransferRequest(input, firstId);
+  assert.deepEqual(body.content_changes, {before: originalGoal, after: '解释多分支竞争后为何需要汇合',
+    reason: '开发者指定的结构变化：单一路径 → 并行分支与汇合'});
+  assert.equal(body.content_changes.after, body.goal);
+  assert.deepEqual(body.structural_changes, {relations: {before: '单一路径', after: '并行分支与汇合'}});
+  assert.equal(body.reference, null);
+  assert.equal(body.base_candidate_id, 'exact-reference');
+  for (const field of ['transfer_protocol', 'transfer_original_goal', 'human_verification', 'acceptance']) {
+    assert.equal(Object.hasOwn(body, field), false);
+  }
+  assert.throws(() => buildTransferRequest({...input, transfer_original_goal: ''}, firstId), /原实验/);
+  assert.throws(() => buildTransferRequest({...input, goal: originalGoal}, firstId), /新的表达目标/);
+  for (const dimension of ['object_count', 'timing']) {
+    assert.throws(() => buildTransferRequest({...input, transfer_dimension: dimension,
+      transfer_before: '8', transfer_after: '40'}, firstId), /真实的关系结构/);
+  }
+});
+
+test('invalid Skill transfer content stops before persistence or a paid submission', async () => {
+  const h = harness(() => catalog());
+  await h.controller.refresh();
+  const input = {...fields, transfer_commission_id: 'original', transfer_protocol: 'skills',
+    transfer_dimension: 'relations', transfer_before: '单链', transfer_after: '分支'};
+  assert.equal(await h.controller.start(input), false);
+  assert.match(h.controller.snapshot.error, /确切的原始目标/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  assert.equal(h.store.data.size, 0);
   h.controller.close();
 });
 
@@ -353,7 +438,7 @@ class FakeElement {
 const doc = {createElement: tag => new FakeElement(tag), createDocumentFragment: () => new FakeElement('fragment')};
 const callbacks = {onBack() {}, onContinue() {}, onCancel() {}, onFeedback() {}, onPublish() {}};
 
-function mountedGallery(initial, {catalogValue = null, detailRecords = []} = {}) {
+function mountedGallery(initial, {catalogValue = null, detailRecords = [], inspection = null} = {}) {
   const html = readFileSync(new URL('../../video_workbench/animation_lab_web/method-gallery.html', import.meta.url), 'utf8');
   const nodes = new Map([...html.matchAll(/<([a-z][a-z0-9]*)\b[^>]*\bid="([^"]+)"/g)]
     .map(([, tag, id]) => [id, new FakeElement(tag)]));
@@ -374,6 +459,9 @@ function mountedGallery(initial, {catalogValue = null, detailRecords = []} = {})
   const controller = mountMethodGallery({document, root, storage: storage(), uuid: () => firstId,
     schedule: () => 1, unschedule() {}, fetch: async (url, options = {}) => {
       requests.push({url, options});
+      if (inspection && (url.pathname.endsWith('/prompt-inspection') || /\/operations\/[^/]+\/input$/.test(url.pathname))) {
+        return {ok: true, status: 200, json: async () => inspection(url)};
+      }
       return {ok: true, status: 200, json: async () => structuredClone(url.pathname.endsWith('/catalog')
         ? catalogValue ?? catalog([current]) : records.get(url.pathname.split('/commissions/')[1]?.split('/')[0]) ?? current)};
     }});
@@ -603,10 +691,55 @@ test('polling preserves each commission disclosure state and time drafts without
   assert.equal(input('意见开始秒数').value, '2'); h.controller.close();
 });
 
-test('continue form inherits the selected actual media duration while a fresh experiment keeps defaults', async () => {
+test('mounted gallery lazily reads saved prompts, preserves them through polling and never reads layout previews', async () => {
+  let detail = run({state: 'running', candidates: [candidate()], best_candidate_id: 'clip-1'});
+  const h = mountedGallery(detail, {inspection: url => url.pathname.endsWith('/prompt-inspection') ? {
+    schema: 'video.animation-prompt-inspection.v1', commission_id: detail.id,
+    submission: {origin: 'captured_request', is_original: true, document: {goal: '可核对的原始需求'}, limitations: []},
+    operations: [], limitations: [],
+  } : assert.fail('no round was opened')});
+  await h.ready(); await h.controller.select(detail.id);
+  const section = key => h.get('gallery-detail').descendants('details').find(node => node.dataset.methodDisclosure === key);
+  const inspectionReads = () => h.requests.filter(row => row.url.pathname.endsWith('/prompt-inspection'));
+  assert.equal(section('prompt-submission').open, false); assert.equal(section('prompt-operations').open, false);
+  assert.equal(inspectionReads().length, 0);
+  section('prompt-submission').open = true; section('prompt-submission').handlers.toggle(); await h.ready();
+  assert.equal(inspectionReads().length, 1); assert.match(section('prompt-submission').textContent, /可核对的原始需求/);
+  detail = {...detail, summary: '进度已更新'}; h.update(detail); await h.controller.refresh();
+  assert.equal(section('prompt-submission').open, true); assert.match(section('prompt-submission').textContent, /可核对的原始需求/);
+  assert.equal(inspectionReads().length, 1);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.get('gallery-preview-detail').handlers.click();
+  assert.equal(section('prompt-submission'), undefined); assert.equal(section('prompt-operations'), undefined);
+  assert.equal(inspectionReads().length, 1); h.controller.close();
+});
+
+test('detail shows safe reference links and supplied intervals without inventing URL-only ranges', () => {
+  const url = 'https://www.bilibili.com/video/BVexample/';
+  const rendered = renderMethodDetail(doc, run({reference: {url, start_seconds: 0, end_seconds: 6.5}}), root, callbacks);
+  const link = rendered.descendants('a')[0];
+  assert.equal(link.href, url); assert.equal(link.textContent, url);
+  assert.equal(link.target, '_blank'); assert.equal(link.rel, 'noopener noreferrer');
+  assert.match(rendered.textContent, /参考片段：0–6\.5 秒/);
+  const urlOnly = renderMethodDetail(doc, run({reference: {url, start_seconds: null, end_seconds: null}}), root, callbacks);
+  assert.equal(urlOnly.descendants('a')[0].href, url); assert.doesNotMatch(urlOnly.textContent, /参考片段：/);
+  for (const unsafe of ['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>',
+    'https://user:password@example.com/', '/relative/reference']) {
+    const detail = renderMethodDetail(doc, run({reference: {url: unsafe}}), root, callbacks);
+    assert.equal(detail.descendants('a').filter(row => row.textContent !== '打开知识库').length, 0); assert.ok(detail.textContent.includes(unsafe));
+    assert.equal(detail.descendants('script').length, 0);
+  }
+  for (const reference of [null, {}]) {
+    const detail = renderMethodDetail(doc, run({reference}), root, callbacks);
+    assert.equal(detail.descendants('a').filter(row => row.textContent !== '打开知识库').length, 0); assert.doesNotMatch(detail.textContent, /参考视频与片段/);
+  }
+});
+
+test('continue form inherits reference and selected media duration, submits them and resets for a fresh experiment', async t => {
   const detail = run({state: 'completed', candidates: [
     {...candidate('original'), media: {duration_seconds: 16}}, {...candidate('best'), media: {duration_seconds: 31}}],
-    best_candidate_id: 'best', criteria: [{id: 'clear', description: '能看清变化'}]});
+    best_candidate_id: 'best', criteria: [{id: 'clear', description: '能看清变化'}],
+    reference: {url: 'https://www.bilibili.com/video/BVexample/', start_seconds: 0, end_seconds: 6}});
   const h = mountedGallery(detail);
   await h.controller.refresh(); await h.controller.select(detail.id);
   const host = h.get('gallery-detail');
@@ -616,9 +749,330 @@ test('continue form inherits the selected actual media duration while a fresh ex
   assert.equal(h.get('experiment-duration').value, '16');
   assert.equal(h.get('experiment-rounds').value, '3'); assert.equal(h.get('experiment-seconds').value, '15');
   assert.equal(h.get('experiment-criteria').value, '能看清变化');
+  assert.equal(h.get('experiment-reference').value, detail.reference.url);
+  assert.equal(h.get('experiment-reference-start').value, 0); assert.equal(h.get('experiment-reference-end').value, 6);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.get('experiment-feedback').value = '保留原有的墨色层次';
+  const inputIds = {title: 'title', goal: 'goal', feedback: 'feedback', reference_url: 'reference',
+    reference_start: 'reference-start', reference_end: 'reference-end', duration_seconds: 'duration',
+    max_rounds: 'rounds', max_minutes: 'seconds', criteria_text: 'criteria'};
+  t.mock.method(globalThis, 'FormData', function() {
+    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
+  });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method), body = JSON.parse(posts[0].options.body);
+  assert.equal(posts.length, 1); assert.deepEqual(body.reference, detail.reference);
+  assert.equal(body.base_commission_id, detail.id); assert.equal(body.base_candidate_id, 'original');
   h.get('gallery-new').handlers.click(); assert.equal(h.get('experiment-duration').value, '24');
+  for (const id of ['reference', 'reference-start', 'reference-end']) assert.equal(h.get('experiment-' + id).value, '');
   assert.equal(continuationDuration({duration_seconds: 18}, null), 18);
   assert.equal(continuationDuration({...detail, candidates: [{...candidate('best'), media: {duration_seconds: NaN}}]}, 'best'), 24);
+  h.controller.close();
+});
+
+test('transfer form preserves a URL-only reference through explicit submission', async t => {
+  const detail = run({state: 'completed', candidates: [candidate()], best_candidate_id: 'clip-1',
+    reference: {url: 'https://www.bilibili.com/video/BVexample/', start_seconds: null, end_seconds: null}});
+  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '验证不同结构').handlers.click();
+  assert.equal(h.get('experiment-reference').value, detail.reference.url);
+  assert.equal(h.get('experiment-reference-start').value, ''); assert.equal(h.get('experiment-reference-end').value, '');
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.get('experiment-goal').value = '追踪分支后的请求';
+  h.get('experiment-transfer-dimension').value = 'relations';
+  h.get('experiment-transfer-before').value = '依次经过同一路径';
+  h.get('experiment-transfer-after').value = '分支后再汇合';
+  const inputIds = {title: 'title', goal: 'goal', reference_url: 'reference', reference_start: 'reference-start',
+    reference_end: 'reference-end', duration_seconds: 'duration', max_rounds: 'rounds', max_minutes: 'seconds',
+    transfer_dimension: 'transfer-dimension', transfer_before: 'transfer-before', transfer_after: 'transfer-after'};
+  t.mock.method(globalThis, 'FormData', function() {
+    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
+  });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1); assert.ok(posts[0].url.pathname.endsWith('/commissions/' + detail.id + '/transfer'));
+  assert.deepEqual(JSON.parse(posts[0].options.body).reference, detail.reference); h.controller.close();
+});
+
+test('continued and retried forms preserve both capability axes through actual gallery submission and reset on new', async t => {
+  let active;
+  t.mock.method(globalThis, 'FormData', function(form) {
+    return [...Object.entries({...fields, feedback: '改进动作的起落节奏'}),
+      ...form.descendants('input').filter(input => input.name && !input.disabled
+        && (input.type !== 'checkbox' || input.checked))
+        .map(input => [input.name, input.type === 'checkbox' ? 'on' : input.value])];
+  });
+  for (const retry of [false, true]) {
+    const selection = {creation: ['canvas', 'three'], motion: ['gsap', 'animejs']};
+    const detail = run({state: retry ? 'failed' : 'completed', candidates: [candidate()],
+      best_candidate_id: 'clip-1', capability_selection: selection});
+    active = mountedGallery(detail, {catalogValue: catalog([detail], {availability: {enabled: true,
+      allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs']}})});
+    await active.ready(); await active.controller.select(detail.id);
+    active.get('gallery-detail').descendants('button')
+      .find(node => node.textContent === (retry ? '技术重试' : '继续优化这版')).handlers.click();
+    const controls = active.get('experiment-form').descendants('input');
+    for (const name of ['creation_canvas', 'creation_three', 'motion_gsap', 'motion_animejs']) {
+      assert.equal(controls.find(input => input.name === name).checked, true, name);
+      assert.equal(controls.find(input => input.name === name).disabled, retry, name);
+    }
+    // A capability which loses admission remains a visible requested choice;
+    // real FormData omits disabled boxes, but the server must still validate it.
+    if (retry) controls.find(input => input.name === 'creation_canvas').disabled = true;
+    assert.equal(active.requests.some(row => row.options.method), false);
+    await active.get('experiment-form').handlers.submit({preventDefault() {}});
+    const posts = active.requests.filter(row => row.options.method);
+    assert.equal(posts.length, 1);
+    assert.deepEqual(JSON.parse(posts[0].options.body).capability_selection, retry ? undefined : selection);
+    active.get('gallery-new').handlers.click();
+    assert.ok(controls.filter(input => input.type === 'checkbox').every(input => !input.checked));
+    active.controller.close();
+  }
+});
+
+test('new gallery Manim-only selection clears browser motion before the single submitted request', async t => {
+  const h = mountedGallery(run(), {catalogValue: catalog([], {availability: {enabled: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+    resource_authoring: {manim: {enabled: true}}}})});
+  await h.ready(); h.get('gallery-new').handlers.click();
+  const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+  t.mock.method(globalThis, 'FormData', function(form) {
+    return [...Object.entries(fields), ...form.descendants('input')
+      .filter(node => node.name && !node.disabled && (node.type !== 'checkbox' || node.checked))
+      .map(node => [node.name, node.type === 'checkbox' ? 'on' : node.value])];
+  });
+  for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+    input(name).checked = true; input(name).handlers.change();
+  }
+  input('creation_manim').checked = true; input('creation_manim').handlers.change();
+  for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+    assert.equal(input(name).checked, false, name); assert.equal(input(name).disabled, true, name);
+  }
+  assert.match(h.get('experiment-form').textContent, /由 Manim 自身编排动画/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1);
+  const body = JSON.parse(posts[0].options.body);
+  assert.deepEqual(body.capability_selection, {creation: ['manim'], motion: []});
+  assert.deepEqual(body.resource_authoring,
+    {kind: 'manim', width: 640, height: 360, frame_count: 48, global_start_frame: 0, seed: 17});
+  h.controller.close();
+});
+
+test('adding browser creation to Manim restores browser motion choices and submits the allowed combination', async t => {
+  const h = mountedGallery(run(), {catalogValue: catalog([], {availability: {enabled: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+    resource_authoring: {manim: {enabled: true}}}})});
+  await h.ready(); h.get('gallery-new').handlers.click();
+  const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+  t.mock.method(globalThis, 'FormData', function(form) {
+    return [...Object.entries(fields), ...form.descendants('input')
+      .filter(node => node.name && !node.disabled && (node.type !== 'checkbox' || node.checked))
+      .map(node => [node.name, node.type === 'checkbox' ? 'on' : node.value])];
+  });
+  input('motion_gsap').checked = true; input('motion_gsap').handlers.change();
+  input('creation_manim').checked = true; input('creation_manim').handlers.change();
+  assert.equal(input('motion_gsap').checked, false); assert.equal(input('motion_gsap').disabled, true);
+  input('creation_canvas').checked = true; input('creation_canvas').handlers.change();
+  for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+    assert.equal(input(name).disabled, false, name); assert.equal(input(name).checked, false, name);
+  }
+  for (const name of ['motion_gsap', 'motion_animejs']) {
+    input(name).checked = true; input(name).handlers.change();
+  }
+  assert.match(h.get('experiment-form').textContent, /仅在采用 Manim 时制作资源/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1);
+  const body = JSON.parse(posts[0].options.body);
+  assert.deepEqual(body.capability_selection, {creation: ['canvas', 'manim'], motion: ['gsap', 'animejs']});
+  assert.equal(body.resource_authoring.frame_count, 48);
+  h.controller.close();
+});
+
+test('Manim-only continue and retry forms drop stale browser motion, inherit duration and reset cleanly on new', async t => {
+  t.mock.method(globalThis, 'FormData', function(form) {
+    return [...Object.entries({...fields, feedback: '改善剪切变形的节奏'}), ...form.descendants('input')
+      .filter(node => node.name && !node.disabled && (node.type !== 'checkbox' || node.checked))
+      .map(node => [node.name, node.type === 'checkbox' ? 'on' : node.value])];
+  });
+  for (const retry of [false, true]) {
+    const detail = run({state: retry ? 'failed' : 'completed', candidates: [candidate()], best_candidate_id: 'clip-1',
+      capability_selection: {creation: ['manim'], motion: ['native-js', 'gsap', 'animejs']},
+      resource_authoring: {kind: 'manim', width: 640, height: 360, frame_count: 30, global_start_frame: 0, seed: 17}});
+    const h = mountedGallery(detail, {catalogValue: catalog([detail], {availability: {enabled: true,
+      allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+      resource_authoring: {manim: {enabled: true}}}})});
+    await h.ready(); await h.controller.select(detail.id);
+    h.get('gallery-detail').descendants('button')
+      .find(node => node.textContent === (retry ? '技术重试' : '继续优化这版')).handlers.click();
+    const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+    assert.equal(input('creation_manim').checked, true); assert.equal(input('creation_manim').disabled, retry);
+    assert.equal(input('manim_resource_seconds').value, '1.25');
+    for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+      assert.equal(input(name).checked, false, name); assert.equal(input(name).disabled, true, name);
+    }
+    assert.equal(h.requests.some(row => row.options.method), false);
+    await h.get('experiment-form').handlers.submit({preventDefault() {}});
+    const posts = h.requests.filter(row => row.options.method);
+    assert.equal(posts.length, 1);
+    const body = JSON.parse(posts[0].options.body);
+    assert.deepEqual(body.capability_selection, retry ? undefined : {creation: ['manim'], motion: []});
+    assert.deepEqual(body.resource_authoring, retry ? undefined : detail.resource_authoring);
+    assert.equal(body[retry ? 'retry_of_commission_id' : 'base_commission_id'], detail.id);
+    if (!retry) assert.equal(body.base_candidate_id, 'clip-1');
+    h.get('gallery-new').handlers.click();
+    assert.equal(input('creation_manim').checked, false); assert.equal(input('manim_resource_seconds').disabled, true);
+    for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+      assert.equal(input(name).checked, false, name); assert.equal(input(name).disabled, false, name);
+    }
+    h.controller.close();
+  }
+});
+
+test('resource details distinguish awaiting capability planning from not adopting Manim with zero production', () => {
+  const options = {kind: 'manim', width: 640, height: 360, frame_count: 30, global_start_frame: 0, seed: 17};
+  for (const [status, message] of [
+    ['awaiting_plan', /等待规划是否采用 Manim，尚未开始资源制作/],
+    ['not_adopted', /规划未采用 Manim，本次未制作该资源/],
+    ['not_started', /本次实验已结束，未开始资源制作/],
+  ]) {
+    const detail = run({state: status === 'awaiting_plan' ? 'running' : 'completed',
+      resource_authoring: {...options, status, operation_id: null, usage: {attempts: 0}}});
+    const rendered = renderMethodDetail(doc, detail, root, callbacks);
+    const progress = rendered.descendants('section').find(node => node.dataset.resourceAuthoringStatus === status);
+    assert.ok(progress); assert.match(progress.textContent, message);
+    assert.match(progress.textContent, /资源制作次数：0/);
+    assert.doesNotMatch(progress.textContent, /等待资源制作|资源制作中|资源已制作|pending/);
+    assert.equal(progress.descendants('button').length, 0);
+    assert.equal(detail.resource_authoring.frame_count, 30);
+  }
+  const completed = renderMethodDetail(doc, run({resource_authoring: {...options,
+    status: 'completed', usage: {attempts: 1}}}), root, callbacks)
+    .descendants('section').find(node => node.dataset.resourceAuthoringStatus === 'completed');
+  assert.match(completed.textContent, /资源制作次数：1/);
+  assert.match(completed.textContent, /不代表完整样片已完成或效果已获认可/);
+  const unknown = renderMethodDetail(doc, run({resource_authoring: {...options, status: 'unknown'}}), root, callbacks)
+    .descendants('section').find(node => node.dataset.resourceAuthoringStatus === 'unknown');
+  assert.match(unknown.textContent, /资源状态待核对/);
+  assert.doesNotMatch(unknown.textContent, /资源制作次数|等待资源制作|资源已制作/);
+});
+
+test('not-adopted Manim resource keeps candidate parameters for explicit continuation without starting production', async () => {
+  const detail = run({state: 'completed', candidates: [candidate()], best_candidate_id: 'clip-1',
+    capability_selection: {creation: ['canvas', 'manim'], motion: ['gsap']},
+    resource_authoring: {kind: 'manim', width: 640, height: 360, frame_count: 30, global_start_frame: 0, seed: 17,
+      status: 'not_adopted', operation_id: null, usage: {attempts: 0}}});
+  const h = mountedGallery(detail, {catalogValue: catalog([detail], {availability: {enabled: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+    resource_authoring: {manim: {enabled: true}}}})});
+  await h.ready(); await h.controller.select(detail.id);
+  assert.match(h.get('gallery-detail').textContent, /规划未采用 Manim/);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '继续优化这版').handlers.click();
+  const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+  for (const name of ['creation_canvas', 'creation_manim', 'motion_gsap']) {
+    assert.equal(input(name).checked, true, name); assert.equal(input(name).disabled, false, name);
+  }
+  assert.equal(input('manim_resource_seconds').value, '1.25');
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.controller.close();
+});
+
+test('gallery collaboration switching retains browser and motion choices while excluding only Manim', async () => {
+  const detail = run();
+  const h = mountedGallery(detail, {catalogValue: catalog([], {availability: {enabled: true,
+    collaboration: true, allowed_engines: ['html-svg', 'canvas', 'three'],
+    motion_tools: ['native-js', 'gsap', 'animejs'], resource_authoring: {manim: {enabled: true}}}})});
+  await h.ready(); h.get('gallery-new').handlers.click();
+  const controls = h.get('experiment-form').descendants('input');
+  for (const name of ['creation_canvas', 'creation_three', 'creation_manim', 'motion_animejs']) {
+    controls.find(input => input.name === name).checked = true;
+  }
+  const toggle = h.get('experiment-collaboration'); toggle.checked = true; toggle.handlers.change();
+  for (const name of ['creation_canvas', 'creation_three', 'motion_animejs']) {
+    assert.equal(controls.find(input => input.name === name).checked, true, name);
+    assert.equal(controls.find(input => input.name === name).disabled, false, name);
+  }
+  assert.equal(controls.find(input => input.name === 'creation_manim').checked, false);
+  assert.equal(controls.find(input => input.name === 'creation_manim').disabled, true);
+  toggle.checked = false; toggle.handlers.change();
+  assert.equal(controls.find(input => input.name === 'creation_manim').disabled, false);
+  assert.equal(controls.find(input => input.name === 'motion_animejs').checked, true);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.controller.close();
+});
+
+test('clearing all capability controls explicitly restores automatic choice on continuation or retry', () => {
+  for (const relation of [{base_commission_id: 'base', feedback: '重新考虑工具组合'},
+    {retry_of_commission_id: 'failed'}]) {
+    const body = buildCommissionRequest({...fields, ...relation}, firstId);
+    assert.deepEqual(body.capability_selection, relation.retry_of_commission_id ? undefined : {creation: [], motion: []});
+  }
+  assert.equal(Object.hasOwn(buildCommissionRequest(fields, firstId), 'capability_selection'), false);
+});
+
+test('the actual Skill transfer form sends required v2 content changes tied to its selected baseline', async t => {
+  const detail = run({state: 'completed', goal: '原目标：解释流水线中任务的顺序依赖',
+    candidates: [{...candidate('baseline'), method_version_ids: ['skill-v2']}], best_candidate_id: 'baseline',
+    methods: [{id: 'skill-v2', schema: 'video.animation-method.v2'}],
+    reference: {url: 'https://www.bilibili.com/video/BVexample/', start_seconds: 0, end_seconds: 8}});
+  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '验证不同结构').handlers.click();
+  for (const id of ['reference', 'reference-start', 'reference-end']) {
+    assert.equal(h.get('experiment-' + id).value, '');
+    assert.equal(h.get('experiment-' + id).disabled, true);
+  }
+  assert.match(h.get('experiment-base-note').textContent, /不携带参考素材/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.get('experiment-goal').value = '  新目标：解释并行分支完成后如何汇合  ';
+  h.get('experiment-transfer-dimension').value = 'relations';
+  h.get('experiment-transfer-before').value = '串行依赖';
+  h.get('experiment-transfer-after').value = '并行分支与汇合';
+  // A retained or manually changed reference control must still never enter
+  // the v2 request, even when a fake FormData includes disabled inputs.
+  h.get('experiment-reference').value = 'https://example.com/not-for-transfer';
+  const inputIds = {title: 'title', goal: 'goal', reference_url: 'reference', reference_start: 'reference-start',
+    reference_end: 'reference-end', duration_seconds: 'duration', max_rounds: 'rounds', max_minutes: 'seconds',
+    transfer_dimension: 'transfer-dimension', transfer_before: 'transfer-before', transfer_after: 'transfer-after'};
+  t.mock.method(globalThis, 'FormData', function() {
+    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
+  });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1);
+  assert.ok(posts[0].url.pathname.endsWith('/commissions/' + detail.id + '/transfer'));
+  const body = JSON.parse(posts[0].options.body);
+  assert.deepEqual(body.content_changes, {before: detail.goal, after: '新目标：解释并行分支完成后如何汇合',
+    reason: '开发者指定的结构变化：串行依赖 → 并行分支与汇合'});
+  assert.equal(body.goal, body.content_changes.after);
+  assert.equal(body.base_candidate_id, 'baseline');
+  assert.equal(body.reference, null);
+  assert.equal(Object.hasOwn(body, 'human_verification'), false);
+  h.get('gallery-new').handlers.click();
+  for (const id of ['reference', 'reference-start', 'reference-end']) assert.equal(h.get('experiment-' + id).disabled, false);
+  h.controller.close();
+});
+
+test('a Skill transfer from an inherited baseline never guesses its demonstration goal from the newer brief', async t => {
+  const inherited = {...candidate('inherited'), method_version_ids: ['older-skill-v2']};
+  const detail = run({state: 'completed', goal: '当前实验已经改过的目标',
+    candidates: [inherited], best_candidate_id: inherited.id, baseline_candidate: inherited,
+    methods: [{id: 'older-skill-v2', schema: 'video.animation-method.v2'}]});
+  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '验证不同结构').handlers.click();
+  h.get('experiment-goal').value = '另一个迁移目标';
+  h.get('experiment-transfer-dimension').value = 'relations';
+  h.get('experiment-transfer-before').value = '单链'; h.get('experiment-transfer-after').value = '分支';
+  const inputIds = {title: 'title', goal: 'goal', duration_seconds: 'duration', max_rounds: 'rounds', max_minutes: 'seconds',
+    transfer_dimension: 'transfer-dimension', transfer_before: 'transfer-before', transfer_after: 'transfer-after'};
+  t.mock.method(globalThis, 'FormData', function() {
+    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
+  });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  assert.equal(h.requests.some(row => row.options.method), false);
+  assert.match(h.controller.snapshot.error, /打开该样片所属的原实验/);
   h.controller.close();
 });
 
@@ -627,7 +1081,7 @@ test('failed and cancelled experiments offer retry with or without usable sample
     for (const candidates of [[], [candidate()]]) {
       const detail = run({state, candidates, can_retry: true}); let opened;
       const rendered = renderMethodDetail(doc, detail, root, {...callbacks, onRetry: value => { opened = value; }});
-      const retry = rendered.descendants('button').find(node => node.textContent === '重新运行');
+      const retry = rendered.descendants('button').find(node => node.textContent === '技术重试');
       assert.ok(retry); assert.equal(retry.disabled, false); retry.handlers.click(); assert.equal(opened, detail);
       if (candidates.length) assert.ok(rendered.descendants('button').some(node => node.textContent === '继续优化这版' && !node.disabled));
     }
@@ -635,8 +1089,57 @@ test('failed and cancelled experiments offer retry with or without usable sample
   for (const detail of [run({state: 'running', can_retry: true}), run({state: 'completed', can_retry: true}),
     run({state: 'failed', can_retry: false})]) {
     const rendered = renderMethodDetail(doc, detail, root, callbacks);
-    assert.equal(rendered.descendants('button').some(node => node.textContent === '重新运行'), false);
+    assert.equal(rendered.descendants('button').some(node => node.textContent === '技术重试'), false);
   }
+});
+
+test('fresh form does not inherit standards, source-specific tools or collaboration and defaults knowledge on', async t => {
+  const detail = run({state: 'completed', effect_id: 'ink-effect', use_wikiskill: false,
+    candidates: [candidate()], best_candidate_id: 'clip-1', criteria: [{id: 'old', description: '旧标准'}],
+    reference: {url: 'https://old.example/source'}, collaboration: {enabled: true},
+    capability_selection: {creation: ['canvas'], motion: ['native-js']}});
+  const h = mountedGallery(detail, {catalogValue: catalog([detail], {availability: {enabled: true, collaboration: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs']}})});
+  await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '在此效果下从零重做').handlers.click();
+  assert.equal(h.get('experiment-form-title').textContent, '在原效果下从零重做');
+  assert.equal(h.get('experiment-goal').value, detail.goal); assert.equal(h.get('experiment-criteria').value, '');
+  assert.equal(h.get('experiment-reference').value, ''); assert.equal(h.get('experiment-use-wikiskill').checked, true);
+  assert.equal(h.get('experiment-collaboration-options').hidden, false);
+  assert.equal(h.get('experiment-problems-label').hidden, false);
+  assert.equal(h.get('experiment-form').descendants('input').some(input => input.name === 'creation_canvas' && input.checked), false);
+  h.get('experiment-use-wikiskill').checked = false;
+  t.mock.method(globalThis, 'FormData', function() { return Object.entries({...fields, problem_summary_text: '笔触没有参与造型'}); });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method === 'POST'); assert.equal(posts.length, 1);
+  const body = JSON.parse(posts[0].options.body);
+  assert.equal(body.creation_mode, 'fresh'); assert.equal(body.effect_id, 'ink-effect'); assert.equal(body.use_wikiskill, false);
+  assert.deepEqual(body.problem_summary, [{text: '笔触没有参与造型', source: 'developer'}]);
+  for (const key of ['base_commission_id', 'base_candidate_id', 'method_versions', 'criteria', 'collaboration', 'reference']) {
+    assert.ok(body[key] === undefined || body[key] === null, key);
+  }
+  h.controller.close();
+});
+
+test('fresh candidates remain explicitly adoptable and default status never follows internal best alone', () => {
+  let adopted;
+  const detail = run({state: 'completed', creation_mode: 'fresh', use_wikiskill: false, effect_id: 'ink-effect',
+    representative_revision: 2, adopted_candidate_id: 'old-clip', candidates: [candidate()], best_candidate_id: 'clip-1'});
+  const rendered = renderMethodDetail(doc, detail, root, {...callbacks, onAdopt: id => { adopted = id; }});
+  assert.match(rendered.textContent, /动效 WikiSkill：关闭/); assert.match(rendered.textContent, /本次作品先作为候选保存/);
+  const button = rendered.descendants('button').find(node => node.textContent === '设为默认展示样片');
+  assert.equal(button.disabled, false); assert.equal(adopted, undefined); button.handlers.click(); assert.equal(adopted, 'clip-1');
+});
+
+test('adoption menus exclude inherited candidates even when retry retains their playable media', () => {
+  const inherited = {...candidate('old-clip'), commission_id: 'old-run'};
+  const own = {...candidate('new-clip'), commission_id: 'commission-1'};
+  const detail = run({state: 'completed', effect_id: 'effect-1', representative_revision: 2,
+    candidates: [inherited, own], baseline_candidate: inherited, best_candidate_id: inherited.id});
+  const rendered = renderMethodDetail(doc, detail, root, callbacks);
+  const select = rendered.descendants('select').find(node => node.attributes['aria-label'] === '要设为默认展示的候选');
+  assert.deepEqual(select.children.map(node => node.value), ['new-clip']);
+  assert.equal(select.value, 'new-clip');
 });
 
 test('opening retry only prefills the original goal, reference, standards and a new budget before explicit submission', async t => {
@@ -647,9 +1150,9 @@ test('opening retry only prefills the original goal, reference, standards and a 
     retry_budget: {max_rounds: 4, max_seconds: 901}, budget: {seconds: 88}, criteria: [criterion],
     candidates: [{...candidate('first'), media: {duration_seconds: 11}}], best_candidate_id: 'first'});
   const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
-  h.get('gallery-detail').descendants('button').find(node => node.textContent === '重新运行').handlers.click();
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '技术重试').handlers.click();
   assert.equal(h.get('gallery-form-panel').hidden, false);
-  assert.equal(h.get('experiment-form-title').textContent, '重新运行本次实验');
+  assert.equal(h.get('experiment-form-title').textContent, '技术重试：恢复本次实验');
   assert.equal(h.get('experiment-title').value, fields.title); assert.equal(h.get('experiment-goal').value, fields.goal);
   assert.equal(h.get('experiment-reference').value, detail.reference.url);
   assert.equal(h.get('experiment-reference-start').value, 12.5); assert.equal(h.get('experiment-reference-end').value, 38);
@@ -658,7 +1161,7 @@ test('opening retry only prefills the original goal, reference, standards and a 
   assert.equal(h.get('experiment-rounds').closest('details').open, true);
   assert.equal(h.get('experiment-seconds').value, '16'); assert.equal(h.get('experiment-feedback').required, false);
   assert.equal(h.get('experiment-feedback').value, detail.feedback_text);
-  assert.match(h.get('experiment-base-note').textContent, /使用新预算，保留已有样片和失败记录/);
+  assert.match(h.get('experiment-base-note').textContent, /只恢复或修复失败环节/);
   assert.equal(h.requests.some(row => row.options.method), false);
   const inputIds = {title: 'title', goal: 'goal', feedback: 'feedback', reference_url: 'reference',
     reference_start: 'reference-start', reference_end: 'reference-end', duration_seconds: 'duration',
@@ -671,9 +1174,10 @@ test('opening retry only prefills the original goal, reference, standards and a 
   const posts = h.requests.filter(row => row.options.method);
   assert.equal(posts.length, 1); assert.equal(posts[0].url.pathname, '/dev/animations/api/method-lab/commissions');
   const body = JSON.parse(posts[0].options.body);
-  assert.equal(body.retry_of_commission_id, detail.id); assert.deepEqual(body.criteria, [criterion]);
-  assert.equal(body.feedback, detail.feedback_text);
-  assert.deepEqual(body.reference, detail.reference); assert.deepEqual(body.budget, {max_rounds: 1, max_seconds: 960});
+  assert.deepEqual(Object.keys(body).sort(), ['budget', 'request_id', 'retry_of_commission_id']);
+  assert.equal(body.retry_of_commission_id, detail.id);
+  assert.deepEqual(body.budget, {max_rounds: 1, max_seconds: 960});
+  for (const field of ['goal', 'criteria', 'duration', 'reference', 'use-wikiskill']) assert.equal(h.get('experiment-' + field).disabled, true);
   assert.equal(Object.hasOwn(body, 'base_commission_id'), false); assert.equal(Object.hasOwn(body, 'base_candidate_id'), false);
   h.controller.close();
 });
@@ -681,7 +1185,7 @@ test('opening retry only prefills the original goal, reference, standards and a 
 test('retry defaults clamp unusually long budgets and preview retries cannot execute', async () => {
   const detail = run({state: 'cancelled', can_retry: true, ui_preview: true, retry_budget: {max_seconds: 8000}});
   const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
-  const retry = h.get('gallery-detail').descendants('button').find(node => node.textContent === '重新运行');
+  const retry = h.get('gallery-detail').descendants('button').find(node => node.textContent === '技术重试');
   assert.equal(retry.disabled, true);
   retry.handlers.click();
   assert.equal(h.get('experiment-seconds').value, '60'); assert.equal(h.get('experiment-submit').disabled, true);
@@ -694,10 +1198,10 @@ test('effect history distinguishes retry and early execution from continuation',
     {id: 'early', title: '初始制作', kind: 'historical_attempt', state: 'failed'},
     {id: 'retry', title: '重试原目标', kind: 'retry', state: 'completed'}]}}), root, callbacks);
   const history = rendered.descendants('details').find(node => node.dataset.methodDisclosure === 'effect-history');
-  assert.match(history.textContent, /重新运行/); assert.doesNotMatch(history.textContent, /继续优化/);
+  assert.match(history.textContent, /技术重试/); assert.doesNotMatch(history.textContent, /继续优化/);
   const items = history.descendants('li');
   assert.equal(items[0].descendants('span')[0].textContent, '早期执行');
-  assert.equal(items[1].descendants('span')[0].textContent, '重新运行');
+  assert.equal(items[1].descendants('span')[0].textContent, '技术重试');
 });
 
 test('real media exposes controls without forcing autoplay or muting necessary sound', () => {
@@ -867,105 +1371,6 @@ test('switching the feedback version clears a time range from the previous versi
   select.value = 'b'; select.handlers.change();
   assert.equal(draft.candidate_id, 'b'); assert.equal(draft.start_seconds, ''); assert.equal(draft.end_seconds, '');
   player.destroy();
-});
-
-test('Skill transfers bind the exact original and new goals without sending reference material or approvals', () => {
-  const originalGoal = '  说明同一路径的请求如何依次完成  ';
-  const input = {...fields, transfer_protocol: 'skills', transfer_original_goal: originalGoal,
-    goal: '  解释多分支竞争后为何需要汇合  ', base_candidate_id: 'exact-reference',
-    reference_url: 'https://example.com/original-reference', reference_start: 2, reference_end: 6,
-    transfer_dimension: 'relations', transfer_before: '单一路径', transfer_after: '并行分支与汇合'};
-  const body = buildTransferRequest(input, firstId);
-  assert.deepEqual(body.content_changes, {before: originalGoal, after: '解释多分支竞争后为何需要汇合',
-    reason: '开发者指定的结构变化：单一路径 → 并行分支与汇合'});
-  assert.equal(body.content_changes.after, body.goal);
-  assert.deepEqual(body.structural_changes, {relations: {before: '单一路径', after: '并行分支与汇合'}});
-  assert.equal(body.reference, null);
-  assert.equal(body.base_candidate_id, 'exact-reference');
-  for (const field of ['transfer_protocol', 'transfer_original_goal', 'human_verification', 'acceptance']) {
-    assert.equal(Object.hasOwn(body, field), false);
-  }
-  assert.throws(() => buildTransferRequest({...input, transfer_original_goal: ''}, firstId), /原实验/);
-  assert.throws(() => buildTransferRequest({...input, goal: originalGoal}, firstId), /新的表达目标/);
-  for (const dimension of ['object_count', 'timing']) {
-    assert.throws(() => buildTransferRequest({...input, transfer_dimension: dimension,
-      transfer_before: '8', transfer_after: '40'}, firstId), /真实的关系结构/);
-  }
-});
-
-test('invalid Skill transfer content stops before persistence or a paid submission', async () => {
-  const h = harness(() => catalog());
-  await h.controller.refresh();
-  const input = {...fields, transfer_commission_id: 'original', transfer_protocol: 'skills',
-    transfer_dimension: 'relations', transfer_before: '单链', transfer_after: '分支'};
-  assert.equal(await h.controller.start(input), false);
-  assert.match(h.controller.snapshot.error, /确切的原始目标/);
-  assert.equal(h.requests.some(row => row.options.method), false);
-  assert.equal(h.store.data.size, 0);
-  h.controller.close();
-});
-
-test('the actual Skill transfer form sends required v2 content changes tied to its selected baseline', async t => {
-  const detail = run({state: 'completed', goal: '原目标：解释流水线中任务的顺序依赖',
-    candidates: [{...candidate('baseline'), method_version_ids: ['skill-v2']}], best_candidate_id: 'baseline',
-    methods: [{id: 'skill-v2', schema: 'video.animation-method.v2'}],
-    reference: {url: 'https://www.bilibili.com/video/BVexample/', start_seconds: 0, end_seconds: 8}});
-  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
-  h.get('gallery-detail').descendants('button').find(node => node.textContent === '验证不同结构').handlers.click();
-  for (const id of ['reference', 'reference-start', 'reference-end']) {
-    assert.equal(h.get('experiment-' + id).value, '');
-    assert.equal(h.get('experiment-' + id).disabled, true);
-  }
-  assert.match(h.get('experiment-base-note').textContent, /不携带参考素材/);
-  assert.equal(h.requests.some(row => row.options.method), false);
-  h.get('experiment-goal').value = '  新目标：解释并行分支完成后如何汇合  ';
-  h.get('experiment-transfer-dimension').value = 'relations';
-  h.get('experiment-transfer-before').value = '串行依赖';
-  h.get('experiment-transfer-after').value = '并行分支与汇合';
-  // A retained or manually changed reference control must still never enter
-  // the v2 request, even when a fake FormData includes disabled inputs.
-  h.get('experiment-reference').value = 'https://example.com/not-for-transfer';
-  const inputIds = {title: 'title', goal: 'goal', reference_url: 'reference', reference_start: 'reference-start',
-    reference_end: 'reference-end', duration_seconds: 'duration', max_rounds: 'rounds', max_minutes: 'seconds',
-    transfer_dimension: 'transfer-dimension', transfer_before: 'transfer-before', transfer_after: 'transfer-after'};
-  t.mock.method(globalThis, 'FormData', function() {
-    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
-  });
-  await h.get('experiment-form').handlers.submit({preventDefault() {}});
-  const posts = h.requests.filter(row => row.options.method);
-  assert.equal(posts.length, 1);
-  assert.ok(posts[0].url.pathname.endsWith('/commissions/' + detail.id + '/transfer'));
-  const body = JSON.parse(posts[0].options.body);
-  assert.deepEqual(body.content_changes, {before: detail.goal, after: '新目标：解释并行分支完成后如何汇合',
-    reason: '开发者指定的结构变化：串行依赖 → 并行分支与汇合'});
-  assert.equal(body.goal, body.content_changes.after);
-  assert.equal(body.base_candidate_id, 'baseline');
-  assert.equal(body.reference, null);
-  assert.equal(Object.hasOwn(body, 'human_verification'), false);
-  h.get('gallery-new').handlers.click();
-  for (const id of ['reference', 'reference-start', 'reference-end']) assert.equal(h.get('experiment-' + id).disabled, false);
-  h.controller.close();
-});
-
-test('a Skill transfer from an inherited baseline never guesses its demonstration goal from the newer brief', async t => {
-  const inherited = {...candidate('inherited'), method_version_ids: ['older-skill-v2']};
-  const detail = run({state: 'completed', goal: '当前实验已经改过的目标',
-    candidates: [inherited], best_candidate_id: inherited.id, baseline_candidate: inherited,
-    methods: [{id: 'older-skill-v2', schema: 'video.animation-method.v2'}]});
-  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
-  h.get('gallery-detail').descendants('button').find(node => node.textContent === '验证不同结构').handlers.click();
-  h.get('experiment-goal').value = '另一个迁移目标';
-  h.get('experiment-transfer-dimension').value = 'relations';
-  h.get('experiment-transfer-before').value = '单链'; h.get('experiment-transfer-after').value = '分支';
-  const inputIds = {title: 'title', goal: 'goal', duration_seconds: 'duration', max_rounds: 'rounds', max_minutes: 'seconds',
-    transfer_dimension: 'transfer-dimension', transfer_before: 'transfer-before', transfer_after: 'transfer-after'};
-  t.mock.method(globalThis, 'FormData', function() {
-    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
-  });
-  await h.get('experiment-form').handlers.submit({preventDefault() {}});
-  assert.equal(h.requests.some(row => row.options.method), false);
-  assert.match(h.controller.snapshot.error, /打开该样片所属的原实验/);
-  h.controller.close();
 });
 
 test('host quality selection explains a failed promotion separately from uncertain motion', () => {

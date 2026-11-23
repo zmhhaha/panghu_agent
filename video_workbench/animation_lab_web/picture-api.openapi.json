@@ -1,0 +1,1386 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "图片学习库 API",
+    "version": "1.0.0",
+    "description": "独立的图片学习项目：上传实际参考图片或登记视频链接与截图时间，异步创作、真实渲染、独立比较和换内容验证。与网页共用合同。GET 为只读；不会自动发布 WikiSkill。沿用 OAuth 登录 Cookie 和开发者权限，未提供 Bearer 或长期机器令牌。外部调用方使用用户安全提供的 Cookie 文件，不读取浏览器凭据。POST 必须提供同源 Origin、catalog.csrf_token 对应的 X-Animation-Lab-Token 和 application/json。 创建与继续/从零实验支持 capability_selection、allow_collaboration、allow_probes；以 catalog 当前准入为准，内部小样与分工共用预算并按依赖顺序执行。技术重试不允许改变这些冻结字段。"
+  },
+  "servers": [
+    {
+      "url": "https://video-service.panghuer.top/dev/animations/api/picture-lab"
+    }
+  ],
+  "security": [
+    {
+      "OAuthSessionCookie": []
+    }
+  ],
+  "paths": {
+    "/catalog": {
+      "get": {
+        "operationId": "pictureCatalog",
+        "summary": "读取项目列表、能力状态和 CSRF token",
+        "responses": {
+          "200": {
+            "description": "按当前身份隔离的学习项目列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "projects",
+                    "availability"
+                  ],
+                  "properties": {
+                    "schema": {
+                      "const": "video.picture-learning-catalog.v1"
+                    },
+                    "csrf_token": {
+                      "type": "string"
+                    },
+                    "availability": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    },
+                    "projects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "title",
+                          "state"
+                        ],
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/Identifier"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "goal": {
+                            "type": "string"
+                          },
+                          "request_id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "preview_url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "experiments_count": {
+                            "type": "integer"
+                          },
+                          "best_candidate_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "adopted_candidate_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "runtime_capabilities": {
+                      "type": "object",
+                      "description": "Trusted renderer runtime, local assets and allowed engines."
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "properties": {
+                        "creation": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "html-svg",
+                              "canvas",
+                              "three",
+                              "manim"
+                            ]
+                          }
+                        },
+                        "motion": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "native-js",
+                              "gsap",
+                              "animejs"
+                            ]
+                          }
+                        },
+                        "manim": {
+                          "type": "object",
+                          "properties": {
+                            "admitted": {
+                              "type": "boolean"
+                            }
+                          },
+                          "description": "Current producer admission and exact resource limits. Always consult before requesting Manim."
+                        },
+                        "strategy": {
+                          "type": "object",
+                          "properties": {
+                            "max_probes": {
+                              "const": 2
+                            },
+                            "max_components": {
+                              "const": 3
+                            },
+                            "max_parallel": {
+                              "const": 1
+                            },
+                            "allow_probes": {
+                              "type": "boolean"
+                            },
+                            "allow_collaboration": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/references": {
+      "post": {
+        "operationId": "uploadPictureReference",
+        "summary": "上传实际参考，或登记按需读取的视频链接",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          },
+          {
+            "$ref": "#/components/parameters/CSRF"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReferenceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已保存或相同请求已存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reference"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "参考已上传，或链接来源元数据已登记；远程来源尚未因此获得实际画面观察",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reference"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "description": "图片或请求超过大小限制"
+          },
+          "422": {
+            "description": "图片内容或字段不符合合同"
+          }
+        }
+      }
+    },
+    "/references/{reference_id}/media": {
+      "parameters": [
+        {
+          "name": "reference_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Identifier"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "downloadPictureReference",
+        "summary": "读取所属身份的原始参考图",
+        "responses": {
+          "200": {
+            "description": "原始图片内容",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "参考不存在或不属于当前身份"
+          }
+        },
+        "description": "只返回已经保存的上传参考。远程视频来源不通过本接口触发读取；实际帧在项目证据 artifact 中读取。"
+      }
+    },
+    "/projects": {
+      "post": {
+        "operationId": "startPictureProject",
+        "summary": "新建项目并启动第一次有界实验",
+        "description": "先保存参考图，再引用返回的 reference_id。需求、参考、预算和知识版本在执行前冻结。请求结果未知时，使用相同 request_id 和完全相同的内容重送；不能更换编号重新消耗。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          },
+          {
+            "$ref": "#/components/parameters/CSRF"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectStart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已提交异步实验",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "description": "需求不符合合同"
+          },
+          "503": {
+            "description": "图片创作或实际渲染尚未准入"
+          }
+        }
+      }
+    },
+    "/projects/{project_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ProjectId"
+        }
+      ],
+      "get": {
+        "operationId": "readPictureProject",
+        "summary": "只读查看项目、实验、作品和比较",
+        "responses": {
+          "200": {
+            "description": "项目详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "项目不存在或不属于当前身份"
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/experiments": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ProjectId"
+        }
+      ],
+      "post": {
+        "operationId": "continuePictureLearning",
+        "summary": "继续、从零重做或技术重试",
+        "description": "运行中的项目不能改变需求。continue 继承明确选定且已实际生成图片的复现作品；fresh 保留参考与目标，移除旧源码、布局和专用方法；retry 只发送 request_id 与 mode，保持原始需求、预算与知识绑定，仅重试技术失败。更改预算须使用 continue 或 fresh。开发者可反复发起新的有界实验。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          },
+          {
+            "$ref": "#/components/parameters/CSRF"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExperimentStart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "新的异步实验已提交",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "description": "模式或参数不符合合同"
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/stop": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ProjectId"
+        }
+      ],
+      "post": {
+        "operationId": "stopPictureExperiment",
+        "summary": "请求停止本项目当前实验",
+        "description": "停止请求与实际停止分别记录。stopping 不代表远端任务已经停止；已完成作品继续保存。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          },
+          {
+            "$ref": "#/components/parameters/CSRF"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "已停止或当前状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "停止请求已保存，尚待核验",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/adopt": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ProjectId"
+        }
+      ],
+      "post": {
+        "operationId": "adoptPictureWork",
+        "summary": "选定项目默认复现作品",
+        "description": "仅改变默认作品选择，不生成图片、不授予人工视觉验收、不发布 WikiSkill。内部最佳和默认作品分别记录。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          },
+          {
+            "$ref": "#/components/parameters/CSRF"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "candidate_id"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "candidate_id": {
+                    "$ref": "#/components/schemas/Identifier"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "默认作品选择已保存",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/experiments/{experiment_id}/input": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ProjectId"
+        },
+        {
+          "name": "experiment_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Identifier"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "inspectPictureInputs",
+        "summary": "读取已保存的实际角色输入",
+        "description": "包括冻结需求和对应创作、评审角色的输入；不是所有执行系统提示词的导出。读取不启动任务。",
+        "responses": {
+          "200": {
+            "description": "本次实验输入与来源范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在或不属于当前身份"
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/artifacts/{artifact_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ProjectId"
+        },
+        {
+          "name": "artifact_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Identifier"
+          }
+        }
+      ],
+      "get": {
+        "operationId": "downloadPictureArtifact",
+        "summary": "下载真实图片、源码或渲染回执",
+        "responses": {
+          "200": {
+            "description": "已保存的产物；类型以 Content-Type 为准",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在或不属于当前身份"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuthSessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "oauth_session",
+        "description": "由站点 OAuth 代理管理的实际会话 Cookie；示意名，不应自行构造。"
+      }
+    },
+    "parameters": {
+      "ProjectId": {
+        "name": "project_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/Identifier"
+        }
+      },
+      "Origin": {
+        "name": "Origin",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "const": "https://video-service.panghuer.top"
+        }
+      },
+      "CSRF": {
+        "name": "X-Animation-Lab-Token",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "GET /catalog 返回的 csrf_token"
+      }
+    },
+    "responses": {
+      "Conflict": {
+        "description": "请求编号冲突、项目仍在运行或原操作结果尚待核验。勿创建新编号盲目重试。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Identifier": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$"
+      },
+      "ReferenceUpload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "file_name",
+          "mime_type",
+          "content_base64"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "file_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "mime_type": {
+            "enum": [
+              "image/png",
+              "image/jpeg"
+            ]
+          },
+          "content_base64": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "实际 PNG/JPEG 字节，解码后不超过 8 MiB。不得只提交 URL。"
+          }
+        }
+      },
+      "Reference": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UploadedReference"
+          },
+          {
+            "$ref": "#/components/schemas/RemoteVideoReferenceRecord"
+          }
+        ]
+      },
+      "ProjectStart": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "title",
+          "goal",
+          "reference_ids"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "reference_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/Identifier"
+            }
+          },
+          "criteria": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 320,
+            "maximum": 1920,
+            "default": 1280
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 180,
+            "maximum": 1080,
+            "default": 720
+          },
+          "use_wikiskill": {
+            "type": "boolean",
+            "default": true
+          },
+          "max_rounds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 3
+          },
+          "max_seconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 3600,
+            "default": 900
+          },
+          "capability_selection": {
+            "$ref": "#/components/schemas/CapabilitySelection"
+          },
+          "allow_collaboration": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow the first reproduction author to propose 2-3 real specialist component jobs only when useful. Sequential dependency execution (max_parallel=1), same experiment deadline/budget. Manim resource plans cannot combine with internal subtasks."
+          },
+          "allow_probes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow 0-2 focused internal technique studies, each actually authored, rendered and independently reviewed. Evidence belongs to internal_attempts, not normal works. Shares the experiment budget; no forced extra planning loop."
+          }
+        }
+      },
+      "ExperimentStart": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "mode"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mode": {
+            "enum": [
+              "continue",
+              "fresh",
+              "retry"
+            ]
+          },
+          "feedback": {
+            "type": "string",
+            "maxLength": 8000
+          },
+          "base_candidate_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "use_wikiskill": {
+            "type": "boolean",
+            "default": true
+          },
+          "max_rounds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 3
+          },
+          "max_seconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 3600,
+            "default": 900
+          },
+          "capability_selection": {
+            "$ref": "#/components/schemas/CapabilitySelection"
+          },
+          "allow_collaboration": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow the first reproduction author to propose 2-3 real specialist component jobs only when useful. Sequential dependency execution (max_parallel=1), same experiment deadline/budget. Manim resource plans cannot combine with internal subtasks."
+          },
+          "allow_probes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow 0-2 focused internal technique studies, each actually authored, rendered and independently reviewed. Evidence belongs to internal_attempts, not normal works. Shares the experiment budget; no forced extra planning loop."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "retry"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "feedback"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "base_candidate_id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "use_wikiskill"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "max_rounds"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "max_seconds"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "capability_selection"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "allow_collaboration"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "allow_probes"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Candidate": {
+        "type": "object",
+        "required": [
+          "id",
+          "work_kind"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "work_kind": {
+            "enum": [
+              "reproduction",
+              "transfer"
+            ]
+          },
+          "role": {
+            "enum": [
+              "reproduction",
+              "transfer",
+              "internal_probe"
+            ]
+          },
+          "round": {
+            "type": "integer"
+          },
+          "picture_url": {
+            "type": "string"
+          },
+          "source_url": {
+            "type": "string"
+          },
+          "receipt_url": {
+            "type": "string"
+          },
+          "source_sha256": {
+            "type": "string"
+          },
+          "review": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "method": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "probe_id": {
+            "type": "string",
+            "description": "Present only for an internal technique study."
+          },
+          "resource_plan": {
+            "type": "object",
+            "description": "Frozen actual resource-production goal/options, if Manim was adopted."
+          },
+          "resource_descriptor": {
+            "type": "object",
+            "description": "Verified real preproduced resource descriptor, not a tool-selection claim."
+          }
+        }
+      },
+      "Project": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "goal",
+          "state",
+          "experiments"
+        ],
+        "properties": {
+          "schema": {
+            "const": "video.picture-learning-project.v1"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "title": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "reference_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Identifier"
+            }
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Reference"
+            }
+          },
+          "best_candidate_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "adopted_candidate_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candidate"
+            }
+          },
+          "experiments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "state"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Identifier"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "stage": {
+                  "type": "string"
+                },
+                "stop_reason": {
+                  "type": [
+                    "string",
+                    "null",
+                    "object"
+                  ]
+                },
+                "frozen": {
+                  "type": "object"
+                },
+                "candidates": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Candidate"
+                  }
+                },
+                "transfer_task": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "transfer_status": {
+                  "type": "string"
+                },
+                "learning_progress": {
+                  "$ref": "#/components/schemas/LearningProgress"
+                },
+                "internal_attempts": {
+                  "type": "array",
+                  "description": "Actual internal studies, excluded from normal candidates, adoption and work counts. Artifacts use the same authenticated project artifact route.",
+                  "items": {
+                    "$ref": "#/components/schemas/Candidate"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "CapabilitySelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Explicit admitted candidate tools, not observed usage. Empty/omitted groups let the Agent choose. Multiple entries permit choosing/combining rather than decorative use of all tools. Manim-only creation forbids nonempty browser motion.",
+        "properties": {
+          "creation": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "html-svg",
+                "canvas",
+                "three",
+                "manim"
+              ]
+            }
+          },
+          "motion": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "native-js",
+                "gsap",
+                "animejs"
+              ]
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "creation"
+              ],
+              "properties": {
+                "creation": {
+                  "const": [
+                    "manim"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "motion": {
+                  "maxItems": 0
+                }
+              }
+            }
+          }
+        ]
+      },
+      "LearningProgress": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "description": "Actual host orchestration state; counts operations, not hidden provider model requests. Never proves visual quality or continuous/audio observation.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "plan",
+              "probe_author",
+              "probe_render",
+              "probe_review",
+              "component",
+              "resources",
+              "compose",
+              "complete"
+            ]
+          },
+          "probes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "goal": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "candidate_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "review": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "operation_id": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "max_probes": {
+            "const": 2
+          },
+          "max_components": {
+            "const": 3
+          },
+          "max_parallel": {
+            "const": 1
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "plan_operation_id": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      },
+      "NormalizedCrop": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "description": "归一化画面范围；x+width 与 y+height 均不得超过 1。",
+        "properties": {
+          "x": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "width": {
+            "type": "number",
+            "maximum": 1,
+            "exclusiveMinimum": 0
+          },
+          "height": {
+            "type": "number",
+            "maximum": 1,
+            "exclusiveMinimum": 0
+          }
+        }
+      },
+      "RemoteVideoReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "source_type",
+          "source_url",
+          "timestamp_seconds"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_type": {
+            "const": "video-url"
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "maxLength": 2000,
+            "description": "源网页或支持的公开 HTTPS 视频链接。宿主按需访问，不长期保存整条参考视频；填写链接不代表实际观察。"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "需要学习的源视频时间点（秒），以实际解码 PTS 记录观察证据。"
+          },
+          "crop": {
+            "$ref": "#/components/schemas/NormalizedCrop"
+          }
+        }
+      },
+      "ReferenceInput": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReferenceUpload"
+          },
+          {
+            "$ref": "#/components/schemas/RemoteVideoReference"
+          }
+        ]
+      },
+      "UploadedReference": {
+        "type": "object",
+        "required": [
+          "id",
+          "sha256",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "mime_type": {
+            "enum": [
+              "image/png",
+              "image/jpeg"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "RemoteVideoReferenceRecord": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_type",
+          "source_url",
+          "source_snapshot_sha256",
+          "source_identity_scope",
+          "observation_status"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "source_type": {
+            "const": "video-url"
+          },
+          "source_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "source_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source_identity_scope": {
+            "const": "provider_metadata"
+          },
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "duration_seconds": {
+            "type": "number"
+          },
+          "has_audio": {
+            "type": "boolean"
+          },
+          "quality": {},
+          "observation_status": {
+            "type": "string",
+            "description": "registered_not_observed 表示只登记来源；sampled_frames_only 表示已读取实际帧，不能据此签署连续运动或声音验收。"
+          },
+          "url": {
+            "type": "null"
+          },
+          "media_url": {
+            "type": "null"
+          },
+          "frame_url": {
+            "type": "string",
+            "description": "本项目实际取得并冻结的参考帧，读取此 URL 只返回已有证据，不访问源站。"
+          },
+          "actual_pts": {
+            "type": "number"
+          },
+          "observed_width": {
+            "type": "integer"
+          },
+          "observed_height": {
+            "type": "integer"
+          },
+          "timestamp_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "需要学习的源视频时间点（秒），以实际解码 PTS 记录观察证据。"
+          },
+          "crop": {
+            "$ref": "#/components/schemas/NormalizedCrop"
+          }
+        },
+        "description": "远程来源没有完整媒体 SHA-256；source_snapshot_sha256 仅标识源站元数据。实际抽帧证据独立记录摘要、PTS 和画质。"
+      }
+    }
+  }
+}

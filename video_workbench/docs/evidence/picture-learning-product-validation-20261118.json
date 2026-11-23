@@ -1,0 +1,395 @@
+{
+  "schema": "video.picture-learning-product-validation.v1",
+  "date": "2026-11-18",
+  "scope": "actual_private_http_static_learning_loop_and_readonly_snapshot_contract",
+  "project": {
+    "id": "bcd905f38c29443faa9ec0159d309100",
+    "experiment_id": "9d83c253436c41148989098358f532c0",
+    "title": "水墨山石：皴擦与空间层次",
+    "state": "completed",
+    "width": 960,
+    "height": 540,
+    "max_rounds": 2,
+    "max_seconds": 1200,
+    "use_wikiskill": false,
+    "original_project_posts": 1,
+    "experiment_count": 1,
+    "stop_reason": "learning_complete",
+    "stop_proven": true,
+    "transfer_status": "reviewed",
+    "best_candidate_id": "58c6b051f28a409294ffbee6c96e81d4",
+    "adopted_candidate_id": null
+  },
+  "reference": {
+    "sha256": "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+    "original_preserved": true,
+    "used_as_rendered_asset": false
+  },
+  "deployment": {
+    "business_loop": {
+      "revision": "7abec1d898d5b11431f89c11ec95df57563c5655",
+      "images": {
+        "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:8160edb1557e38f28d4a5a71e071ad3dd2d4644ffeed7a485f93ee871b62bc7c",
+        "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:9859aa0cf8e6c1400c4b110892b05be68f860dadca8d7758a78e158815647fc7"
+      },
+      "status": "deployed_and_source_verified",
+      "rollout_ready": true,
+      "applied": true,
+      "automatic_retry": false,
+      "model_requests": 0,
+      "control_changed": false,
+      "renderer_changed": false,
+      "worker_changed": false,
+      "build_receipt_sha256": "0182f1819bbf6ded760067334471a46ced5d2cf8bb1a613146972a32b70f0b78"
+    },
+    "latest": {
+      "revision": "bf9dd077c79342a22348773888a9ae9ea4276296",
+      "images": {
+        "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:6039d043ec85705f4dd6a006f1fd51162e331a68505ee1c376282bf7b01e02fa",
+        "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:6790c00a4bed05d0273d7afd7b021c2d21f101a287d2e8fc5b20dc96b978e04b"
+      },
+      "status": "deployed_and_source_verified",
+      "rollout_ready": true,
+      "applied": true,
+      "automatic_retry": false,
+      "model_requests": 0,
+      "control_changed": false,
+      "renderer_changed": false,
+      "worker_changed": false,
+      "build_receipt_sha256": "82a4af9423de771a4e23e45d8539b429be5bd2b7b7e10b8238923e28c42bced0"
+    },
+    "order": "r2_complete_business_loop_then_r3_rollout_then_readonly_original_project_GET",
+    "business_roles_rerun_on_r3": false,
+    "post_r3_readback": {
+      "project_id": "bcd905f38c29443faa9ec0159d309100",
+      "state": "completed",
+      "experiments": 1,
+      "candidates": 3,
+      "rendered": 3,
+      "new_project_posts": 0,
+      "new_paid_jobs": 0
+    }
+  },
+  "operations": {
+    "total": 10,
+    "agent_jobs": 7,
+    "author_jobs": 3,
+    "review_jobs": 3,
+    "transfer_plan_jobs": 1,
+    "render_operations": 3,
+    "actual_model_request_count": null,
+    "all_completed": true,
+    "all_completed_image_transports_cover_frozen_inputs": true,
+    "model_understanding_verified": false,
+    "wikiskill_disabled_for_all_roles": true,
+    "inputs": [
+      {
+        "operation_id": "9d83c253436c41148989098358f532c0-1",
+        "stage": "author",
+        "status": "completed",
+        "work_kind": "reproduction",
+        "mode": "create",
+        "expected_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260"
+        ],
+        "image_purposes": [
+          "reference"
+        ],
+        "base_source_present": false,
+        "learned_method_present": false,
+        "goal_differs_from_reproduction": false,
+        "observed_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260"
+        ],
+        "completed_transport_receipt_covers_inputs": true,
+        "wikiskill_disabled": true,
+        "model_understanding_verified": false
+      },
+      {
+        "operation_id": "9d83c253436c41148989098358f532c0-3",
+        "stage": "review",
+        "status": "completed",
+        "work_kind": "reproduction",
+        "mode": "review",
+        "expected_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "image_purposes": [
+          "reference",
+          "output"
+        ],
+        "base_source_present": false,
+        "learned_method_present": false,
+        "goal_differs_from_reproduction": false,
+        "observed_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "completed_transport_receipt_covers_inputs": true,
+        "wikiskill_disabled": true,
+        "model_understanding_verified": false
+      },
+      {
+        "operation_id": "9d83c253436c41148989098358f532c0-4",
+        "stage": "author",
+        "status": "completed",
+        "work_kind": "reproduction",
+        "mode": "create",
+        "expected_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "image_purposes": [
+          "reference",
+          "baseline"
+        ],
+        "base_source_present": true,
+        "learned_method_present": false,
+        "goal_differs_from_reproduction": false,
+        "observed_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "completed_transport_receipt_covers_inputs": true,
+        "wikiskill_disabled": true,
+        "model_understanding_verified": false
+      },
+      {
+        "operation_id": "9d83c253436c41148989098358f532c0-6",
+        "stage": "review",
+        "status": "completed",
+        "work_kind": "reproduction",
+        "mode": "review",
+        "expected_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "8b98d09e5bf790e0534f7512eb7fb8adfc0fb002670081427bd8bf5acdc56186",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "image_purposes": [
+          "reference",
+          "output",
+          "baseline"
+        ],
+        "base_source_present": true,
+        "learned_method_present": false,
+        "goal_differs_from_reproduction": false,
+        "observed_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "8b98d09e5bf790e0534f7512eb7fb8adfc0fb002670081427bd8bf5acdc56186",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "completed_transport_receipt_covers_inputs": true,
+        "wikiskill_disabled": true,
+        "model_understanding_verified": false
+      },
+      {
+        "operation_id": "9d83c253436c41148989098358f532c0-7",
+        "stage": "transfer_plan",
+        "status": "completed",
+        "work_kind": "reproduction",
+        "mode": "transfer_plan",
+        "expected_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "8b98d09e5bf790e0534f7512eb7fb8adfc0fb002670081427bd8bf5acdc56186",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "image_purposes": [
+          "reference",
+          "output",
+          "baseline"
+        ],
+        "base_source_present": true,
+        "learned_method_present": false,
+        "goal_differs_from_reproduction": false,
+        "observed_image_sha256": [
+          "34874e709c5ae3540dd14e1ba6d40a7265a4a440c851676221f5e072aa955260",
+          "8b98d09e5bf790e0534f7512eb7fb8adfc0fb002670081427bd8bf5acdc56186",
+          "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7"
+        ],
+        "completed_transport_receipt_covers_inputs": true,
+        "wikiskill_disabled": true,
+        "model_understanding_verified": false
+      },
+      {
+        "operation_id": "9d83c253436c41148989098358f532c0-8",
+        "stage": "author",
+        "status": "completed",
+        "work_kind": "transfer",
+        "mode": "create",
+        "expected_image_sha256": [],
+        "image_purposes": [],
+        "base_source_present": false,
+        "learned_method_present": true,
+        "goal_differs_from_reproduction": true,
+        "observed_image_sha256": [],
+        "completed_transport_receipt_covers_inputs": true,
+        "wikiskill_disabled": true,
+        "model_understanding_verified": false
+      },
+      {
+        "operation_id": "9d83c253436c41148989098358f532c0-10",
+        "stage": "review",
+        "status": "completed",
+        "work_kind": "transfer",
+        "mode": "review",
+        "expected_image_sha256": [
+          "d3ff22d4e18ff5339600072aa21f46da217db07bed3ee103100b1d0b995f4866"
+        ],
+        "image_purposes": [
+          "output"
+        ],
+        "base_source_present": false,
+        "learned_method_present": true,
+        "goal_differs_from_reproduction": true,
+        "observed_image_sha256": [
+          "d3ff22d4e18ff5339600072aa21f46da217db07bed3ee103100b1d0b995f4866"
+        ],
+        "completed_transport_receipt_covers_inputs": true,
+        "wikiskill_disabled": true,
+        "model_understanding_verified": false
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "id": "62d50f4725c14493b608712a860f0bb2",
+      "role": "reproduction",
+      "rendered": true,
+      "reviewed": true,
+      "engine": "canvas",
+      "reviewer_score": 66,
+      "source_identity_sha256": "0f0eb4df830555f65ae3523bbec49703373148adbeff77ef8c45a23c4fcd91a4",
+      "picture_sha256": "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7",
+      "artistic_acceptance": false
+    },
+    {
+      "id": "58c6b051f28a409294ffbee6c96e81d4",
+      "role": "reproduction",
+      "rendered": true,
+      "reviewed": true,
+      "engine": "canvas",
+      "reviewer_score": 74,
+      "source_identity_sha256": "a3988f353c6d21e85da8477e55e7e95b2edaa09a2f9f17394f4915ed8064a6d8",
+      "picture_sha256": "8b98d09e5bf790e0534f7512eb7fb8adfc0fb002670081427bd8bf5acdc56186",
+      "artistic_acceptance": false
+    },
+    {
+      "id": "156502889fb64b0f8eed493b87708a89",
+      "role": "transfer",
+      "rendered": true,
+      "reviewed": true,
+      "engine": "canvas",
+      "reviewer_score": 73,
+      "source_identity_sha256": "4569253cf7548670eb71620c42263d3cf44a7e8d665ce9ea885f349b46bbbc2f",
+      "picture_sha256": "d3ff22d4e18ff5339600072aa21f46da217db07bed3ee103100b1d0b995f4866",
+      "artistic_acceptance": false
+    }
+  ],
+  "transfer": {
+    "independent_changed_content_goal": true,
+    "author_original_reference_images": 0,
+    "author_original_source_present": false,
+    "author_learned_method_present": true,
+    "actual_output_rendered": true,
+    "actual_output_reviewed": true,
+    "artistic_acceptance": false
+  },
+  "artifacts": {
+    "verified_downloads": 9,
+    "local_copy_hashes_verified": 9,
+    "checks": [
+      {
+        "candidate_id": "62d50f4725c14493b608712a860f0bb2",
+        "kind": "picture",
+        "sha256": "a935626bf717125070e631c77f9880a91ba3b812f43b783bc8e4849b218a43c7",
+        "mime": "image/png"
+      },
+      {
+        "candidate_id": "62d50f4725c14493b608712a860f0bb2",
+        "kind": "receipt",
+        "sha256": "d5a7654b71b37c8a130715827c14780cc8f0195bcf7867aab70f3f1740601983",
+        "mime": "application/json"
+      },
+      {
+        "candidate_id": "62d50f4725c14493b608712a860f0bb2",
+        "kind": "source",
+        "sha256": "f381df2dd7c242689c53110ac1bea84b6f4fe674d15c578454a85844149902de",
+        "mime": "application/json"
+      },
+      {
+        "candidate_id": "58c6b051f28a409294ffbee6c96e81d4",
+        "kind": "picture",
+        "sha256": "8b98d09e5bf790e0534f7512eb7fb8adfc0fb002670081427bd8bf5acdc56186",
+        "mime": "image/png"
+      },
+      {
+        "candidate_id": "58c6b051f28a409294ffbee6c96e81d4",
+        "kind": "receipt",
+        "sha256": "cf03e2febc39ceb844ce6700719aba9aa5483650d97e7213220c38014bfc95c0",
+        "mime": "application/json"
+      },
+      {
+        "candidate_id": "58c6b051f28a409294ffbee6c96e81d4",
+        "kind": "source",
+        "sha256": "a45b3d8525479711f6c0d01ec9d48a037e0e63e96d0c8bef79a467bf5a4b61a4",
+        "mime": "application/json"
+      },
+      {
+        "candidate_id": "156502889fb64b0f8eed493b87708a89",
+        "kind": "picture",
+        "sha256": "d3ff22d4e18ff5339600072aa21f46da217db07bed3ee103100b1d0b995f4866",
+        "mime": "image/png"
+      },
+      {
+        "candidate_id": "156502889fb64b0f8eed493b87708a89",
+        "kind": "receipt",
+        "sha256": "0bb49e45b636086c6808ead9e0506d1fffd752fcf7f3cd13658f85ae69a95dbc",
+        "mime": "application/json"
+      },
+      {
+        "candidate_id": "156502889fb64b0f8eed493b87708a89",
+        "kind": "source",
+        "sha256": "f149c1f13f70a27a891ebec3e5ac2b9f87e889f06002365430744779b3015a92",
+        "mime": "application/json"
+      }
+    ],
+    "other_owner_http_status": 404
+  },
+  "wikiskill_snapshot_contract": {
+    "record_count": 35,
+    "record_kinds": {
+      "picture_experiment": 1,
+      "picture_operation": 10,
+      "picture_operation_input": 10,
+      "picture_operation_result": 10,
+      "picture_project": 1,
+      "picture_work": 3
+    },
+    "snapshot_id": "749c4083-f0a6-4103-9f71-7f4bc89df8f8",
+    "snapshot_sha256": "469272107169f3338ebda59f91559741247a75bd68c2556eb04de573d8e62f08",
+    "serialized_sha256": "37a313934d120ea240dcdf392600eaff6cd5df864f2cb24c3b9152294fd1a3a0",
+    "serialized_bytes": 281328,
+    "manifest_records": 35,
+    "all_picture_work_static_only": true,
+    "model_submissions": 0,
+    "renders": 0,
+    "publication_started": false,
+    "activation_changed": false,
+    "scope": "actual_picture_facts_accepted_by_existing_make_snapshot_build_input_readonly"
+  },
+  "limitations": [
+    "Static pictures only; no motion, audio or formal-film validation.",
+    "Model image transport hashes do not prove model understanding.",
+    "Reviewer scores 66 to 74 and transfer 73 are model opinions, not developer artistic approval.",
+    "Visible flat polygon facets and regular texture strokes remain; reference ink quality has not been reached.",
+    "Snapshot capture/make_snapshot/validate_snapshot/build_input only; no WikiSkill Agent compilation, publication or activation.",
+    "No artistic adoption was performed. Business roles ran on r2 and were not rerun on r3."
+  ],
+  "retained_evidence": {
+    "local_directory": "D:/codex-work/archives/video-service/20261118/picture-learning-api-acceptance",
+    "remote_directory": "/root/video-releases/picture-learning-20261118/api-acceptance",
+    "latest_deployment_receipt": "D:/codex-work/operations/picture-learning-20261118/lab-executor-deploy-r3/deployment-completed.json"
+  },
+  "evidence_sha256": "38cf8eb8f84f77b65eb3850678caaa9152e80c1fa60867de474e19196061718a"
+}

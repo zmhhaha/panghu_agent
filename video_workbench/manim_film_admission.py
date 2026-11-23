@@ -156,11 +156,29 @@ def read_admission(path):
     return value
 
 
+def admission_evidence_directory(resource_root, value):
+    """Address one consumer admission without overwriting its stopped producer.
+
+    A producer can be consumed by several complete-film releases. Each exact
+    admission therefore owns a separate evidence directory; its digest binds
+    the consumer runtime, snapshot, capture, result and encoded media.
+    """
+    from .animation_creation_service import _uuid
+    require(type(value) is dict and _uuid(value.get('operation_id'))
+        and type(value.get('sha256')) is str and _SHA.fullmatch(value['sha256'])
+        and digest({key: item for key, item in value.items() if key != 'sha256'}) == value['sha256'],
+        'film_manim_admission_binding_invalid', 503)
+    return Path(resource_root) / 'admissions' / value['operation_id'] / value['sha256']
+
+
 def validate_admission(path, *, resource_service):
     value = read_admission(path)
-    from .animation_creation_service import _uuid
-    require(_uuid(value['operation_id']), 'film_manim_admission_binding_invalid', 503)
-    root = resource_service.root / 'admissions' / value['operation_id']
+    root = admission_evidence_directory(resource_service.root, value)
+    # Retain read-only access to original producer-scoped evidence. Once an
+    # exact consumer directory exists, missing or corrupt files must fail;
+    # they must never be replaced by evidence from another consumer.
+    if not (root.exists() or root.is_symlink() or getattr(root, 'is_junction', lambda: False)()):
+        root = root.parent
     snapshot = json.loads(_read(root / 'snapshot.json', 96 * 1024 * 1024))
     result = json.loads(_read(root / 'result.json', 512 * 1024))
     media = _read(root / 'video.mp4', 128 * 1024 * 1024)

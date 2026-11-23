@@ -11,6 +11,7 @@ from agent_service.contracts import ServiceError, digest, safe_relative_path
 
 SCHEMA = 'video.animation-skill-compatibility.v1'
 PRODUCER_SCHEMA = 'video.animation-skill-compatibility.v2'
+DRAWING_SCHEMA = 'video.animation-skill-compatibility.v3'
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 
 
@@ -47,7 +48,7 @@ def _admitted(assets, declarations=None):
         and all(assets.get(asset) == sha for asset, sha in spec['assets'].items())}
 
 
-def freeze_compatibility(task, *, resource_authoring=None):
+def freeze_compatibility(task, *, resource_authoring=None, drawing_libraries=None):
     _require(type(task) is dict)
     assets = _assets(task.get('assets', {}))
     # Frozen source-based production roles hard-code their earlier assets.
@@ -60,21 +61,34 @@ def freeze_compatibility(task, *, resource_authoring=None):
         from .manim_method_resources import PRODUCER_REQUIREMENT
         _require(not legacy and resource_authoring == PRODUCER_REQUIREMENT)
         producer = deepcopy(resource_authoring)
-    return dict(schema=PRODUCER_SCHEMA if producer else SCHEMA, task_sha256=digest(task), assets=assets,
+    drawing = None
+    if drawing_libraries is not None:
+        # This argument comes from the validated formal release, never from
+        # task metadata. A matching filename alone cannot grant a new runtime.
+        from .formal_drawing_libraries import validate_libraries
+        _require(not legacy)
+        drawing = validate_libraries(drawing_libraries, assets)
+    result = dict(schema=DRAWING_SCHEMA if drawing is not None else PRODUCER_SCHEMA if producer else SCHEMA,
+        task_sha256=digest(task), assets=assets,
         source_contract='legacy-source' if legacy else 'asset-bound',
         authoring_libraries={} if legacy else _admitted(assets), resource_authoring=producer)
+    if drawing is not None:
+        result['drawing_libraries'] = drawing
+    return result
 
 
 def validate_compatibility(value, *, task_sha256=None):
-    _require(type(value) is dict and set(value) == {'schema', 'task_sha256', 'assets',
-        'source_contract', 'authoring_libraries', 'resource_authoring'} and type(value['schema']) is str
-        and value['schema'] in {SCHEMA, PRODUCER_SCHEMA}
+    drawing = type(value) is dict and value.get('schema') == DRAWING_SCHEMA
+    _require(type(value) is dict and set(value) == ({'schema', 'task_sha256', 'assets',
+        'source_contract', 'authoring_libraries', 'resource_authoring'} | ({'drawing_libraries'} if drawing else set()))
+        and type(value['schema']) is str
+        and value['schema'] in {SCHEMA, PRODUCER_SCHEMA, DRAWING_SCHEMA}
         and type(value['task_sha256']) is str and _SHA.fullmatch(value['task_sha256'])
         and (task_sha256 is None or value['task_sha256'] == task_sha256)
         and type(value['source_contract']) is str and value['source_contract'] in {'legacy-source', 'asset-bound'}
         and type(value['authoring_libraries']) is dict and type(value['resource_authoring']) is dict)
     producer = value['resource_authoring']
-    if value['schema'] == SCHEMA:
+    if value['schema'] == SCHEMA or drawing and not producer:
         _require(producer == {})
     else:
         # Validate the original frozen pins without comparing them to today's
@@ -86,6 +100,10 @@ def validate_compatibility(value, *, task_sha256=None):
             and manim['renderer'] == 'cairo' and manim['latex_available'] is False)
     assets = _assets(value['assets'], normalize=False)
     _require(assets == value['assets'])
+    if drawing:
+        from .formal_drawing_libraries import validate_libraries
+        _require(value['source_contract'] == 'asset-bound')
+        validate_libraries(value['drawing_libraries'], assets, frozen=True)
     for name, spec in value['authoring_libraries'].items():
         # This is an authenticated, hash-frozen ledger context. Do not compare
         # it to today's pins: recovering an old intent uses its original pins.
@@ -102,12 +120,17 @@ def requirements_compatible(requirements, context):
     _require(type(requirements) is dict)
     libraries = requirements.get('authoring_libraries', {})
     resources = requirements.get('resource_authoring', {})
-    _require(type(libraries) is dict and type(resources) is dict)
+    drawing = requirements.get('drawing_libraries', {})
+    _require(type(libraries) is dict and type(resources) is dict and type(drawing) is dict)
     _require(all(type(name) is str and type(spec) is dict for name, spec in libraries.items())
-        and all(type(name) is str and type(spec) is dict for name, spec in resources.items()))
+        and all(type(name) is str and type(spec) is dict for name, spec in resources.items())
+        and all(type(name) is str and type(spec) is dict for name, spec in drawing.items()))
     # Only an explicitly frozen producer context can satisfy these methods.
     # Ordinary consumers keep {}, even if their task contains generated PNGs.
-    return (all(context['resource_authoring'].get(name) == spec for name, spec in resources.items())
+    # Only v3 records have an explicitly admitted drawing-library slot. Earlier
+    # frozen consumers remain unable to load it even if metadata names assets.
+    return (all(context.get('drawing_libraries', {}).get(name) == spec for name, spec in drawing.items())
+        and all(context['resource_authoring'].get(name) == spec for name, spec in resources.items())
         and all(context['authoring_libraries'].get(name) == spec for name, spec in libraries.items()))
 
 

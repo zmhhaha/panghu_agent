@@ -22,6 +22,7 @@ from agent_service.profiles.video_animation_production_contract import (
 )
 from .animation_method_production import validate_delivery, collect_method_decision
 from .motion import validate_alignment
+from .animation_runtime_capabilities import with_drawing_context_guidance
 
 
 CREATIVE_SCHEMA = 'video.creative-scene.v2'
@@ -39,6 +40,7 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
                       assets=None, instruction='', base_source=None, style='',
                       allowed_engines=None, runtime_identity=None, engine_aware=False, film_context=None):
     """The exact dictionary passed to MethodProductionAdapter.freeze as task."""
+    instruction = with_drawing_context_guidance(instruction, allowed_engines or ['html-svg'])
     base = deepcopy(base_source)
     if type(base) is dict and set(base) == {'engine', 'strategy', 'files'}:
         require(type(base['files']) is dict and all(type(v) is str for v in base['files'].values()))

@@ -342,11 +342,13 @@ def load_scenario(path, source_dir, parent_dir, policy):
                          'video.animation-review.v3', 'video.animation-review.v4',
                          'video.animation-method-author.v1', 'video.animation-method-review.v1',
                          'video.animation-method-author.v2', 'video.animation-method-review.v2',
+                         'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
+                         'video.reference-learning-author.v1', 'video.reference-learning-review.v1',
                          'video.animation-production.v1', 'video.animation-production.v2',
                          'video.animation-production.v3', 'video.animation-film-module.v1',
                          'video.animation-manim-recipe.v1',
                          'video.joint-plan.v1', 'video.resource-plan.v1', 'video.animation-collaboration.v1',
-                         'video.animation-wikiskill-compile.v1', 'video.animation-wikiskill-compile.v2', 'video.joint-plan.v2'}:
+                         'video.animation-wikiskill-compile.v1', 'video.animation-wikiskill-compile.v2', 'video.animation-wikiskill-compile.v3', 'video.animation-wikiskill-compile.v4', 'video.joint-plan.v2'}:
         # Validate the exact root-owned, explicitly projected JSON/frame files.
         # No temporary workspace, renamed inputs, or implicit source is created.
         require(export is None, 'candidate_animation_role_business_export_not_supported')

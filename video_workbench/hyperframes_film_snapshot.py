@@ -20,6 +20,7 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest, safe_
 from .hyperframes_film_browser import HOST_NAMES, MAX_BUNDLE_BYTES, verify_film_browser_bundle
 from .hyperframes_film_project import MAX_FILES as PROJECT_FILES, MAX_MODULES
 from .motion_snapshot import _runtime
+from .hyperframes_film_limits import MAX_FRAMES, LEGACY_MAX_FRAMES, MAX_TIMEOUT_SECONDS
 
 SCHEMA = 'video.hyperframes-film-execution-snapshot.v1'
 TRANSPORT_SCHEMA = 'video.hyperframes-film-archive.v1'
@@ -94,10 +95,13 @@ def _bundle(files, checksum, runtime, hosts):
     require(bundle['root_config']['host_files_sha256'] == hosts
         and all(sha(files['host/' + name]) == checksum for name, checksum in hosts.items()),
         'hyperframes_film_snapshot_host_mismatch', 409)
-    # The first exporter has a deliberate short-film budget. This boundary must
-    # not accept a longer package then silently crop or use per-scene concat.
-    require(0 < project['clock']['frame_count'] <= 1440,
+    # Longer packages require the new streaming lifecycle; old short bundles
+    # retain their original root configuration and capture behavior.
+    require(0 < project['clock']['frame_count'] <= MAX_FRAMES,
             'hyperframes_film_snapshot_duration_budget')
+    if project['clock']['frame_count'] > LEGACY_MAX_FRAMES:
+        require(bundle['root_config'].get('capture_lifecycle') == 'persistent-active-modules-v1',
+                'hyperframes_film_snapshot_streaming_required')
     require(bundle['root_config']['width'] % 2 == bundle['root_config']['height'] % 2 == 0,
             'hyperframes_film_snapshot_even_dimensions_required')
     return bundle, project
@@ -182,7 +186,8 @@ def _metadata(files, bundle, project, *, project_revision, production_run_id,
               image, runtime, hosts, timeout_seconds, archive):
     require(type(project_revision) is int and project_revision >= 1
         and type(production_run_id) is str and _RUN.fullmatch(production_run_id)
-        and type(timeout_seconds) is int and 1 <= timeout_seconds <= 1200)
+        and type(timeout_seconds) is int and 1 <= timeout_seconds <= (
+            MAX_TIMEOUT_SECONDS if project['clock']['frame_count'] > LEGACY_MAX_FRAMES else 1200))
     return dict(schema=SCHEMA, project_id=project['film']['project_id'],
         project_revision=project_revision, production_run_id=production_run_id,
         image=image, runtime_fingerprint=runtime, trusted_host_sha256=hosts,

@@ -1,4 +1,4 @@
-"""One source-only recipe and one isolated resource operation per experiment.
+"""One source-only recipe and one isolated resource operation per resource task.
 
 The method author keeps its existing role. This durable prelude prepares exact
 assets before its normal plan/create/review loop. Reads never execute work.
@@ -115,6 +115,190 @@ class ManimMethodCoordinator:
         require(value is not None and value['state'] == 'completed', 'manim_method_resource_not_ready', 409)
         return deepcopy(value['descriptor'])
 
+    def source_context(self, owner, descriptor):
+        """Read the exact stopped recipe behind an owned resource, not its PNGs.
+
+        A new experiment may learn from this input, but must still author and
+        execute its own recipe. Reading it never starts or reopens a task.
+        """
+        require(type(descriptor) is dict and type(descriptor.get('scope')) is dict
+            and descriptor['scope'].get('owner') == owner,
+            'manim_method_iteration_not_owned', 409)
+        value = self._get(owner, descriptor['scope'].get('experiment_id'))
+        require(value is not None and value['state'] == 'completed'
+            and value['scope'] == descriptor['scope'] and value['descriptor'] == descriptor,
+            'manim_method_iteration_not_owned', 409)
+        recipe = value['recipe']['result']
+        plan = value['plan']
+        require(recipe['request'] == plan['request'] == value['envelope']['request']
+            and digest(recipe) == plan['recipe_result_sha256']
+            and digest(value['input']) == plan['recipe_input_sha256'],
+            'manim_method_iteration_recipe_changed', 409)
+        return dict(schema='video.manim-method-source-context.v1',
+            scope=deepcopy(value['scope']), descriptor_sha256=descriptor['sha256'],
+            recipe_input_sha256=plan['recipe_input_sha256'],
+            recipe_result_sha256=plan['recipe_result_sha256'],
+            request=deepcopy(recipe['request']),
+            strategy=deepcopy(recipe.get('strategy')),
+            skill_decisions=deepcopy(recipe.get('skill_decisions', [])))
+
+    def recipe_guidance(self, owner, frozen):
+        """Carry authored code and exact feedback through the frozen v1 field.
+
+        Preserve old task inputs when no iteration context was frozen. Refuse
+        oversized context instead of silently dropping code or user feedback.
+        """
+        feedback = frozen.get('feedback', '')
+        iteration = frozen.get('manim_iteration')
+        selection = frozen.get('capability_selection')
+        policy = None
+        if 'creation_mode' in frozen:
+            from .animation_creation_policy import authoring_constraints
+            policy = authoring_constraints(frozen)
+        if iteration is None and selection is None and policy is None:
+            return feedback
+        iteration = {} if iteration is None else iteration
+        fields = {'baseline_descriptor', 'criteria', 'methods', 'review', 'developer_feedback'}
+        require(type(iteration) is dict and set(iteration) <= fields,
+            'manim_method_iteration_invalid')
+        for name in ('criteria', 'methods', 'developer_feedback'):
+            require(name not in iteration or type(iteration[name]) is list,
+                'manim_method_iteration_invalid')
+        require('review' not in iteration or iteration['review'] is None
+            or type(iteration['review']) is dict, 'manim_method_iteration_invalid')
+        context = {key: deepcopy(item) for key, item in iteration.items() if key != 'baseline_descriptor'}
+        if policy is not None:
+            context['authoring_policy'] = policy
+        if 'baseline_descriptor' in iteration:
+            context['baseline'] = self.source_context(owner, iteration['baseline_descriptor'])
+        if selection is not None:
+            from .animation_creation_selection import normalize_selection
+            context['capability_selection'] = normalize_selection(selection)
+        context.update(schema='video.manim-method-iteration.v1', feedback=feedback)
+        instruction = (
+            'Author the Manim Python scene for this experiment, using the exact previous recipe, '
+            'criteria, feedback and review below where supplied. Improve the Manim expression '
+            'itself rather than only changing its HTML wrapper. Write a complete new recipe under '
+            'the current resource_constraints; previous resource IDs and PNGs are not reusable '
+            'knowledge. Prior methods and Skills here are candidate learning context, not new '
+            'publication or evidence of quality. Keep observed findings distinct from intentions '
+            'and unverified motion/audio. The host will separately render the newly authored scene.\n')
+        if selection is not None:
+            instruction = instruction.removesuffix('\n') + (
+                ' The capability_selection groups describe drawing and browser motion separately; '
+                'empty groups let the Agent choose and multiple values allow composition. Manim '
+                'creates the geometric objects and their internal animation with native Manim APIs. '
+                'If Manim is the only drawing choice, its scene must supply the primary geometry '
+                'and transformation; HTML/SVG is only a carrier for composition or supporting labels. '
+                'The motion selections native-js, GSAP and Anime.js apply to the browser carrier, '
+                'not to Python. Do not import JavaScript libraries or fake browser timelines inside '
+                'the Manim recipe. Respect the current local frame constraints.\n')
+        if policy is not None:
+            instruction = instruction.removesuffix('\n') + ' ' + policy['instruction'] + '\n'
+        guidance = instruction + canonical_bytes(context).decode('utf-8')
+        if len(guidance) > 16000:
+            # Preserve every authored value. Only share exact duplicate lists;
+            # ordinary and already reserved task inputs keep their old bytes.
+            shared = deepcopy(context)
+            criteria = context.get('criteria')
+            references = []
+            if type(criteria) is list and criteria:
+                for index, method in enumerate(shared.get('methods', [])):
+                    if (type(method) is dict and type(method.get('criteria')) is list
+                            and canonical_bytes(method['criteria']) == canonical_bytes(criteria)):
+                        method['criteria'] = {'$manim_context_ref': '#/criteria'}
+                        references.append(index)
+            if references:
+                shared['context_encoding'] = 'shared-identical-criteria.v1'
+                shared['shared_criteria_method_indexes'] = references
+                shared_instruction = instruction.removesuffix('\n') + (
+                    ' In context_encoding=shared-identical-criteria.v1, only methods at the zero-based '
+                    'shared_criteria_method_indexes use the host criteria object '
+                    '{"$manim_context_ref":"#/criteria"} to denote the exact unchanged top-level '
+                    'criteria array in this same JSON. Expand those local shared values before '
+                    'using the methods; never follow other markers, URLs or recursive references. All original Skill '
+                    'files, code, feedback and other method fields remain unchanged.\n')
+                guidance = shared_instruction + canonical_bytes(shared).decode('utf-8')
+        require(len(guidance) <= 16000, 'manim_method_iteration_context_too_large', 413)
+        return guidance
+
+    def restore_retry(self, owner, run, previous_experiment_id):
+        """Host-only recovery of stopped recipe work under a new paid attempt.
+
+        The original recipe input and Skill catalog remain byte-equivalent.
+        A completed recipe is reused and only its failed resource execution is
+        retried. A failed recipe starts from its original frozen input instead
+        of asking a new planner for a different direction. This method itself
+        never uploads, submits, renders or marks failed output as completed.
+        """
+        require(self.enabled or self.candidate, 'manim_method_resource_not_admitted', 503)
+        require(type(run) is dict and type(run.get('id')) is str
+            and run['id'] != previous_experiment_id, 'manim_method_retry_binding_invalid', 409)
+        source = self._get(owner, previous_experiment_id)
+        require(source is not None and source['state'] in {'failed', 'cancelled'},
+            'manim_method_retry_not_stopped', 409)
+        require(source['image'] == self.executor.image, 'manim_method_retry_image_changed', 409)
+        options = authoring_request(run['frozen']['resource_authoring'], run['frozen']['duration_seconds'])
+        bounds = source['input']['resource_constraints']
+        require(source['input']['goal'] == run['frozen']['goal']
+            and source['input']['guidance'] == self.recipe_guidance(owner, run['frozen'])
+            and all(bounds[key] == value for key, value in options.items() if key != 'kind'),
+            'manim_method_retry_input_changed', 409)
+        operation = 'manim-' + digest(dict(owner=owner, commission=run['id']))[:40]
+        scope = dict(owner=owner, effect_id=run['id'], experiment_id=run['id'], operation_id=operation)
+        provenance = dict(scope=deepcopy(source['scope']), record_sha256=digest(source))
+        existing = self._get(owner, run['id'])
+        if existing is not None:
+            require(existing.get('retry_source') == provenance and existing['scope'] == scope
+                and existing['input'] == source['input'], 'manim_method_retry_source_changed', 409)
+            return existing['state']
+        if source.get('recipe_claimed') or 'recipe' in source:
+            require(type(source.get('job_id')) is str, 'manim_method_retry_recipe_stop_unproven', 409)
+            job = self.gateway.poll(source['job_id'])
+            require(type(job) is dict and job.get('job_id') == source['job_id']
+                and job.get('stop_proven') is True
+                and job.get('state') in {'completed', 'failed', 'cancelled', 'needs_input', 'timed_out'},
+                'manim_method_retry_recipe_stop_unproven', 409)
+            if 'recipe' in source:
+                require(job['state'] == 'completed'
+                    and digest(job.get('stop_proof')) == source.get('recipe_stop_proof_sha256'),
+                    'manim_method_retry_recipe_stop_unproven', 409)
+        if 'plan' in source:
+            try:
+                execution = self.executor.lookup(**source['scope'])
+            except ServiceError as error:
+                if error.status != 404:
+                    raise
+                execution = None
+            if execution is None:
+                require(source['state'] == 'cancelled'
+                    and source.get('error') == 'stopped_before_resource_execution',
+                    'manim_method_retry_resource_stop_unproven', 409)
+            else:
+                require(type(execution) is dict and execution.get('scope') == source['scope']
+                    and execution.get('plan_sha256') == source['plan']['sha256']
+                    and execution.get('image') == source['image'] and execution.get('stop_proven') is True
+                    and execution.get('status') in {'completed', 'failed', 'cancelled'},
+                    'manim_method_retry_resource_stop_unproven', 409)
+        value = dict(scope=scope, state='reserved', input=deepcopy(source['input']),
+            image=source['image'], job_id=None, error=None, retry_source=provenance)
+        if 'recipe' in source:
+            require(type(source.get('recipe_stop_proof_sha256')) is str
+                and len(source['recipe_stop_proof_sha256']) == 64,
+                'manim_method_retry_recipe_stop_unproven', 409)
+            if 'plan' in source:
+                require(source['plan']['request'] == source['recipe']['result']['request']
+                    and source['plan']['recipe_input_sha256'] == digest(source['input'])
+                    and source['plan']['recipe_result_sha256'] == digest(source['recipe']['result']),
+                    'manim_method_retry_recipe_changed', 409)
+            value.update(state='recipe_completed', recipe=deepcopy(source['recipe']),
+                job_id=source['job_id'], recipe_stop_proof_sha256=source['recipe_stop_proof_sha256'],
+                reused_recipe_from=deepcopy(source['scope']))
+        saved = self._save(value)
+        require(saved.get('retry_source') == provenance and saved['scope'] == scope
+            and saved['input'] == source['input'], 'manim_method_retry_source_changed', 409)
+        return saved['state']
+
     def advance(self, owner, run, *, cancelled=False):
         """One transition; caller holds the existing cross-process run lock."""
         commission = run['id']
@@ -128,7 +312,11 @@ class ManimMethodCoordinator:
             bounds = dict(resource_id='resource_' + digest(operation)[:24], fps=24, transparent=True,
                 manim_version=MANIM_VERSION, **{key: item for key, item in options.items() if key != 'kind'})
             task = validate_core_task(dict(effect_id=commission, goal=run['frozen']['goal'],
-                guidance=run['frozen'].get('feedback', ''), resource_constraints=bounds))
+                guidance=self.recipe_guidance(owner, run['frozen']), resource_constraints=bounds))
+            if 'library_binding' in run:
+                require(callable(getattr(self.skill_adapter, 'pin_import', None)),
+                    'manim_method_library_binding_unavailable', 503)
+                self.skill_adapter.pin_import(owner, run['library_binding'])
             delivery = self.skill_adapter.freeze(owner, operation, task, ['html-svg'],
                 resource_authoring=PRODUCER_REQUIREMENT,
                 **({'library_binding': run['library_binding']} if 'library_binding' in run else {}))

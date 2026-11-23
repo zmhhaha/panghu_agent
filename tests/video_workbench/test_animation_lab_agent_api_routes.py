@@ -46,6 +46,7 @@ def api_server():
     ('agent-api.html', 'animation_lab_web/agent-api.html', 'text/html'),
     ('agent-api.openapi.json', 'animation_lab_web/agent-api.openapi.json', 'application/json'),
     ('agent-api-client.py', 'animation_lab_client.py', 'text/x-python'),
+    ('prompt-inspection.mjs', 'animation_lab_web/prompt-inspection.mjs', 'text/javascript'),
 ])
 def test_agent_integration_files_use_existing_guard_and_exact_build_inputs(route, relative, mime):
     with api_server() as get:

@@ -25,11 +25,11 @@ from test_production_runs import seed
 from test_skill_production_gateway import Peer, JOB, ATTEMPT, TOKEN
 
 
-def attach_library(env):
+def attach_library(env, *, use_wikiskill=True):
     original = release()
     state, calls = dict(active=original, recent={original['id']: original}), []
     service = adapter(env.path / 'library', state, calls)
-    binding = service.pin(OWNER, 'creative-root')
+    binding = service.pin(OWNER, 'creative-root', use_wikiskill=use_wikiskill)
     env.joint.skill_adapter = service
     env.adapter = service
     with env.store.transaction() as db:
@@ -39,8 +39,10 @@ def attach_library(env):
     return service, state, calls, binding
 
 
-def test_run_and_modules_keep_adopted_plan_release_when_active_changes_and_on_restart(env):
-    service, state, calls, binding = attach_library(env)
+@pytest.mark.parametrize('use_wikiskill', [True, False])
+def test_run_and_modules_keep_adopted_plan_release_when_active_changes_and_on_restart(env, use_wikiskill):
+    service, state, calls, binding = attach_library(env, use_wikiskill=use_wikiskill)
+    expected_publications = {binding['release_sha256']} if use_wikiskill else set()
     # Publishing between planning and clicking 'produce' does not change the plan.
     state['active'] = release(2)
     project = env.store.project(OWNER, env.project['id'])
@@ -54,7 +56,7 @@ def test_run_and_modules_keep_adopted_plan_release_when_active_changes_and_on_re
     core = pending['document']['core_task']
     delivery = service.freeze(OWNER, 'video-film-module:' + first['id'], core,
         core['constraints']['allowed_engines'], library_binding=binding)
-    assert {row['publication_sha256'] for row in delivery['catalog']['skills']} == {binding['release_sha256']}
+    assert {row['publication_sha256'] for row in delivery['catalog']['skills']} == expected_publications
     # The normal stopped-output fixture does not refresh or choose packages.
     finish_module(env, first['id'])
     env.runs.tick()
@@ -62,7 +64,7 @@ def test_run_and_modules_keep_adopted_plan_release_when_active_changes_and_on_re
     reopened = adapter(env.path / 'library', state, calls)
     prepared_second = env.creation.prepare_module(second['id'], reopened)
     assert prepared_second['library_binding'] == binding
-    assert {row['publication_sha256'] for row in prepared_second['document']['skill_catalog']['skills']} == {binding['release_sha256']}
+    assert {row['publication_sha256'] for row in prepared_second['document']['skill_catalog']['skills']} == expected_publications
     # A refinement follows the original task's release even without a supplied
     # public binding. It cannot silently refresh to today's active version.
     base = env.creation.get_module(OWNER, first['id'])
@@ -73,11 +75,12 @@ def test_run_and_modules_keep_adopted_plan_release_when_active_changes_and_on_re
     polish = env.creation.start_module(OWNER, project['id'], pending['scene_id'], revision, 'polish-original-batch')
     prepared_polish = env.creation.prepare_module(polish['id'], reopened)
     assert prepared_polish['library_binding'] == binding
-    assert {row['publication_sha256'] for row in prepared_polish['document']['skill_catalog']['skills']} == {binding['release_sha256']}
-    assert calls == [('active', OWNER)]
+    assert {row['publication_sha256'] for row in prepared_polish['document']['skill_catalog']['skills']} == expected_publications
+    expected_calls = [('active', OWNER)] if use_wikiskill else []
+    assert calls == expected_calls
     # An old exact request key returns the saved task, even after a new release.
     replay = env.runs.start(OWNER, project['id'], original_request, 'native-film-run-test')
-    assert replay['id'] == run['id'] and calls == [('active', OWNER)]
+    assert replay['id'] == run['id'] and calls == expected_calls
 
 
 def test_planning_start_pins_before_execution_and_adoption_carries_the_same_release(tmp_path):

@@ -3,8 +3,8 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "动画效果库外部 Agent API",
-    "version": "1.1.0",
-    "description": "现有 REST JSON API 的外部 Agent 支持子集：目录、异步制作、状态、反馈、取消、视频及源码下载。沿用 OAuth 登录 Cookie 和开发者权限；不支持 Bearer，独立长期机器凭据尚未实现。Cookie 文件由用户安全提供，调用方不读取或导出浏览器凭据。POST 还必须提供公网同源 Origin、catalog.csrf_token 和 application/json。GET 只读，不启动或推进执行。未列出的响应字段属于服务扩展，调用方应忽略。发布与人类验收不属于本合同。",
+    "version": "1.4.0",
+    "description": "现有 REST JSON API 的外部 Agent 支持子集：目录、异步制作、状态、反馈、取消、视频与源码下载，以及提交需求和逐轮冻结输入的只读查看。沿用 OAuth 登录 Cookie 和开发者权限；不支持 Bearer，独立长期机器凭据尚未实现。Cookie 文件由用户安全提供，调用方不读取或导出浏览器凭据。POST 还必须提供公网同源 Origin、catalog.csrf_token 和 application/json。GET 只读，不启动或推进执行。未列出的响应字段属于服务扩展，调用方应忽略。发布与人类验收不属于本合同。",
     "x-guide-url": "https://video-service.panghuer.top/dev/animations/agent-api.html",
     "x-client-url": "https://video-service.panghuer.top/dev/animations/agent-api-client.py"
   },
@@ -15,6 +15,7 @@
   "tags": [
     {"name": "catalog", "description": "只读目录及当前 CSRF token"},
     {"name": "commissions", "description": "异步制作及状态"},
+    {"name": "inspection", "description": "原提交需求、实际冻结需求及主委托各轮 Agent 输入，不等同于完整系统提示词"},
     {"name": "feedback", "description": "仅保存已授权意见，不触发制作或授予人类认可"},
     {"name": "artifacts", "description": "已生成候选的媒体与 JSON 源码"}
   ],
@@ -39,8 +40,8 @@
       "post": {
         "operationId": "submitAnimationLabCommission",
         "tags": ["commissions"],
-        "summary": "提交新制作或基于候选继续优化",
-        "description": "异步接受后返回 202 和当前详情。继续优化仍调用此路径，新建 request_id，提供 base_commission_id、base_candidate_id 和 feedback。相同用户以原 request_id 和相同请求重放会返回已有委托；内容改变返回 409。POST 超时不等于提交失败：先按目录 request_id 核对，不自动重试或生成新 ID。参考 URL 不会自动读取或观看原片。请求 JSON 最大 1 MiB，不支持查询参数。",
+        "summary": "新建、继续优化、同效果从零重做或技术重试",
+        "description": "异步接受后返回 202 和当前详情。继续优化提供 base_commission_id、base_candidate_id 和 feedback；从零重做提供 creation_mode:fresh 和 effect_id，不传旧基线或方法。每次新创作默认 use_wikiskill:true，可显式关闭；留空标准由 Agent 拟定后继续。技术重试默认仅提交 request_id、retry_of_commission_id、budget，保留原需求、环境与已完成方案；首次普通渲染失败可显式另加 renderer_rebind:current-admitted，在新冻结的已准入环境重渲染同一源码，不重新创作。相同用户以原 request_id 和相同请求重放返回已有委托，内容改变返回 409。POST 超时先按目录 request_id 核对，不自动重发或生成新 ID。参考 URL 不会自动读取或观看原片。请求 JSON 最大 1 MiB，不支持查询参数。",
         "security": [{"OAuthSessionCookie": [], "AnimationLabCsrf": []}],
         "parameters": [{"$ref": "#/components/parameters/WriteOrigin"}],
         "requestBody": {
@@ -66,6 +67,52 @@
                 "duration_seconds": 18,
                 "budget": {"max_rounds": 1, "max_seconds": 1800},
                 "collaboration": {"max_components": 3}
+              }},
+              "selectedCapabilities": {"summary": "两轴显式约束；先核对 catalog 准入，多选允许选择或组合", "value": {
+                "request_id": "dbdc386e-254d-427a-b331-96a2865fac3e",
+                "title": "群体响应的节奏",
+                "goal": "从可辨认个体到协同群体，建立清楚的触发、依次响应和稳定收束。",
+                "duration_seconds": 12,
+                "budget": {"max_rounds": 2, "max_seconds": 1200},
+                "capability_selection": {"creation": ["html-svg", "canvas"], "motion": ["animejs"]}
+              }},
+              "manimCreation": {"summary": "仅选 Manim，由自身动画 API 编排；可省略资源参数", "value": {
+                "request_id": "a6422951-e3f9-4726-ae03-e146bba9ad7a",
+                "title": "剪切前后面积不变",
+                "goal": "以真实 Manim 几何变形表现底和高保持不变；HTML/SVG 仅辅助标注和整体构图。",
+                "duration_seconds": 4,
+                "budget": {"max_rounds": 2, "max_seconds": 1800},
+                "capability_selection": {"creation": ["manim"], "motion": []}
+              }},
+              "plannedManimCandidate": {"summary": "混选是允许范围；仅规划实际采用 Manim 时制作候选资源", "value": {
+                "request_id": "1199ce44-861a-4734-b03d-ae5b952915ec",
+                "title": "同一变换的几何与轨迹",
+                "goal": "直观展示连续变换前后的对应关系，由规划 Agent 在 Canvas 或 Manim 中选择适合的实现，不要求两者同时出现。",
+                "duration_seconds": 8,
+                "budget": {"max_rounds": 1, "max_seconds": 1800},
+                "capability_selection": {"creation": ["canvas", "manim"], "motion": ["gsap"]},
+                "resource_authoring": {"kind": "manim", "frame_count": 48, "global_start_frame": 0}
+              }},
+              "explicitManimResource": {"summary": "没有能力选择时，显式资源参数仍表示先预制真实 Manim 资源", "value": {
+                "request_id": "c6e56c7e-7efc-4a1b-a8ae-633e243f38e4",
+                "title": "先制作几何资源再编排",
+                "goal": "先预制真实 Manim 几何变形资源，再以 HTML/SVG 完成整体构图和标记。",
+                "duration_seconds": 4,
+                "budget": {"max_rounds": 1, "max_seconds": 1800},
+                "resource_authoring": {"kind": "manim", "frame_count": 48, "global_start_frame": 0}
+              }},
+              "freshEffect": {"summary": "保留效果身份，从零创作并明确关闭动效知识；新候选不自动替换默认样片", "value": {
+                "request_id": "c9ab73ac-6e8f-4803-b75d-f10adddd7561",
+                "creation_mode": "fresh", "effect_id": "11111111-1111-4111-8111-111111111111",
+                "title": "重新表现雾散后的空间层次", "goal": "从零创作雾散见山石的完整片段，山体应有体积和前后层次；不沿用旧画法。",
+                "use_wikiskill": false, "duration_seconds": 12,
+                "budget": {"max_rounds": 1, "max_seconds": 1800},
+                "problem_summary": [{"text": "先前山石缺少清晰体积。", "source": "developer"}]
+              }},
+              "technicalRetry": {"summary": "只恢复原方案的失败环节；原执行须已确认停止", "value": {
+                "request_id": "b56cd82e-2164-4ba4-8ffd-caa48db437e7",
+                "retry_of_commission_id": "11111111-1111-4111-8111-111111111111",
+                "budget": {"max_rounds": 1, "max_seconds": 600}
               }},
               "continueCandidate": {"summary": "候选和委托 ID 应替换为实际返回值", "value": {
                 "request_id": "bb8c0924-41c1-4da1-b2b5-c0e038ca7741",
@@ -109,6 +156,46 @@
           "401": {"$ref": "#/components/responses/AuthenticationRequired"},
           "403": {"$ref": "#/components/responses/Forbidden"},
           "404": {"$ref": "#/components/responses/NotFound"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/prompt-inspection": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}],
+      "get": {
+        "operationId": "inspectAnimationLabPrompts",
+        "tags": ["inspection"],
+        "summary": "查看提交需求及各轮 Agent 输入索引",
+        "description": "只读，沿用会话及开发者权限，无需 CSRF，不推进任务或唤醒执行器。不嵌入普通详情轮询。新请求可返回原提交快照；历史请求明确标记为冻结字段还原，不冒充原表单。索引只覆盖主委托 creator/review（包括协作阶段），不含 render 或独立账本中的 Manim recipe。不是完整系统提示词或全部外部调用记录。无查询参数，UTF-8 JSON 响应最多 6 MiB；已删除、其他用户或不可见委托拒绝访问。",
+        "responses": {
+          "200": {"description": "提交快照、有效冻结需求及有限输入索引", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PromptInspection"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "422": {"$ref": "#/components/responses/InvalidRequest"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/operations/{operation_id}/input": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}, {"$ref": "#/components/parameters/OperationId"}],
+      "get": {
+        "operationId": "getAnimationLabOperationInput",
+        "tags": ["inspection"],
+        "summary": "按需读取一轮 Agent 的真实冻结输入 JSON",
+        "description": "只读，先验证当前用户可见委托及操作归属，不允许跨委托读取。返回原 op.input 内容与摘要，不递归改写输入中的 URL，不读取模型凭据、不重建没有冻结证据的历史系统提示词。只支持主委托 creator/review（包括协作阶段）。无查询参数，无需 CSRF，不提交、推进或续跑任务；UTF-8 JSON 响应最多 6 MiB。",
+        "responses": {
+          "200": {"description": "该操作的冻结输入和身份摘要", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OperationInput"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "422": {"$ref": "#/components/responses/InvalidRequest"},
           "503": {"$ref": "#/components/responses/Unavailable"},
           "default": {"$ref": "#/components/responses/ApiError"}
         }
@@ -167,6 +254,24 @@
           "415": {"$ref": "#/components/responses/JsonRequired"},
           "422": {"$ref": "#/components/responses/InvalidRequest"},
           "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/adopt": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}],
+      "post": {
+        "operationId": "adoptAnimationLabDefaultWork", "tags": ["commissions"],
+        "summary": "明确采用候选作为效果卡片默认展示作品",
+        "description": "校验效果归属、候选媒体和 expected_revision 后更新默认展示；不启动制作，不发布 WikiSkill，也不授予审美认可。冲突时重新读取效果，不自动覆盖或换请求重发。",
+        "security": [{"OAuthSessionCookie": [], "AnimationLabCsrf": []}],
+        "parameters": [{"$ref": "#/components/parameters/WriteOrigin"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdoptDefaultWorkRequest"}}}},
+        "responses": {
+          "200": {"description": "默认作品已采用", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}}}},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
           "default": {"$ref": "#/components/responses/ApiError"}
         }
       }
@@ -231,6 +336,7 @@
     "parameters": {
       "WriteOrigin": {"name": "Origin", "in": "header", "required": true, "description": "公网入口所有 POST 必须提供此同源值；不包含 /dev/animations 路径。", "schema": {"type": "string", "const": "https://video-service.panghuer.top"}},
       "CommissionId": {"name": "commission_id", "in": "path", "required": true, "description": "服务返回的委托 ID", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "11111111-1111-4111-8111-111111111111"},
+      "OperationId": {"name": "operation_id", "in": "path", "required": true, "description": "同一委托输入索引返回的 operation_id，作为路径段进行 URL 编码", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "operation-plan-1"},
       "CandidateId": {"name": "candidate_id", "in": "path", "required": true, "description": "使用 candidates 中实际返回的 ID", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "candidate-1"}
     },
     "schemas": {
@@ -268,7 +374,7 @@
       },
       "CollaborationRequest": {
         "type": "object", "required": ["max_components"], "additionalProperties": false,
-        "description": "新建实验仅显式提供时启用；继续优化或重新运行可继承原协作配置。先检查 availability.collaboration=true；budget.max_rounds 必须为 1。初版仅支持 Canvas，不与 Manim 预制资源或迁移任务合用。统筹、最多 max_components 个部件与整合共最多 max_components+2 个创作任务，另有 1 次样片渲染和 1 次评审，均计入本次总时限；建议 max_seconds=1800。不为部件创建独立效果。",
+        "description": "新建实验仅显式提供时启用；继续优化或技术重试可继承原协作配置。技术重试不重传此字段。先检查 availability.collaboration=true；budget.max_rounds 必须为 1。当前支持 HTML/SVG（html-svg）、Canvas 2D（canvas）和 Three.js（three），具体以 availability.allowed_engines 和本次任务冻结的准入能力为准。画面创作与动作编排是两个维度；GSAP/Anime.js 等编排库仍需分别准入，并遵循绝对时钟规范。协作暂不与 Manim 预制资源或迁移任务合用。统筹、最多 max_components 个部件与整合共最多 max_components+2 个创作任务，另有 1 次样片渲染和 1 次评审，均计入本次总时限；建议 max_seconds=1800。不为部件创建独立效果。",
         "properties": {"max_components": {"type": "integer", "minimum": 2, "maximum": 4}}
       },
       "CollaborationProgress": {
@@ -287,26 +393,220 @@
           }}}
         }
       },
+      "CapabilitySelection": {
+        "type": "object", "additionalProperties": false,
+        "description": "实验室的创作约束，不是已使用能力或效果认可证据。整字段省略为自动；某组省略或空数组时由 Agent 在已准入能力中自选，唯新请求仅选 Manim 时动作由 Manim 自身编排，motion 必须省略或为空。非空组单选必须实质使用该项；多选允许从所选集合选择或组合，不要求每项装饰性使用。实际采用的浏览器画面引擎必须属于选择集合；纯 Manim 方案允许 HTML/SVG 辅助承载，主几何及其变换来自真实预制资源，此时采用的 motion 为空。实际采用浏览器画面且动作组非空时必须实质使用至少一种所选工具，不得加载或使用未选的动作库；依赖加载不等于实质使用。正式视频制作不增加此选项，由 Agent 按发布的 WikiSkill 选择。历史详情仍可读取旧冻结选择。",
+        "properties": {
+          "creation": {"type": "array", "maxItems": 4, "uniqueItems": true,
+            "items": {"type": "string", "enum": ["html-svg", "canvas", "three", "manim"]},
+            "description": "画面创作：HTML/SVG、Canvas 2D、Three.js、Manim；前三项以 availability.allowed_engines 为准，Manim 以 availability.resource_authoring.manim.enabled 为准。混选先由 Agent 规划实际采用的能力；只有规划采用 Manim 才预占资源制作额度、调用 recipe Agent 并生成资源，未采用时不制作。仅选 Manim 时必须真实使用资源表达主几何。"},
+          "motion": {"type": "array", "maxItems": 3, "uniqueItems": true,
+            "items": {"type": "string", "enum": ["native-js", "gsap", "animejs"]},
+            "description": "浏览器动作编排：原生 JavaScript、GSAP、Anime.js；以 availability.motion_tools 为准，遵循同一 HyperFrames 绝对时钟。仅选 creation=[manim] 时必须省略或为空，由 Manim 自身编排；混选浏览器画面能力时仍可选择浏览器动作工具。"}
+        },
+        "examples": [{"creation": ["canvas"], "motion": ["animejs"]}, {"creation": ["html-svg", "three"], "motion": []}, {"creation": ["manim"], "motion": []}, {}]
+      },
+      "ManimResourceAuthoring": {
+        "type": "object", "required": ["kind"], "additionalProperties": false,
+        "description": "Manim 资源参数。新请求的 capability_selection.creation 包含 manim 时，此对象仅是按需候选参数，只有 Agent 规划采用 Manim 才制作；没有提供或继承 capability_selection 而显式提供此对象时，仍表示在主动画规划前预制真实资源。含 Manim 候选选择但未提供此对象时，服务默认 640×360、从第 0 帧开始，片段为 min(48, 视频总帧数) 帧。所有资源按 24 fps，起始帧加片段帧数不能超过视频总帧数，且受服务解码内存上限约束。API 允许 1–60 帧，网页表单进一步限定 0.5–2.5 秒。非空 creation 不含 Manim 时不能同时提供此对象。",
+        "properties": {
+          "kind": {"type": "string", "const": "manim"},
+          "width": {"type": "integer", "minimum": 320, "maximum": 1280, "default": 640},
+          "height": {"type": "integer", "minimum": 180, "maximum": 720, "default": 360},
+          "frame_count": {"type": "integer", "minimum": 1, "maximum": 60, "default": 48},
+          "global_start_frame": {"type": "integer", "minimum": 0, "maximum": 14400, "default": 0},
+          "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295, "default": 17}
+        }
+      },
+      "ProblemSummary": {
+        "type": "array", "maxItems": 16, "items": {
+          "type": "object", "required": ["text", "source"], "additionalProperties": false,
+          "properties": {
+            "text": {"type": "string", "minLength": 1, "maxLength": 4000, "pattern": "\\S"},
+            "source": {"type": "string", "enum": ["developer", "observation", "hypothesis"]},
+            "source_id": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"},
+            "observation": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"}
+          }
+        }, "description": "精简问题与来源；规范 JSON 的 UTF-8 总长度不超过 24 KiB。hypothesis 仅为待检查项，不作为已验证事实或硬约束。"
+      },
+      "AdoptDefaultWorkRequest": {
+        "type": "object", "required": ["request_id", "effect_id", "candidate_id", "expected_revision"], "additionalProperties": false,
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "effect_id": {"$ref": "#/components/schemas/Identifier"},
+          "candidate_id": {"$ref": "#/components/schemas/Identifier"},
+          "expected_revision": {"type": "integer", "minimum": 0}
+        }
+      },
       "CommissionRequest": {
-        "type": "object", "required": ["request_id", "goal", "budget"], "additionalProperties": false,
+        "type": "object", "required": ["request_id", "budget"], "additionalProperties": false,
         "description": "对外支持的提交子集，禁止提交身份、运行环境或发布验收字段。可选字段请省略而非传 null。",
         "properties": {
           "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "creation_mode": {"type": "string", "enum": ["new", "continue", "fresh"], "description": "省略时有 base_commission_id 则为 continue，否则为 new。fresh 保留效果归属，不继承旧实现。"},
+          "effect_id": {"$ref": "#/components/schemas/Identifier", "description": "独立效果归属；fresh 必须提供，不能以此继承源码。"},
+          "use_wikiskill": {"type": "boolean", "default": true, "description": "新建、继续和从零均默认加载动效知识，可显式关闭；关闭仍保留平台运行规范。技术重试继承原设置。"},
+          "problem_summary": {"$ref": "#/components/schemas/ProblemSummary"},
           "title": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S"},
           "goal": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"},
           "duration_seconds": {"type": "number", "minimum": 1, "maximum": 60, "default": 18, "description": "24 fps 整帧边界，即 duration_seconds * 24 必须为整数。"},
           "budget": {"$ref": "#/components/schemas/BudgetRequest"},
           "collaboration": {"$ref": "#/components/schemas/CollaborationRequest"},
+          "capability_selection": {"$ref": "#/components/schemas/CapabilitySelection"},
+          "resource_authoring": {"$ref": "#/components/schemas/ManimResourceAuthoring"},
           "criteria": {"$ref": "#/components/schemas/Criteria"},
           "reference": {"$ref": "#/components/schemas/Reference"},
           "base_commission_id": {"$ref": "#/components/schemas/Identifier"},
           "base_candidate_id": {"$ref": "#/components/schemas/Identifier", "description": "须属于 base_commission_id；省略则采用基线 best_candidate_id。"},
+          "retry_of_commission_id": {"$ref": "#/components/schemas/Identifier", "description": "技术重试已失败或取消且原执行已确认停止的委托。默认仅与 request_id、budget 一起提交，继承冻结的运行环境。首次普通画面渲染失败且创作完成时，可显式添加 renderer_rebind:current-admitted，在新冻结的已准入环境重渲染原源码；不重新创作。"},
+          "renderer_rebind": {"type": "string", "const": "current-admitted", "description": "仅用于技术重试，且 max_rounds 必须为 1。仅支持普通、无协作、无 Manim、无已有候选的首次失败渲染。保留历史 Agent 输入、Job、源码与原账本，新实验单独冻结当前已准入渲染环境并记录来源；资源哈希和库版本必须兼容。相同 request_id 重放始终保留首次绑定。不能提交环境哈希、源码或绑定收据。通过 prompt-inspection 的 renderer_rebind、render_replays 核对。"},
           "feedback": {"type": "string", "maxLength": 16000, "description": "继续优化的改进目标，不等同于单独保存 feedback 意见。"}
         },
-        "dependentRequired": {"base_candidate_id": ["base_commission_id"]},
-        "allOf": [{"if": {"required": ["collaboration"]}, "then": {
-          "properties": {"budget": {"properties": {"max_rounds": {"const": 1}}}}
-        }}]
+        "dependentRequired": {"base_candidate_id": ["base_commission_id"], "renderer_rebind": ["retry_of_commission_id"]},
+        "allOf": [
+          {"if": {"required": ["retry_of_commission_id"]}, "then": {"propertyNames": {"enum": ["request_id", "retry_of_commission_id", "budget", "renderer_rebind"]}}, "else": {"required": ["goal"]}},
+          {"if": {"required": ["renderer_rebind"]}, "then": {"properties": {"budget": {"properties": {"max_rounds": {"const": 1}}}}}},
+          {"if": {"required": ["creation_mode"], "properties": {"creation_mode": {"const": "fresh"}}}, "then": {"required": ["effect_id"], "not": {"anyOf": [{"required": ["base_commission_id"]}, {"required": ["base_candidate_id"]}]}}},
+          {"if": {"required": ["creation_mode"], "properties": {"creation_mode": {"const": "continue"}}}, "then": {"required": ["base_commission_id"]}},
+          {"if": {"required": ["creation_mode"], "properties": {"creation_mode": {"const": "new"}}}, "then": {"not": {"anyOf": [{"required": ["effect_id"]}, {"required": ["base_commission_id"]}]}}},
+          {"if": {"required": ["collaboration"]}, "then": {
+            "properties": {
+              "budget": {"properties": {"max_rounds": {"const": 1}}},
+              "capability_selection": {"properties": {"creation": {"not": {"contains": {"const": "manim"}}}}}
+            },
+            "not": {"required": ["resource_authoring"]}
+          }},
+          {"if": {"required": ["capability_selection"], "properties": {
+            "capability_selection": {"required": ["creation"], "properties": {
+              "creation": {"minItems": 1, "not": {"contains": {"const": "manim"}}}
+            }}
+          }}, "then": {"not": {"required": ["resource_authoring"]}}},
+          {"if": {"required": ["capability_selection"], "properties": {
+            "capability_selection": {"required": ["creation"], "properties": {"creation": {"const": ["manim"]}}}
+          }}, "then": {"properties": {"capability_selection": {"properties": {"motion": {"maxItems": 0}}}}}}
+        ]
+      },
+      "TransferRequest": {
+        "type": "object", "required": ["request_id", "goal", "structural_changes", "budget"], "additionalProperties": false,
+        "description": "迁移提交的结构约定。当前公开接口子集未单列迁移路径；此组件用于与工作台既有迁移请求保持一致。迁移必须应用指定样片的方法，use_wikiskill:false 仅关闭额外动效知识库，不移除被验证的目标方法。不传 creation_mode、效果归属或旧源码。",
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S"},
+          "goal": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"},
+          "duration_seconds": {"type": "number", "minimum": 1, "maximum": 60},
+          "budget": {"$ref": "#/components/schemas/BudgetRequest"},
+          "reference": {"$ref": "#/components/schemas/Reference"},
+          "base_candidate_id": {"$ref": "#/components/schemas/Identifier"},
+          "feedback": {"type": "string", "maxLength": 16000},
+          "use_wikiskill": {"type": "boolean", "default": true},
+          "capability_selection": {"$ref": "#/components/schemas/CapabilitySelection"},
+          "resource_authoring": {"$ref": "#/components/schemas/ManimResourceAuthoring"},
+          "structural_changes": {
+            "type": "object", "minProperties": 1,
+            "propertyNames": {"enum": ["object_count", "relations", "task", "duration", "staging", "timing", "data_structure", "explanation_problem"]},
+            "additionalProperties": {"type": "object", "required": ["before", "after"], "additionalProperties": false,
+              "properties": {"before": {"not": {"type": "null"}}, "after": {"not": {"type": "null"}}}},
+            "description": "每项 before/after 必须不同。Skill 迁移至少包含关系、任务、布局、数据结构或讲解问题的一项实质变化。"
+          },
+          "content_changes": {
+            "type": "object", "required": ["before", "after", "reason"], "additionalProperties": false,
+            "properties": {
+              "before": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"},
+              "after": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"}
+            }, "description": "Skill 迁移要求 before 为原目标、after 为本次 goal，两者不同；不携带参考素材。"
+          }
+        }
+      },
+      "AdoptedCapabilities": {
+        "type": "object", "readOnly": true, "additionalProperties": true,
+        "required": ["creation", "motion", "engine", "uses_manim", "plan_operation_id", "plan_result_sha256"],
+        "description": "规划后由宿主冻结的采用决定，只读。creation、engine、uses_manim 描述采用的画面方案；motion 是规划后仍适用的浏览器动作允许范围，不是每项都已实际采用。HTML/SVG 不在原选集且仅为 Manim 辅助承载时，creation 只列 manim、motion 为空；原选集显式含 html-svg 且规划采用 html-svg 和 Manim 时，creation 同时列两项，浏览器动作约束仍适用。此决定来自已完成规划，并不是样片实际渲染或效果认可证据。",
+        "properties": {
+          "creation": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"type": "string", "enum": ["html-svg", "canvas", "three", "manim"]}},
+          "motion": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"type": "string", "enum": ["native-js", "gsap", "animejs"]}, "description": "规划后仍适用的浏览器动作允许范围；可能包含多个候选工具，实际使用以源代码和渲染观察为准。仅采用 Manim 时为空。"},
+          "engine": {"type": "string", "enum": ["html-svg", "canvas", "three"], "description": "HyperFrames 浏览器承载引擎；仅当 HTML/SVG 不在原画面选集中且作为 Manim 辅助承载时，不另计为一项创作能力。显式选 html-svg 且采用该引擎时仍计入 creation。"},
+          "uses_manim": {"type": "boolean", "description": "规划是否需要 Manim；false 时不会启动 Manim recipe 或 Cairo 资源制作。"},
+          "plan_operation_id": {"type": "string", "minLength": 1},
+          "plan_result_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      },
+      "FrozenInputDocument": {
+        "type": "object", "required": ["document", "sha256"], "additionalProperties": true,
+        "properties": {
+          "document": {"type": "object", "additionalProperties": true, "description": "原始或明确标记为还原的结构化需求，查看时不递归改写字段。"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "document 的 canonical JSON SHA-256；不是导出文件排版后的字节摘要。"}
+        }
+      },
+      "SubmissionInspection": {
+        "allOf": [
+          {"$ref": "#/components/schemas/FrozenInputDocument"},
+          {"type": "object", "required": ["origin", "is_original", "action", "limitations"], "properties": {
+            "origin": {"type": "string", "enum": ["captured_request", "reconstructed_frozen_fields"]},
+            "is_original": {"type": "boolean", "description": "false 表示依据历史冻结字段还原，不能当成最初填写的原始表单。"},
+            "action": {"type": "string", "enum": ["create", "transfer", "unknown"]},
+            "limitations": {"type": "array", "items": {"type": "string"}}
+          }},
+          {"if": {"properties": {"origin": {"const": "captured_request"}}},
+           "then": {"properties": {"is_original": {"const": true}}},
+           "else": {"properties": {"is_original": {"const": false}}}}
+        ]
+      },
+      "AgentInputIndexItem": {
+        "type": "object", "additionalProperties": true,
+        "required": ["operation_id", "stage", "mode", "phase", "scope", "round", "round_basis", "component_id", "status", "input_schema", "input_sha256", "input_bytes", "candidate_ids", "author_operation_id", "available", "input_url"],
+        "properties": {
+          "operation_id": {"$ref": "#/components/schemas/Identifier"},
+          "stage": {"type": "string", "enum": ["creator", "review"]},
+          "mode": {"type": ["string", "null"]},
+          "phase": {"type": ["string", "null"]},
+          "scope": {"type": "string", "enum": ["method", "collaboration"]},
+          "round": {"type": ["integer", "null"], "minimum": 0, "description": "plan 为 0，创作按实际顺序；评审按候选创作来源关联。无法核实时为 null。协作是既有单轮合同。"},
+          "round_basis": {"type": "string", "enum": ["plan", "creation_order", "candidate_author", "single_collaboration_round", "unresolved"]},
+          "component_id": {"type": ["string", "null"]},
+          "status": {"type": "string"},
+          "input_schema": {"type": ["string", "null"]},
+          "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "input_bytes": {"type": "integer", "minimum": 0},
+          "candidate_ids": {"type": "array", "items": {"type": "string"}},
+          "author_operation_id": {"type": ["string", "null"]},
+          "available": {"type": "boolean"},
+          "input_url": {"type": ["string", "null"], "format": "uri-reference", "description": "仅当前委托下的按需读取链接，公网返回含 /dev/animations 的站点根相对地址；available=false 时为 null。"},
+          "unavailable_reason": {"type": "string", "description": "不可读取时的稳定原因码，不包含私有字段内容；不阻断索引中其他可读操作。"}
+        }
+      },
+      "PromptInspection": {
+        "type": "object", "readOnly": true, "additionalProperties": true,
+        "required": ["schema", "commission_id", "request_id", "submission", "effective_request", "adopted_capabilities", "operations", "scope", "limitations"],
+        "properties": {
+          "schema": {"type": "string", "const": "video.animation-prompt-inspection.v1"},
+          "commission_id": {"$ref": "#/components/schemas/Identifier"},
+          "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "submission": {"$ref": "#/components/schemas/SubmissionInspection"},
+          "effective_request": {"$ref": "#/components/schemas/FrozenInputDocument"},
+          "adopted_capabilities": {"anyOf": [{"$ref": "#/components/schemas/AdoptedCapabilities"}, {"type": "null"}]},
+          "operations": {"type": "array", "items": {"$ref": "#/components/schemas/AgentInputIndexItem"}},
+          "renderer_rebind": {"type": ["object", "null"], "readOnly": true, "additionalProperties": true, "description": "显式重绑定的可信冻结记录；包括旧作者输入/结果/源码哈希、原运行环境和本次渲染环境。null 表示没有重绑定。历史作者输入不会因此改写。"},
+          "render_replays": {"type": "array", "readOnly": true, "items": {"type": "object", "required": ["operation_id", "input_sha256", "receipt"], "properties": {"operation_id": {"type": "string"}, "input_sha256": {"type": "string"}, "receipt": {"type": "object", "additionalProperties": true, "description": "绑定哈希、历史 author_input_sha256 与单独派生 render_input_sha256；明确本次只重新渲染，没有新作者调用。"}}}},
+          "scope": {"type": "string", "const": "method_lab_agent_inputs"},
+          "limitations": {"type": "array", "items": {"type": "string"}, "description": "明确本次可见范围：不包含未冻结历史系统提示词、运行凭据或独立 Manim recipe 账本。"}
+        }
+      },
+      "OperationInput": {
+        "type": "object", "readOnly": true, "additionalProperties": true,
+        "required": ["schema", "commission_id", "operation_id", "stage", "mode", "round", "input_schema", "input_sha256", "input", "limitations"],
+        "properties": {
+          "schema": {"type": "string", "const": "video.animation-operation-input.v1"},
+          "commission_id": {"$ref": "#/components/schemas/Identifier"},
+          "operation_id": {"$ref": "#/components/schemas/Identifier"},
+          "stage": {"type": "string", "enum": ["creator", "review"]},
+          "mode": {"type": ["string", "null"]},
+          "round": {"type": ["integer", "null"], "minimum": 0},
+          "input_schema": {"type": "string"},
+          "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "真实冻结 input 的 canonical JSON 摘要，不是完整系统提示词摘要。"},
+          "input": {"type": "object", "additionalProperties": true, "description": "该操作真实冻结 op.input；可能含方法、约束、观察或完整知识快照，按需独立读取。"},
+          "limitations": {"type": "array", "items": {"type": "string"}}
+        }
       },
       "BudgetCounters": {
         "type": "object", "additionalProperties": true,
@@ -344,7 +644,15 @@
             "properties": {
               "schema": {"type": "string", "const": "video.animation-method-lab-detail.v1"},
               "duration_seconds": {"type": "number"},
+              "creation_mode": {"type": "string", "enum": ["new", "continue", "fresh"], "readOnly": true},
+              "use_wikiskill": {"type": "boolean", "readOnly": true, "description": "实际冻结的加载选择；不是本次是否实际读取成功的证明。"},
+              "effect_id": {"$ref": "#/components/schemas/Identifier", "readOnly": true},
+              "representative_revision": {"type": "integer", "minimum": 0, "readOnly": true},
+              "adopted_candidate_id": {"type": ["string", "null"], "readOnly": true},
               "collaboration": {"anyOf": [{"$ref": "#/components/schemas/CollaborationProgress"}, {"type": "null"}]},
+              "capability_selection": {"$ref": "#/components/schemas/CapabilitySelection", "description": "公开的本次冻结选择。旧的自动任务可能省略；这是请求约束，不是样片实际使用能力或质量判断。继续优化可按原选择继承；技术重试固定继承且不重传。"},
+              "adopted_capabilities": {"readOnly": true, "anyOf": [{"$ref": "#/components/schemas/AdoptedCapabilities"}, {"type": "null"}], "description": "规划后宿主冻结的采用决定，规划前为 null；旧任务可省略。不能作为请求字段，也不能代替样片真实消费证据。"},
+              "resource_authoring": {"type": "object", "readOnly": true, "additionalProperties": true, "description": "只读资源进度，形状不同于提交的 ManimResourceAuthoring；不要把此对象直接当成下一次请求参数。新候选任务的 awaiting_plan 表示等待规划，not_adopted 表示规划未采用 Manim、资源制作 attempts=0。", "properties": {"kind": {"type": "string", "const": "manim"}, "status": {"type": "string"}, "error": {"type": ["string", "null"]}}},
               "criteria": {"type": "array", "items": {"$ref": "#/components/schemas/Criterion"}, "description": "规划完成前可能为空。"},
               "candidates": {"type": "array", "items": {"$ref": "#/components/schemas/Candidate"}},
               "budget": {"$ref": "#/components/schemas/BudgetCounters"},
@@ -361,7 +669,15 @@
         "type": "object", "required": ["effects", "commissions", "availability", "csrf_token"], "additionalProperties": true,
         "properties": {
           "csrf_token": {"type": "string", "minLength": 1, "description": "敏感防伪 token，只用于 POST 头，不记录日志；Python 客户端的 catalog 输出隐藏它。"},
-          "availability": {"type": "object", "required": ["enabled"], "additionalProperties": true, "properties": {"enabled": {"type": "boolean"}, "collaboration": {"type": "boolean", "description": "仅 true 表示协作创作已准入；false 或未返回时不得提交 collaboration。"}, "reason": {"type": ["string", "null"]}, "allowed_engines": {"type": "array", "items": {"type": "string"}}}},
+          "availability": {"type": "object", "required": ["enabled"], "additionalProperties": true, "properties": {
+            "enabled": {"type": "boolean"},
+            "collaboration": {"type": "boolean", "description": "仅 true 表示协作创作已准入；false 或未返回时不得提交 collaboration。"},
+            "reason": {"type": ["string", "null"]},
+            "allowed_engines": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["html-svg", "canvas", "three"]}},
+            "motion_tools": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["native-js", "gsap", "animejs"]}, "description": "由当前可信固定资产和运行时准入计算的真实可用动作编排工具。GSAP/Anime.js 不能从历史样片标签推断。未返回时调用方不要推断额外库已经准入。"},
+            "resource_authoring": {"type": "object", "additionalProperties": true, "properties": {"manim": {"type": "object", "additionalProperties": true, "properties": {"enabled": {"type": "boolean"}, "status": {"type": "string"}, "max_frames": {"type": "integer", "maximum": 60}}}}},
+            "authoring_libraries": {"type": "object", "additionalProperties": true, "description": "已准入库的固定版本描述；可用动作列表仍以 motion_tools 为准。"}
+          }},
           "effects": {"type": "array", "items": {"type": "object", "additionalProperties": true, "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "open_commission_id": {"type": ["string", "null"]}}}},
           "commissions": {"type": "array", "items": {"$ref": "#/components/schemas/CommissionSummary"}}
         }

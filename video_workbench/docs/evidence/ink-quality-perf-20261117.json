@@ -1,0 +1,298 @@
+{
+  "schema": "video.ink-quality-performance-summary.v1",
+  "date": "2026-11-17",
+  "status": "closed_engineering_complete_review_invalid_art_unapproved",
+  "scope": "Normal single-Agent new ink work; actual render and one ARM comparison; separate synthetic recovery regressions",
+  "creative_execution": {
+    "collaborative_authoring": false,
+    "creator_job_id": "a9d22278-ae53-467b-a708-20997d430f98",
+    "creator_completed": true,
+    "creator_stop_proven": true,
+    "commission_id": "373a3377-b9e4-4ebc-af46-dc7ae2997d56",
+    "candidate_id": "f9a62e37-3c72-4389-90b2-f49291cc2e80",
+    "renderer": "HyperFrames",
+    "engine_and_files_sha256": "ad52b8596f331712714bc5e2e079f2a9957070da259c3a9c54582662df0f9a19",
+    "source_file_sha256": {
+      "scene.html": "1c5151f2cb6e645cc122257031c27617c82c1fc8920864d4c6cf37546956c2a9",
+      "scene.js": "f29509aca2e0438b089db01dfcf98f94e1ff3bc0e6322722c2f9aa4f275d2500"
+    },
+    "complete_source_json_sha256": "1830867b0bc10e13fca283d0316a49f9730a900814cf941584dc4b9e81f135e7",
+    "complete_source_json_hash_includes_strategy": true,
+    "creator_artifact_manifest_sha256": "9895a9a9a6b9331048f66b59dcc4a9b4a656033d9608e6b55d83ef5e6222853d",
+    "original_creator_and_candidate_source_match_exactly": true,
+    "media": {
+      "sha256": "47bf3a95ae7ad4d1ad3f72947adde0b001aea3e10264f796ffa4533f80587e6d",
+      "bytes": 201633,
+      "duration_seconds": 24.0,
+      "fps": 24.0,
+      "frames": 576,
+      "width": 1280,
+      "height": 720,
+      "audio_streams": 0,
+      "full_decode_passed": true
+    }
+  },
+  "author_runtime": {
+    "status": "deployed",
+    "revision": "author-http-idle-31f3eed7-r1",
+    "image_digest": "sha256:67664e0f96fca102cd6df82d3e6f53b77255b1547f87a048b4f86f8c75e7746f",
+    "route": "video-animation-skill-method-author-pi",
+    "binding_id": "binding-734556c4a2c1622f7982",
+    "actual_job_http_idle_timeout_ms": 593048,
+    "retry_enabled": false,
+    "provider_max_retries": 0,
+    "review_route_changed": false,
+    "technical_admission_is_not_artistic_evidence": true,
+    "greater_than_300_second_idle_stream_test_claimed": false
+  },
+  "arm_comparison": {
+    "status": "completed_once",
+    "completed_utc": "2026-11-17T08:54:45.712Z",
+    "architecture": "aarch64",
+    "renderer_image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:45504cc19d0ce1a0dd2234a47ac953afcb957bb1b92bbeaf63356610f641f13b",
+    "chromium": "149.0.7827.0",
+    "hyperframes_version": "0.8.149",
+    "plan_sha256": "1c0293157339ce151bc1d737e88c9ff7c2efe8845f6c692ab80d10b4f8d98f98",
+    "fixed_execution_order": [
+      "old",
+      "new"
+    ],
+    "fresh_browser_per_work": true,
+    "resolution": [
+      1280,
+      720
+    ],
+    "fps": 24,
+    "warmup_times_seconds": [
+      0,
+      3,
+      7,
+      12,
+      15,
+      19,
+      23,
+      0
+    ],
+    "absolute_seek": "genuine HyperFrames project/core renderSeek",
+    "full_rgba_readback_after_every_seek": true,
+    "engine_errors": 0,
+    "blocked_resources": 0,
+    "measurements": [
+      {
+        "label": "old",
+        "engine_and_files_sha256": "26e684f9af66322afe2cdb2b614b38fbeb6fe2248c84ce17fdc798e22f21178f",
+        "initialization_wall_ms": 1425.1908329999997,
+        "warmup_wall_ms": 750.7668140000001,
+        "measured_sequence_wall_ms": 53204.748311999996,
+        "initialization_and_warmup_wall_ms": 2175.9576469999997,
+        "initialization_warmup_and_sequence_wall_ms": 55380.705959,
+        "measured_frames": 576,
+        "warmup_seeks": 8,
+        "seek_median_ms": 78.99183500000026,
+        "seek_p95_ms": 88.863352999997,
+        "seek_and_readback_median_ms": 90.92177250000077,
+        "seek_and_readback_p95_ms": 101.72661700000026,
+        "native_contexts": 75,
+        "rgba_pixel_storage_lower_bound_bytes": 15158636
+      },
+      {
+        "label": "new",
+        "engine_and_files_sha256": "ad52b8596f331712714bc5e2e079f2a9957070da259c3a9c54582662df0f9a19",
+        "initialization_wall_ms": 1061.660947999997,
+        "warmup_wall_ms": 283.46282999999676,
+        "measured_sequence_wall_ms": 17988.530124000004,
+        "initialization_and_warmup_wall_ms": 1345.1237779999938,
+        "initialization_warmup_and_sequence_wall_ms": 19333.653902,
+        "measured_frames": 576,
+        "warmup_seeks": 8,
+        "seek_median_ms": 21.432647499997984,
+        "seek_p95_ms": 33.37687700000242,
+        "seek_and_readback_median_ms": 32.43276000000333,
+        "seek_and_readback_p95_ms": 45.968016999999236,
+        "native_contexts": 6,
+        "rgba_pixel_storage_lower_bound_bytes": 54067200
+      }
+    ],
+    "new_brush_atlas_size": [
+      3072,
+      3072
+    ],
+    "new_brush_atlas_rgba_lower_bound_bytes": 37748736,
+    "memory_tradeoff": "Lower measured per-frame cost and fewer contexts; higher retained Canvas pixel-storage lower bound",
+    "limitations": [
+      "One fixed old-to-new run compares two different complete works, not an isolated cache change or statistical significance.",
+      "Timings include Playwright IPC; native drawing can defer until full RGBA readback.",
+      "Repeated getImageData can affect Chromium backing-store/readback behavior; this is not production screenshot/JPEG/FFmpeg export.",
+      "Initialization, warmup, warmed sequence and lifecycle totals are all retained; preparation during warmup is not omitted.",
+      "RGBA pixel-storage lower bounds exclude browser-process, GPU, driver, temporary readback and total system memory.",
+      "Offline export awaits every frame; slow rendering alone does not imply dropped encoded frames.",
+      "No model, speech, creative/review task, screenshots, audio or encoded video were created by this comparison.",
+      "Timing results do not establish visual quality or continuous motion approval."
+    ]
+  },
+  "recovery_fix": {
+    "status": "deployed_materialization_verified_in_real_retry",
+    "revision": "9c1cea5a5e517c01d91ce00930708ca4e64899a5",
+    "branch": "codex/video-capability-experiment-redesign",
+    "defect": "Reused creator results were materialized with a new author request identity; an existing v2 package was treated as version 3 and rejected with HTTP 409.",
+    "resolution": "Follow verified stopped-creator retry lineage and reuse the original method idempotency identity; keep this retry candidate/demo/review provenance.",
+    "package_version_validation_relaxed": false,
+    "old_methods_rewritten": false,
+    "database_migration_required": false,
+    "required_image": "video-animation-creation:latest",
+    "tests": {
+      "base_head": "31f3eed7c24a23668f2b29219a9654c922dd7bb3",
+      "clean_detached_git": true,
+      "only_service_and_new_test_applied": true,
+      "passed": 93,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 383.859,
+      "files": [
+        "tests/video_workbench/test_animation_skill_method_retry.py",
+        "tests/video_workbench/test_animation_method_retry.py",
+        "tests/video_workbench/test_animation_method_retry_checkpoint.py",
+        "tests/video_workbench/test_animation_skill_method_service.py",
+        "tests/video_workbench/test_animation_method_service.py"
+      ],
+      "changed_file_sha256": {
+        "video_workbench/animation_method_service.py": "0a664dc3e5e0581208f19a2b986817d9ae911c64a97cb553288c8af1c8a85a15",
+        "tests/video_workbench/test_animation_skill_method_retry.py": "f042abcc76b679bae9915777ef979c8f6a24957a8afed6c035d39d6089274357"
+      },
+      "checkout_platform": "Windows",
+      "changed_file_sha256_scope": "Raw bytes of the clean Windows verification checkout; service.py has CRLF. These are not Linux image/blob raw-byte identities."
+    },
+    "actual_package_offline_proof": {
+      "actual_package_sha256": "0d4dd882ef522ce6c4775e909a1acef058a43ed2468ae668095070c79b6ae38b",
+      "engine_and_files_sha256": "ad52b8596f331712714bc5e2e079f2a9957070da259c3a9c54582662df0f9a19",
+      "original_package_unchanged": true,
+      "only_local_parent_uuid_remapped": true,
+      "retry_generations": 2,
+      "pre_fix_error": "animation_method_skill_identity_mismatch",
+      "pre_fix_http_status": 409,
+      "post_fix_same_method_identity": true,
+      "post_fix_method_version": 2,
+      "total_methods_before": 2,
+      "total_methods_after": 2,
+      "valid_new_review_input_each_generation": true,
+      "new_creator_calls": 0,
+      "new_render_calls": 0,
+      "new_review_submissions": 0,
+      "scope": "Local ledgers and synthetic regression only; no production repair or successful real review claimed"
+    },
+    "service_source_identity": {
+      "repository_path": "video_workbench/animation_method_service.py",
+      "git_blob_and_linux_image_lf_sha256": "50ead8495ce412ec746d8646751874f6bb2dbaa5f2a5f17e9a33d6ea9de5d2b4",
+      "windows_verification_crlf_sha256": "0a664dc3e5e0581208f19a2b986817d9ae911c64a97cb553288c8af1c8a85a15",
+      "content_equality": "Release verifier confirmed converting the LF blob to CRLF gives the Windows verification digest exactly."
+    }
+  },
+  "executor_deployment": {
+    "status": "deployed",
+    "source_revision": "9c1cea5a5e517c01d91ce00930708ca4e64899a5",
+    "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:b2a938757c247bc87837d08c1b99784f157b5aa03e6f08e6934302ec34009b36",
+    "deployed_image_digest": "sha256:b2a938757c247bc87837d08c1b99784f157b5aa03e6f08e6934302ec34009b36",
+    "runtime_source_verified": true,
+    "deployment_ready": true,
+    "two_observed_image_identities_match": true,
+    "restarts": 0,
+    "healthz": "ok",
+    "switch_window_seconds": 16.84,
+    "rolled_back": false,
+    "databases_backed_up": 2,
+    "logical_row_hashes_unchanged_during_deployment": true
+  },
+  "real_review_recovery": {
+    "status": "failed_worker_output_invalid_stopped",
+    "initial_review_job_id": "07e118e0-28dc-4e8f-b8c0-2661b31fe8de",
+    "initial_error": "worker_output_invalid",
+    "initial_raw_invalid_output_cause_confirmed": false,
+    "actual_frozen_input_contract_valid": true,
+    "synthetic_satisfiability_fixture_is_actual_review": false,
+    "later_retry_commission_id": "3bf1ff03-f339-4715-b59f-ca8e96e4463c",
+    "later_retry_materialization_error": "animation_method_skill_identity_mismatch",
+    "final_commission_id": "01ddf050-cdca-4c07-be7d-8cebc6f79ae9",
+    "recovered_review_job_id": "77da26d5-bf6e-44ea-bed0-5264b65707d2",
+    "outcome": "No valid independent review; source and render recovery succeeded",
+    "recovered_review_job_state": "failed",
+    "submission": "normal three-field technical retry",
+    "usage": {
+      "creator": 0,
+      "render": 0,
+      "review": 1
+    },
+    "original_render_artifact_operation_id": "e6363ace-a2da-4724-8e19-fb5b5ecdfb71",
+    "original_render_reused": true,
+    "recovered_candidate_id": "0f45ef35-2de6-4bf4-84c3-df3758e45f40",
+    "recovered_media_sha256": "47bf3a95ae7ad4d1ad3f72947adde0b001aea3e10264f796ffa4533f80587e6d",
+    "recovered_source_engine_and_files_sha256": "ad52b8596f331712714bc5e2e079f2a9957070da259c3a9c54582662df0f9a19",
+    "method_version_ids": [
+      "e46f0e3b-af7f-42bf-b128-2be232af2131"
+    ],
+    "original_source_media_and_method_unchanged": true,
+    "review_error_code": "worker_output_invalid",
+    "review_stop_proven": true,
+    "valid_independent_review_available": false,
+    "invalid_output_root_cause_confirmed": false,
+    "further_review_attempts_started": false,
+    "third_review_attempt_started": false
+  },
+  "visual_assessment": {
+    "status": "not_approved",
+    "sampled_stills_observed": true,
+    "continuous_motion_observed": false,
+    "audio_listening_required": false,
+    "issues": [
+      "明显硬切边",
+      "面片感仍然明显"
+    ],
+    "six_dimension_total_out_of_60": null,
+    "technical_decode_is_artistic_acceptance": false,
+    "performance_is_artistic_acceptance": false
+  },
+  "business_decisions": {
+    "candidate_automatically_adopted": false,
+    "wikiskill_published": false,
+    "merged_to_mainline": false,
+    "openspec_full_audiovisual_acceptance_completed": false,
+    "adopted_candidate_id_unchanged": true
+  },
+  "private_evidence_root": "D:\\codex-work\\tmp\\video-service\\ink-quality-perf-1117",
+  "retained_evidence": [
+    "candidate-f9a62e37-3c72-4389-90b2-f49291cc2e80-verification.json",
+    "recovered-creator-artifact-evidence.json",
+    "recovered-live-timeout-settings.json",
+    "release-diagnosis/AUTHOR-IDLE-RELEASE.md",
+    "benchmark/result.json",
+    "benchmark/verification.json",
+    "benchmark/report.md",
+    "review-contract-audit.json",
+    "review-recovery-materialization-proof.json",
+    "review-recovery-materialization-test-receipt.json",
+    "method-retry-clean-junit.xml",
+    "final-recovery-evidence.json"
+  ],
+  "private_archive_root": "D:/codex-work/archives/video-service/20261117/ink-quality-perf/",
+  "archive_closure_evidence": "review-recovery-evidence.json",
+  "openspec_sync": {
+    "revision": "18f517129b84dfe0f3e99a71f0d765dec89f9cfe",
+    "compare_and_swap": true,
+    "valid": true,
+    "exact_readback_files": [
+      "design.md",
+      "tasks.md",
+      "proposal.md"
+    ],
+    "prior_task_count_preserved": 67,
+    "completed_tasks": [
+      "V.6"
+    ],
+    "incomplete_tasks": [
+      "V.4",
+      "T.7",
+      "V.7"
+    ],
+    "v7_scope": "Two worker_output_invalid review failures require later bounded diagnosis; no further creation or review this round."
+  }
+}

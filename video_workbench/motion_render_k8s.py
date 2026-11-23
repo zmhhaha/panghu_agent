@@ -26,6 +26,7 @@ import zlib
 import httpx
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
+from .animation_runtime_capabilities import MAX_CANVAS_CONTEXTS
 from .motion import COMPILER_TEMPLATES, compile_project
 from .continuity import (ALL_CONTINUITY_COMPILER_TEMPLATES,
                          compile_continuity_project)
@@ -319,7 +320,7 @@ def _creative_engine_observation(value, engine):
         and value['engine'] == engine and value['revision'] == 'animation-engine-runtime-1',
         'creative_engine_observation_invalid')
     rows = value['contexts']
-    require(type(rows) is list and len(rows) <= 16, 'creative_engine_observation_invalid')
+    require(type(rows) is list and len(rows) <= MAX_CANVAS_CONTEXTS, 'creative_engine_observation_invalid')
     kinds = []
     for row in rows:
         require(type(row) is dict and row.get('kind') in ({'2d', 'webgl2'} if engine == 'three'

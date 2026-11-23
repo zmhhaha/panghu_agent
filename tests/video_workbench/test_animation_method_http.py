@@ -14,11 +14,11 @@ from uuid import uuid4
 import pytest
 
 from video_workbench.animation_creation_http import CreationHTTPServer, CreationTransportError
-from video_workbench.animation_method_http import MethodLabClient
+from video_workbench.animation_method_http import MethodLabClient, MAX_PROMPT_INSPECTION_JSON
 from video_workbench.animation_method_service import AnimationMethodService
 from video_workbench.animation_lab import LabHTTPServer
 from video_workbench import animation_method_renderer as renderer
-from agent_service.contracts import canonical_bytes
+from agent_service.contracts import canonical_bytes, digest
 
 
 TOKEN = 'private-method-lab-test-token-' + 'a' * 32
@@ -384,3 +384,166 @@ def test_without_executor_catalogue_is_readonly_disabled_and_start_is_rejected()
         assert status == 200 and catalogue['effects'] == catalogue['commissions'] == []
         assert catalogue['availability']['enabled'] is False
         assert public_request(frontend, 'POST', PREFIX + '/commissions', start_body())[0] == 503
+
+
+class InspectionMethods(TransportMethods):
+    """Only read transport fixtures; these are not real Agent prompt records."""
+    def __init__(self):
+        super().__init__()
+        self.input = {'schema': 'video.animation-method-input.v2', 'mode': 'plan', 'goal': 'Inspect ink motion',
+                      'constraints': {'generated_resources': [{'asset_url': '/api/frozen-resource'}]}}
+
+    def prompt_inspection(self, owner, commission_id):
+        row = self.get(owner, commission_id)
+        operation = row['id'] + ':creator:plan'
+        document = {'request_id': row['request_id'], 'goal': 'Inspect ink motion'}
+        return dict(schema='video.animation-prompt-inspection.v1', commission_id=row['id'],
+            request_id=row['request_id'], scope='method_lab_agent_inputs',
+            submission=dict(origin='captured_request', is_original=True, action='create',
+                document=document, sha256=digest(document), limitations=[]),
+            effective_request=dict(document=document, sha256=digest(document)), adopted_capabilities=None,
+            operations=[dict(operation_id=operation, stage='creator', mode='plan', phase=None,
+                scope='method', round=0, round_basis='plan', component_id=None, status='completed',
+                input_schema=self.input['schema'], input_sha256=digest(self.input),
+                input_bytes=len(canonical_bytes(self.input)), candidate_ids=[], author_operation_id=None,
+                available=True, input_url=PREFIX + '/commissions/' + row['id'] + '/operations/' +
+                    operation.replace(':', '%3A') + '/input')],
+            limitations=['The original historical system prompt is not exposed.'])
+
+    def operation_input(self, owner, commission_id, operation_id):
+        row = self.get(owner, commission_id)
+        if operation_id != row['id'] + ':creator:plan':
+            raise CreationTransportError('animation_method_operation_not_found', 404)
+        return dict(schema='video.animation-operation-input.v1', commission_id=row['id'],
+            operation_id=operation_id, stage='creator', mode='plan', round=0,
+            input_schema=self.input['schema'], input_sha256=digest(self.input),
+            input=deepcopy(self.input), limitations=['No full historical system prompt is reconstructed.'])
+
+
+@contextmanager
+def inspection_peers():
+    service = InspectionMethods()
+    first, other = service.start(USER, start_body()), service.start(USER, start_body())
+    with serving(CreationHTTPServer(SimpleNamespace(), TOKEN, pump=False, method_service=service)) as backend:
+        # Any accidental GET scheduling must fail this real two-hop test.
+        class ReadOnlyPump:
+            def notify(self):
+                pytest.fail('Prompt inspection GET must not wake the Agent pump')
+
+            def close(self):
+                pass
+
+        backend.method_pump = ReadOnlyPump()
+        client = MethodLabClient('http://127.0.0.1:' + str(backend.server_port), TOKEN)
+        lab = SimpleNamespace(methods_only=True, csrf_token=CSRF, method_client=client)
+        with serving(LabHTTPServer(lab, 0, proxy_mode=True, public_origin='https://' + HOST,
+                     base_path=BASE, developer_users=[USER, SECOND])) as frontend:
+            yield service, client, backend, frontend, first, other
+
+
+def test_prompt_inspection_two_hops_preserve_frozen_documents_and_only_prefix_index_links():
+    with inspection_peers() as (service, client, _, frontend, row, _):
+        suffix = PREFIX + '/commissions/' + row['id'] + '/prompt-inspection'
+        original = service.prompt_inspection(USER, row['id'])
+        status, index, headers = public_request(frontend, 'GET', suffix)
+        assert status == 200 and headers['Cache-Control'] == 'no-store'
+        assert headers['Content-Type'] == 'application/json; charset=utf-8'
+        assert index['submission'] == original['submission']
+        assert index['effective_request'] == original['effective_request']
+        assert index['operations'][0]['input_url'] == BASE + original['operations'][0]['input_url']
+        operation_url = index['operations'][0]['input_url']
+        status, envelope, headers = public_request(frontend, 'GET', operation_url, absolute=True)
+        assert status == 200 and headers['Cache-Control'] == 'no-store'
+        assert envelope['input'] == service.input
+        assert envelope['input_sha256'] == digest(envelope['input'])
+        assert envelope['input']['constraints']['generated_resources'][0]['asset_url'] == '/api/frozen-resource'
+        assert client.operation_input(USER, row['id'], envelope['operation_id']) == envelope
+        assert client.prompt_inspection(USER, row['id']) == original
+        assert TOKEN not in json.dumps(index) + json.dumps(envelope)
+        assert service.advanced == 0 and service.started == 2
+
+
+def test_prompt_inspection_get_keeps_existing_identity_guard_and_rejects_cross_commission_input():
+    with inspection_peers() as (service, client, backend, frontend, row, other):
+        index_path = PREFIX + '/commissions/' + row['id'] + '/prompt-inspection'
+        operation_path = (PREFIX + '/commissions/' + row['id'] + '/operations/' +
+                          row['id'] + '%3Acreator%3Aplan/input')
+        for path in (index_path, operation_path):
+            for headers, expected in [({'X-Forwarded-User': None}, 403),
+                                      ({'X-Forwarded-User': 'ordinary-user'}, 403),
+                                      ({'X-Forwarded-User': SECOND}, 404),
+                                      ({'Origin': 'https://evil.invalid'}, 403)]:
+                assert public_request(frontend, 'GET', path, headers=headers)[0] == expected
+            assert public_request(frontend, 'GET', path + '?refresh=1')[0] == 422
+            # GET needs no Origin or CSRF header when absent, but still needs identity.
+            assert public_request(frontend, 'GET', path, headers={'X-Animation-Lab-Token': None})[0] == 200
+            assert raw_request(backend, 'GET', path, headers=[('Host', '127.0.0.1')])[0] == 403
+        wrong = operation_path.replace(row['id'] + '/operations/', other['id'] + '/operations/')
+        assert public_request(frontend, 'GET', wrong)[0] == 404
+        with pytest.raises(CreationTransportError) as denied:
+            client.operation_input(USER, other['id'], row['id'] + ':creator:plan')
+        assert denied.value.status == 404
+        assert service.advanced == 0
+
+
+def test_prompt_input_has_own_utf8_limit_without_expanding_ordinary_detail_responses():
+    with inspection_peers() as (service, _, _, frontend, row, _):
+        service.input['opaque_test_context'] = '笔' * 800_000  # Above the ordinary 2 MiB JSON limit.
+        path = (PREFIX + '/commissions/' + row['id'] + '/operations/' +
+                row['id'] + '%3Acreator%3Aplan/input')
+        status, envelope, _ = public_request(frontend, 'GET', path)
+        assert status == 200 and envelope['input'] == service.input
+        assert len(canonical_bytes(envelope)) < MAX_PROMPT_INSPECTION_JSON
+        service.input['opaque_test_context'] = 'x' * MAX_PROMPT_INSPECTION_JSON
+        status, error, _ = public_request(frontend, 'GET', path)
+        assert status == 413 and error['error'] == 'animation_method_prompt_inspection_too_large'
+        assert service.advanced == 0
+
+
+@pytest.mark.parametrize('raw,mime', [
+    (b'<html>login</html>', 'text/html'),
+    (b'{broken', 'application/json'),
+    (b'[]', 'application/json'),
+    (b'{"field":1,"field":2}', 'application/json'),
+])
+def test_prompt_inspection_client_rejects_non_json_response_instead_of_treating_login_html_as_input(raw, mime):
+    client = MethodLabClient('http://127.0.0.1:1', TOKEN)
+    calls = []
+
+    def response(owner, method, path, **options):
+        calls.append((owner, method, path, options))
+        return raw, mime
+
+    client._request = response
+    for read in (lambda: client.prompt_inspection(USER, 'commission-1'),
+                 lambda: client.operation_input(USER, 'commission-1', 'operation-1')):
+        with pytest.raises(CreationTransportError) as invalid:
+            read()
+        assert invalid.value.status == 502
+    assert all(row[1] == 'GET' and row[3] == {
+        'artifact': True, 'response_limit': MAX_PROMPT_INSPECTION_JSON} for row in calls)
+
+
+def test_real_prompt_input_visibility_survives_both_http_hops_and_deleted_records_stay_hidden(durable):
+    service, author, review, _, client = durable
+    row = client.start(USER, start_body())
+    before = list(author.preflights), list(review.preflights)
+    run = service.commissions.get(USER, row['id'])
+    frozen = service._document(USER, run, 'plan')
+    operation = service.commissions.reserve(USER, row['id'], 'creator', frozen, 'inspection-plan')
+    lab = SimpleNamespace(methods_only=True, csrf_token=CSRF, method_client=client)
+    with serving(LabHTTPServer(lab, 0, proxy_mode=True, public_origin='https://' + HOST,
+                 base_path=BASE, developer_users=[USER])) as frontend:
+        index_path = PREFIX + '/commissions/' + row['id'] + '/prompt-inspection'
+        status, index, _ = public_request(frontend, 'GET', index_path)
+        assert status == 200 and index['submission']['origin'] == 'captured_request'
+        input_url = index['operations'][0]['input_url']
+        status, exported, _ = public_request(frontend, 'GET', input_url, absolute=True)
+        assert status == 200 and exported['input'] == frozen
+        assert exported['input_sha256'] == digest(frozen)
+        service.commissions.release_unsubmitted(USER, operation['id'], {'reason': 'inert fixture stopped'})
+        service.commissions.stop(USER, row['id'], 'failed', 'No sample was produced')
+        service.record_failed_attempt_deletion(USER, row['id'], reason='Read visibility fixture')
+        assert public_request(frontend, 'GET', index_path)[0] == 404
+        assert public_request(frontend, 'GET', input_url, absolute=True)[0] == 404
+    assert (author.preflights, review.preflights) == before

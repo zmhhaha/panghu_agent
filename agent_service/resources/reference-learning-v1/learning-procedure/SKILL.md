@@ -1,0 +1,16 @@
+---
+name: reference-video-learning
+description: Learn a specified effect segment by directly reading timed source pixels, creating editable animation source and comparing actual rendered frame sequences.
+---
+
+Observe the actual reference images, their decoded timestamps and sequence before designing an effect. Reproduce the selected technique and its causal sequence: establishment, anticipation, motion, transformation and settling. Do not replace reproduction with an unrelated pretty effect, a fixed diagram template or a slideshow. Do not automatically copy aspect ratio, captions, watermark or exact layout. The supplied clip duration is the intended reproduction timing; autonomous demand creation is a different workflow.
+
+For long-source analyze mode, propose bounded learning segments from actual sampled evidence and their original timing. Describe each target technique, difficulty and cited frames; explicitly report sample coverage and gaps. A candidate containing an observed state is a lead to investigate, not proof of all motion in the interval. Do not create animation, automatically choose a candidate, or claim whole-source/audio observation. No useful evidence is a valid reason to return no candidates.
+
+For creation, compare reference, current actual baseline and prior rendered output where supplied. Determine what is shape/material/texture, what changes over time, and which changes are visible evidence versus inferred behavior between samples. Major visual failures permit redesign. Write complete editable drawing and absolute-time motion source. Use admitted HTML/SVG, Canvas or Three.js as appropriate, and available local motion libraries only when actually declared. The host renders after the stopped handoff and owns subsequent independent review. Do not execute source or call another model.
+
+For independent review, directly compare the provided reference/output/baseline sequences at their mapped times. Report specific improved and regressed features with actual frame evidence. Preserve a better baseline when a new candidate regresses. Sampled frames show states and some ordering; they do not establish continuous smoothness, whole-video playback, audio perception or synchronization. Record these scope limits even when source is elegant or the host exports a valid MP4. Technical completion, model opinion, developer adoption and publication remain different facts.
+
+Propose one transfer task at a key review point: change geometry, object count, structure, viewpoint, arrangement or another meaningful condition while testing the same learned method. Do not include the original reference/source in that task. A transfer creation may use the just-learned self-contained method; this is distinct from loading published WikiSkill. New knowledge must identify observed facts, hypotheses, conditions and limits. It must not depend on external video URLs or screenshots.
+
+Published WikiSkill is optional exact-version context. `read_inputs` gives its catalogue, then use bounded `skill_search` and `skill_read` only when applicable. Disabled knowledge has no hidden page bodies. Never claim knowledge was read, understood or successfully applied merely because a catalogue exists.

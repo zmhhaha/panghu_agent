@@ -27,6 +27,7 @@ from .motion_snapshot import _runtime
 from .continuity_snapshot import verify_motion_snapshot
 from .motion_render_adapter import read_secret, safe_progress, safe_diagnostic, safe_motion_context, UNAVAILABLE
 from .motion_render_k8s import ExecutionJournal, KubeHTTP, KubeSceneRenderer, operation_key, require
+from .hyperframes_film_limits import MAX_SECONDS as MAX_FILM_SECONDS, STREAM_MODE
 
 MAX_REQUEST_BYTES = 192 * 1024 * 1024
 MAX_STORAGE_BYTES = 8 * 1024 * 1024 * 1024
@@ -371,7 +372,8 @@ class MotionExecutionService:
                 runtime_fingerprint=self.film_renderer.runtime,
                 trusted_host_sha256=self.film_renderer.hosts,
                 admission_sha256=self.film_renderer.admission['sha256'],
-                max_seconds=60, fps=24, audio_sample_rate=48000, audio_channels=2,
+                max_seconds=MAX_FILM_SECONDS, fps=24, audio_sample_rate=48000, audio_channels=2,
+                capture_modes=['frame-inventory-v1', STREAM_MODE],
                 uncertain_submission='same_name_query_only_cleanup_pending_until_resolved')
         return result
 

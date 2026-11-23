@@ -26,6 +26,7 @@ def _require(condition, code='animation_agent_protocol_invalid', status=502):
 class _AnimationGateway(MotionAgentGateway):
     """Keep shared stop/manifest verification while supporting all input refs."""
     visual_input = False
+    task_timeout_seconds = 600
 
     def _files(self, document, files=None):
         raw = self._document_bytes(document)
@@ -115,7 +116,7 @@ class _AnimationGateway(MotionAgentGateway):
             business_ref=self.business_prefix + operation_id,
             task=dict(input_sha256=hashlib.sha256(raw).hexdigest()), inputs=[dict(ref) for ref in input_refs],
             execution_deadline_at=deadline_at,
-            timeout_seconds=min(600, route['max_timeout_seconds'], math.ceil(remaining)))
+            timeout_seconds=min(self.task_timeout_seconds, route['max_timeout_seconds'], math.ceil(remaining)))
         def admit():
             response = self._remote(self.client.submit, request, idempotency_key=key)
             try:
