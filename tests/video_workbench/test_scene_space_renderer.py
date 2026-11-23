@@ -15,7 +15,8 @@ from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.profiles.video_animation_create import source_sha256
 from video_workbench.scene_space_plan import compile_evaluator, freeze_plan
 from video_workbench.scene_space_renderer import (
-    HOST,RUNTIME,SceneSpaceRenderer,prepare_scene_render,render_capability,
+    HOST,RUNTIME,SURFACE_RUNTIME,SURFACE_BUDGET,SURFACE_WORK_BYTES,SURFACE_RETAINED_BYTES,MAX_SURFACE_FIELDS,
+    SceneSpaceRenderer,prepare_scene_render,render_capability,
 )
 from video_workbench import animation_method_renderer as execution
 
@@ -35,6 +36,44 @@ def source():
     return dict(value,source_sha256=source_sha256(value))
 
 
+def coverage_plan():
+    from video_workbench.scene_space_plan import automatic_plan,default_budget
+    world=dict(schema='video.scene-world.v1',id='coverage-world',revision=1,seed=19,style='flat-color-test',
+        space=dict(projection='planar',bounds=dict(x=0,y=0,width=1280,height=720)),
+        layers=[dict(id='far',order=0,parallax=1),dict(id='near',order=1,parallax=1)],
+        objects=[dict(id='background',kind='background',layer_id='far',parent_id=None,
+            bounds=dict(x=0,y=0,width=1280,height=720),transform=dict(x=0,y=0,scale_x=1,scale_y=1,rotation=0),
+            depth=dict(kind='ordinal',value=0),anchors={}),
+            dict(id='pale-mountain',kind='mountain',layer_id='near',parent_id=None,
+            bounds=dict(x=0,y=0,width=600,height=500),transform=dict(x=200,y=100,scale_x=1,scale_y=1,rotation=0),
+            depth=dict(kind='ordinal',value=1),anchors={})],
+        layout=dict(grid=None,points=[],regions=[]),
+        relations=[dict(id='mountain-front',kind='occlusion',front_id='pale-mountain',back_id='background')])
+    return automatic_plan([world],id='coverage-plan',viewport=dict(width=1280,height=720),duration_frames=1,
+        budget=default_budget(),intents=[dict(world_id=world['id'],weight=1,view='hold',focus=dict(x=640,y=360))])
+
+
+def coverage_source(mode='solid'):
+    value=source()
+    coverage=("ctx.fillStyle='#000';" if mode!='gradient' else
+        "const gradient=ctx.createLinearGradient(0,0,600,0);gradient.addColorStop(0,'rgba(0,0,0,0)');gradient.addColorStop(1,'#000');ctx.fillStyle=gradient;")
+    coverage+="ctx.beginPath();ctx.ellipse(300,250,240,220,0,0,Math.PI*2);ctx.fill();return {substrate:[240,235,220]};"
+    if mode=='async':coverage="return Promise.resolve({substrate:[240,235,220]});"
+    if mode=='options':coverage="return {substrate:[240,235,220],opacity:.5};"
+    if mode=='resize':coverage="ctx.canvas.width=12;return {substrate:[240,235,220]};"
+    value['files']['scene.js']="""window.__sceneSpaceArtwork={
+paintObject(ctx,object,world,tools){const b=object.bounds;
+ if(object.id==='background'){ctx.fillStyle='rgb(30,90,150)';ctx.fillRect(0,0,b.width,b.height);ctx.fillStyle='rgb(170,40,80)';ctx.fillRect(0,280,1280,40);return;}
+ if(!Object.isFrozen(tools)||!Object.isFrozen(tools.surface))throw Error('surface_tools_not_frozen');
+ const field=tools.surface.createSurfaceField({bounds:b,outline:[[0,0],[600,0],[600,500],[0,500]],ridges:[],valleys:[],grid:{columns:3,rows:3}});
+ const sample=tools.surface.sampleSurface(field,300,200);if(!Number.isFinite(sample.height))throw Error('surface_sample_missing');
+ ctx.fillStyle='rgba(20,25,30,0.08)';ctx.fillRect(0,0,b.width,b.height);
+},paintCoverage(ctx,object){if(object.id!=='pale-mountain')return null;
+"""+coverage+"}};"
+    value['source_sha256']=source_sha256({key:value[key] for key in ('engine','strategy','files')})
+    return value
+
+
 def test_scene_coverage_is_collected_before_document_script_ids_expire():
     node=shutil.which('node')
     if not node:pytest.skip('Node unavailable')
@@ -48,6 +87,13 @@ def test_binding_bounds_resolution_before_any_painter_runs(plan):
     assert plan==original
     assert render['schema']=='video.scene-space-render-binding.v1'
     assert render['runtime_sha256']==hashlib.sha256(RUNTIME.read_bytes()).hexdigest()
+    assert render['surface_runtime_sha256']==hashlib.sha256(SURFACE_RUNTIME.read_bytes()).hexdigest()
+    assert render['artwork_api_revision']==2
+    assert render['coverage']['max_mask_pixels']==max(row['pixels'] for row in render['object_caches'])
+    assert render['native_context_budget']==len(render['object_caches'])+3
+    assert render['surface_budget_sha256']==hashlib.sha256(SURFACE_BUDGET.read_bytes()).hexdigest()
+    assert render['surface_retained_bytes']==SURFACE_RETAINED_BYTES
+    assert render['temporary_bytes']==4*(render['scratch']['pixels']+1280*720+render['coverage']['max_mask_pixels'])+SURFACE_WORK_BYTES+SURFACE_RETAINED_BYTES
     assert render['total_cached_pixels']==sum(row['pixels'] for row in render['object_caches'])
     assert len(render['object_caches'])==len(plan['worlds'][0]['objects'])
     assert all(row['width']>0 and row['height']>0 for row in render['object_caches'])
@@ -61,6 +107,31 @@ def test_intervals_share_the_same_full_plan_raster_resolution(plan):
     assert first['object_caches']==last['object_caches']
     assert first['frozen']==last['frozen']
     assert first['sha256']!=last['sha256']
+
+
+def test_coverage_and_surface_work_are_preflighted_before_source_execution(monkeypatch):
+    plan=coverage_plan()
+    prepared=prepare_scene_render(plan,source_sha256=source()['source_sha256'])
+    plan['budget']['render']['max_temporary_bytes']=prepared['temporary_bytes']-1
+    freeze_plan(plan)  # The former color-only layer estimate still fits.
+    with pytest.raises(ServiceError,match='compositor_temporary_budget'):
+        prepare_scene_render(plan,source_sha256=source()['source_sha256'])
+    plan=coverage_plan()
+    monkeypatch.setattr('video_workbench.scene_space_renderer.MAX_CONTEXTS',4)
+    with pytest.raises(ServiceError,match='context_budget'):
+        prepare_scene_render(plan,source_sha256=source()['source_sha256'])
+
+
+def test_surface_dependency_is_pinned_in_the_request_and_frozen_capability(renderer,plan):
+    cap=render_capability()
+    assert cap['surface_runtime_sha256']==hashlib.sha256(SURFACE_RUNTIME.read_bytes()).hexdigest()
+    assert cap['artwork_api_revision']==2
+    document=dict(constraints=dict(width=1280,height=720,scene_space_capability=deepcopy(cap)),assets={})
+    binding=renderer.validate_request('surface-pin',source(),document,scene_space=plan)
+    assert binding['request']['surface_runtime_sha256']==cap['surface_runtime_sha256']
+    document['constraints']['scene_space_capability']['surface_runtime_sha256']='0'*64
+    with pytest.raises(ServiceError,match='frozen_runtime_changed'):
+        renderer.validate_request('surface-drift',source(),document,scene_space=plan)
 
 
 def test_object_cache_budget_is_checked_beyond_the_layer_view_estimate(plan):
@@ -186,7 +257,7 @@ def synthetic_execution(calls):
         raw=image.getvalue();(work/'output.png').write_bytes(raw)
         receipt=dict(schema='video.scene-space-render-receipt.v1',status='rendered',
             request_identity=request['identity'],request_sha256=hashlib.sha256(canonical_bytes(request)).hexdigest(),
-            **{k:request[k] for k in ('host_sha256','scene_runtime_sha256','sidecar_sha256','image_digest')},
+            **{k:request[k] for k in ('host_sha256','scene_runtime_sha256','surface_runtime_sha256','surface_budget_sha256','artwork_api_revision','sidecar_sha256','image_digest')},
             output_sha256=hashlib.sha256(raw).hexdigest(),output_bytes=len(raw),captured_frames=1,
             measured_render_seconds=.25,sample_frames=[],
             checks=dict(repeat_passed=True,reverse_passed=True,reload_passed=True),
@@ -194,7 +265,11 @@ def synthetic_execution(calls):
                 dict(kind='2d',connected=index==0,visible=index==0,width=1280,height=720) for index in range(len(sidecar['object_caches'])+2)]),
             project_runtime=dict(core_sha256=request['hyperframes_core_sha256'],project_sha256=request['project_sha256'],core_seek_count=1),
             scene_space_observation=dict(plan_sha256=sidecar['frozen']['plan_sha256'],recipes_executed=0,
-                objects_painted=len(sidecar['object_caches'])))
+                objects_painted=len(sidecar['object_caches']),runtime_revision='scene-space-compositor-2',
+                surface_runtime_sha256=request['surface_runtime_sha256'],surface_budget_sha256=request['surface_budget_sha256'],artwork_api_revision=2,
+                coverage_callbacks=0,coverage_objects=0,coverage_contexts=0,coverage_peak_pixels=0,surface_helper_calls={},
+                surface_field_usage=dict(fields_created=0,fields_reserved=0,numeric_bytes_reserved=0,
+                    max_fields=MAX_SURFACE_FIELDS,max_total_field_bytes=SURFACE_RETAINED_BYTES)))
         (work/'render-receipt.json').write_bytes(canonical_bytes(receipt))
         outcome=dict(schema='video.animation-method-render-outcome.v1',request_identity=request['identity'],
             request_sha256=hashlib.sha256(canonical_bytes(request)).hexdigest(),image='registry.example/renderer:latest@sha256:'+'a'*64,
@@ -238,6 +313,27 @@ def test_changed_bound_source_is_rejected_after_render(renderer,plan,monkeypatch
     (calls[0]/'input/scene/scene.js').write_text('changed',encoding='utf-8')
     with pytest.raises(ServiceError,match='source_changed'):
         renderer.lookup('tamper')
+
+
+@pytest.mark.parametrize('name,error',[
+    ('scene_space_surface.mjs','surface_runtime_changed'),
+    ('scene_space_surface_budget.mjs','surface_budget_changed'),
+])
+def test_changed_surface_helper_is_rejected_even_after_a_successful_render(renderer,plan,monkeypatch,name,error):
+    calls=[];monkeypatch.setattr(execution,'execute_method_render',synthetic_execution(calls))
+    renderer.render('helper-tamper',source(),dict(constraints=dict(width=1280,height=720),assets={}),scene_space=plan)
+    (calls[0]/'input'/name).write_text('changed',encoding='utf-8')
+    with pytest.raises(ServiceError,match=error):
+        renderer.lookup('helper-tamper')
+
+
+def test_direct_author_offer_pins_its_surface_helper_before_claim(renderer,plan):
+    constraints=renderer.authoring_constraints()
+    constraints.update(width=1280,height=720)
+    constraints['runtime_identity']['surface_runtime_sha256']='0'*64
+    with pytest.raises(ServiceError,match='frozen_surface_runtime_changed'):
+        renderer.validate_request('direct-helper-drift',source(),dict(constraints=constraints,assets=constraints['assets']),scene_space=plan)
+    assert renderer.lookup('direct-helper-drift') is None
 
 
 def test_expected_request_is_checked_before_any_claim_or_execution(renderer,plan,monkeypatch):
@@ -445,3 +541,96 @@ window.__sceneSpaceArtwork={paintObject(ctx,object,world){
         schema='video.scene-space-ink-pixel-check.v1',dark_pixel_count=len(dark),pixel_bounds=list(actual),
         declared_screen_bounds=box,scope='two_actual_brush_strokes_zero_origin_object_cache_not_artistic_acceptance',
         transform_compatibility='renderCanvas resets its internal transform; zero-origin document matches cache dimensions and finally restores the caller context')))
+
+
+def test_native_browser_independent_coverage_and_surface_tools(renderer,tmp_path):
+    """Actual pixels distinguish coverage from pigment, shape, masks and opacity."""
+    required=['SCENE_SPACE_BROWSER','SCENE_SPACE_PLAYWRIGHT_PACKAGE','SCENE_SPACE_HYPERFRAMES_DIST']
+    if not all(os.environ.get(name) for name in required):pytest.skip('Native browser acceptance not configured')
+    node=shutil.which('node');ffmpeg=shutil.which('ffmpeg');ffprobe=shutil.which('ffprobe')
+    if not all((node,ffmpeg,ffprobe)):pytest.skip('Native Node/FFmpeg required')
+    from PIL import Image
+    cases=[]
+    for name in ['legacy','solid','gradient','opacity-mask','form-wash','async','options','resize']:
+        value=coverage_plan();art=coverage_source(name)
+        if name=='legacy':
+            art['files']['scene.js']=art['files']['scene.js'].split(',paintCoverage')[0]+'};'
+            art['source_sha256']=source_sha256({key:art[key] for key in ('engine','strategy','files')})
+        if name=='opacity-mask':
+            layer=value['worlds'][0]['layers'][-1];layer['opacity']=.5;layer['mask_region_id']='top'
+            value['worlds'][0]['layout']['regions']=[dict(id='top',kind='rect',bounds=dict(x=0,y=0,width=1280,height=330))]
+            value['shots'][0]['local_animation']=[dict(id='object-alpha',target_id='pale-mountain',property='opacity',
+                keyframes=[dict(frame=0,value=.5,easing='linear')])]
+        if name=='form-wash':
+            art['files']['scene.js']=art['files']['scene.js'].replace(
+                'ridges:[],valleys:[],grid:{columns:3,rows:3}',
+                "ridges:[{id:'ridge',points:[[80,420,5],[250,80,160],[400,360,25]],width:100}],"
+                "valleys:[{id:'valley',points:[[400,50,20],[450,280,60],[560,450,10]],width:90}],grid:{columns:12,rows:10}").replace(
+                "ctx.fillStyle='rgba(20,25,30,0.08)';ctx.fillRect(0,0,b.width,b.height);",
+                "tools.surface.paintSurfaceWash(ctx,field,{paper:[240,235,220],ink:[20,25,30],light:[-.8,-.4,.7],inkRange:[.08,.8]});")
+            art['source_sha256']=source_sha256({key:art[key] for key in ('engine','strategy','files')})
+        binding=renderer.validate_request('coverage-'+name,art,dict(constraints=dict(width=1280,height=720),assets={}),scene_space=value)
+        path=tmp_path/(name+'.json');path.write_bytes(canonical_bytes(binding))
+        case=dict(name=name,binding=str(path),output=str(tmp_path/name),assets={})
+        if name in {'async','options','resize'}:
+            case['expect_error']={'async':'scene_space_async_coverage_not_admitted',
+                'options':'scene_space_coverage_options_invalid','resize':'scene_space_coverage_resized_cache'}[name]
+        cases.append(case)
+    config=dict(playwright_package=os.environ[required[1]],browser=os.environ[required[0]],
+        hyperframes_dist=os.environ[required[2]],host=str(HOST),scene_runtime=str(RUNTIME),surface_runtime=str(SURFACE_RUNTIME),
+        engine_runtime=str(ROOT/'video_workbench/motion_renderer/engine_runtime.mjs'),
+        project_runtime=str(ROOT/'video_workbench/motion_renderer/hyperframes_project.mjs'),
+        ffmpeg=ffmpeg,ffprobe=ffprobe,cases=cases,output=str(tmp_path/'coverage-summary.json'))
+    path=tmp_path/'coverage-config.json';path.write_bytes(canonical_bytes(config))
+    subprocess.run([node,str(Path(__file__).with_name('scene_space_browser_probe.mjs')),str(path)],check=True,timeout=120)
+    results={r['name']:r for r in json.loads((tmp_path/'coverage-summary.json').read_bytes())['results']}
+    for name in ['legacy','solid','gradient','opacity-mask','form-wash']:
+        value=results[name];observation=value['scene_space_observation']
+        assert value['checks']['repeat_passed'] and value['checks']['reverse_passed'] and value['checks']['reload_passed']
+        assert observation['objects_painted']==2 and observation['cache_hits']==8
+        assert observation['coverage_callbacks']==(0 if name=='legacy' else 2)
+        assert observation['coverage_objects']==(0 if name=='legacy' else 1)
+        assert observation['coverage_contexts']==(0 if name=='legacy' else 1)
+        assert observation['coverage_peak_pixels']==(0 if name=='legacy' else 1280*720)
+        assert observation['surface_helper_calls']==dict(createSurfaceField=1,sampleSurface=1,
+            **(dict(paintSurfaceWash=1) if name=='form-wash' else {}))
+        assert observation['surface_runtime_sha256']==hashlib.sha256(SURFACE_RUNTIME.read_bytes()).hexdigest()
+        assert observation['surface_budget_sha256']==hashlib.sha256(SURFACE_BUDGET.read_bytes()).hexdigest()
+        assert observation['surface_field_usage']['fields_created']==1
+        assert observation['surface_field_usage']['fields_reserved']==1
+        assert 0<observation['surface_field_usage']['numeric_bytes_reserved']<=SURFACE_RETAINED_BYTES
+    pixels={}
+    for name in ['legacy','solid','gradient','opacity-mask']:
+        with Image.open(tmp_path/name/'output.png') as image:
+            rgb=image.convert('RGB')
+            pixels[name]=dict(interior=rgb.getpixel((500,300)),outside=rgb.getpixel((210,110)),clipped=rgb.getpixel((500,350)))
+    far=(170,40,80)
+    # The same faint pigment has a nearly paper-white opaque support now. A
+    # background stripe cannot pass through its interior, and the ellipse's
+    # corner leaves the background untouched rather than filling a rectangle.
+    assert pixels['solid']['interior']==pytest.approx((222,218,205),abs=1)
+    assert pixels['solid']['outside']==(30,90,150)
+    assert pixels['legacy']['interior']==pytest.approx(tuple(round(.08*x+.92*y) for x,y in zip((20,25,30),far)),abs=1)
+    assert pixels['legacy']['outside']!=(30,90,150)
+    assert pixels['gradient']['interior']==pytest.approx(tuple(round((x+y)/2) for x,y in zip(pixels['solid']['interior'],far)),abs=2)
+    assert pixels['opacity-mask']['interior']==pytest.approx(tuple(round(.25*x+.75*y) for x,y in zip(pixels['solid']['interior'],far)),abs=2)
+    assert pixels['opacity-mask']['clipped']==(30,90,150)
+    with Image.open(tmp_path/'form-wash/output.png') as image:
+        rgb=image.convert('RGB')
+        sample=[rgb.getpixel((x,300))[0] for x in range(310,691)]
+        assert max(sample)-min(sample)>20  # Real shape-relative form values, not a constant grey fill.
+        jumps=[]
+        for index in range(2,10):
+            x=round(200+index*600/11)
+            jumps.append(max(abs(a-b) for a,b in zip(rgb.getpixel((x-1,300)),rgb.getpixel((x+1,300)))))
+        for index in range(2,8):
+            y=round(100+index*500/9)
+            jumps.append(max(abs(a-b) for a,b in zip(rgb.getpixel((500,y-1)),rgb.getpixel((500,y+1)))))
+        assert max(jumps)<12  # No visible rectangular cell boundary in the wash.
+        pixels['form-wash']=dict(grid_boundary_max_rgb_jump=max(jumps),surface_value_range=max(sample)-min(sample))
+    for name in ['async','options','resize']:
+        assert results[name]['captured_frames']==0 and results[name]['expected_rejection']
+        assert not (tmp_path/name/'output.png').exists()
+    (tmp_path/'coverage-pixel-check.json').write_bytes(canonical_bytes(dict(
+        scope='actual_coverage_shape_gradient_local_mask_and_single_application_of_object_layer_alpha',pixels=pixels,
+        source_reference='same_faint_pigment_and_background_for_each_case',artistic_acceptance=False)))

@@ -1,6 +1,7 @@
 // Release-owned compositor. Data carries geometry; already admitted scene code
 // supplies painters. No recipe_ref, URL, script or external resource is resolved.
-export const SCENE_SPACE_RUNTIME_REVISION='scene-space-compositor-1';
+import * as surfaceTools from './scene_space_surface.mjs';
+export const SCENE_SPACE_RUNTIME_REVISION='scene-space-compositor-2';
 const check=(ok,code='scene_space_runtime_invalid')=>{if(!ok)throw Error(code);};
 const copy=value=>JSON.parse(JSON.stringify(value));
 const finite=value=>typeof value==='number'&&Number.isFinite(value);
@@ -57,9 +58,10 @@ function pathRegion(ctx,region){ctx.beginPath();
  if(region.kind==='rect'){const b=region.bounds;ctx.rect(b.x,b.y,b.width,b.height);}
  else{region.points.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.closePath();}}
 const defaultCanvas=()=>document.createElement('canvas');
-export function createSceneSpaceRenderer({canvas,binding,paintObject,createCanvas=defaultCanvas}){
+export function createSceneSpaceRenderer({canvas,binding,paintObject,paintCoverage,createCanvas=defaultCanvas}){
  check(binding?.schema==='video.scene-space-render-binding.v1'&&binding.backend==='canvas');
  check(typeof paintObject==='function'&&typeof createCanvas==='function','scene_space_painter_missing');
+ check(paintCoverage===undefined||typeof paintCoverage==='function','scene_space_coverage_painter_invalid');
  const plan=binding.frozen.plan,viewport=plan.viewport;
  check(plan.fps===24&&canvas&&typeof canvas.getContext==='function');
  canvas.width=viewport.width;canvas.height=viewport.height;
@@ -67,17 +69,48 @@ export function createSceneSpaceRenderer({canvas,binding,paintObject,createCanva
  const caches=new Map(),worlds=new Map(plan.worlds.map(w=>[w.id,w]));let disposed=false;
  const metrics={schema:'video.scene-space-compositor-observation.v1',plan_sha256:binding.frozen.plan_sha256,
   objects_painted:0,frames_composited:0,cache_hits:0,cache_pixels:0,peak_work_pixels:binding.scratch.pixels+viewport.width*viewport.height,
+  coverage_callbacks:0,coverage_objects:0,coverage_peak_pixels:0,coverage_contexts:0,surface_helper_calls:{},
   recipes_executed:0,scope:'host_compositor_execution_not_visual_acceptance',runtime_revision:SCENE_SPACE_RUNTIME_REVISION};
+ const helperApi=Object.freeze(Object.fromEntries(Object.entries(surfaceTools).map(([name,value])=>[name,
+  typeof value==='function'?(...args)=>{const count=(metrics.surface_helper_calls[name]??0)+1;
+   check(Number.isSafeInteger(count),'scene_space_surface_call_count_exceeded');metrics.surface_helper_calls[name]=count;
+   return value(...args);}:value]))),tools=Object.freeze({surface:helperApi});
+ let coverageCanvas,coverageContext;
  for(const row of binding.object_caches){const world=worlds.get(row.world_id),obj=world.objects.find(o=>o.id===row.object_id);
   check(obj&&Number.isInteger(row.width)&&Number.isInteger(row.height)&&row.width>0&&row.height>0);
   const surface=createCanvas();surface.width=row.width;surface.height=row.height;
   const ctx=surface.getContext('2d');check(ctx,'scene_space_context_missing');
   ctx.save();ctx.setTransform(row.density,0,0,row.density,-obj.bounds.x*row.density,-obj.bounds.y*row.density);
   ctx.beginPath();ctx.rect(obj.bounds.x,obj.bounds.y,obj.bounds.width,obj.bounds.height);ctx.clip();
-  const result=paintObject(ctx,copy(obj),copy(world));check(!result||typeof result.then!=='function','scene_space_async_painter_not_admitted');ctx.restore();
+  const result=paintObject(ctx,copy(obj),copy(world),tools);check(!result||typeof result.then!=='function','scene_space_async_painter_not_admitted');ctx.restore();
   check(surface.width===row.width&&surface.height===row.height,'scene_space_painter_resized_cache');
+  if(paintCoverage){
+   check(row.pixels<=binding.coverage.max_mask_pixels,'scene_space_coverage_budget_changed');
+   if(!coverageCanvas){coverageCanvas=createCanvas();coverageContext=coverageCanvas.getContext('2d');
+    check(coverageContext,'scene_space_context_missing');metrics.coverage_contexts=1;}
+   coverageCanvas.width=row.width;coverageCanvas.height=row.height;
+   const mask=coverageContext;mask.save();mask.setTransform(row.density,0,0,row.density,-obj.bounds.x*row.density,-obj.bounds.y*row.density);
+   mask.beginPath();mask.rect(obj.bounds.x,obj.bounds.y,obj.bounds.width,obj.bounds.height);mask.clip();
+   let coverage;
+   try{coverage=paintCoverage(mask,copy(obj),copy(world),tools);
+    check(!coverage||typeof coverage.then!=='function','scene_space_async_coverage_not_admitted');}
+   finally{mask.restore();}
+   check(coverageCanvas.width===row.width&&coverageCanvas.height===row.height,'scene_space_coverage_resized_cache');
+   metrics.coverage_callbacks++;metrics.coverage_peak_pixels=Math.max(metrics.coverage_peak_pixels,row.pixels);
+   if(coverage!==undefined&&coverage!==null&&coverage!==false){
+    check(typeof coverage==='object'&&!Array.isArray(coverage)&&Object.keys(coverage).length===1
+     &&Object.hasOwn(coverage,'substrate')&&Array.isArray(coverage.substrate)&&coverage.substrate.length===3
+     &&coverage.substrate.every(v=>Number.isInteger(v)&&v>=0&&v<=255),'scene_space_coverage_options_invalid');
+    ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=1;ctx.filter='none';
+    ctx.globalCompositeOperation='destination-over';ctx.fillStyle=`rgb(${coverage.substrate.join(',')})`;ctx.fillRect(0,0,row.width,row.height);
+    ctx.globalCompositeOperation='destination-in';ctx.drawImage(coverageCanvas,0,0);ctx.restore();metrics.coverage_objects++;
+   }
+   coverageCanvas.width=0;coverageCanvas.height=0;
+  }
   caches.set(row.world_id+'\0'+row.object_id,surface);metrics.objects_painted++;metrics.cache_pixels+=row.pixels;
  }
+ if(coverageCanvas){coverageCanvas.width=0;coverageCanvas.height=0;}
+ metrics.peak_work_pixels+=metrics.coverage_peak_pixels;
  check(metrics.cache_pixels===binding.total_cached_pixels,'scene_space_cache_changed');
  const scratch=createCanvas();scratch.width=binding.scratch.width;scratch.height=binding.scratch.height;
  const work=scratch.getContext('2d');check(work,'scene_space_context_missing');
@@ -106,7 +139,7 @@ export function createSceneSpaceRenderer({canvas,binding,paintObject,createCanva
  function dispose(){if(disposed)return;disposed=true;for(const surface of caches.values()){surface.width=0;surface.height=0;}
   caches.clear();scratch.width=0;scratch.height=0;metrics.cache_pixels=0;}
  return Object.freeze({renderFrame,seek:seconds=>{check(finite(seconds));return renderFrame(binding.frame_range.start_frame+Math.round(seconds*24));},
-  get observation(){return copy(metrics);},dispose});
+  get observation(){return copy({...metrics,surface_field_usage:surfaceTools.surfaceResourceUsage()});},dispose});
 }
 
 // Same upper semantics for adapters. These helpers grant no engine, native

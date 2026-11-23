@@ -21,12 +21,17 @@ from agent_service.profiles.video_animation_experiment import _validate_source_o
 from .scene_space_plan import compile_evaluator, freeze_plan, technical_retry
 
 RUNTIME = Path(__file__).with_name('motion_renderer')/'scene_space_runtime.mjs'
+SURFACE_RUNTIME = Path(__file__).with_name('motion_renderer')/'scene_space_surface.mjs'
+SURFACE_BUDGET = Path(__file__).with_name('motion_renderer')/'scene_space_surface_budget.mjs'
 HOST = Path(__file__).with_name('scene_space_host.mjs')
 SCHEMA = 'video.scene-space-render-binding.v1'
 CAPABILITY_SCHEMA = 'video.scene-space-render-capability.v1'
 MAX_CONTEXTS = 500
 MAX_RASTER_SIDE = 8192
 MAX_SIDECAR_BYTES = 16*1024*1024
+SURFACE_WORK_BYTES = 2*1024*1024
+SURFACE_RETAINED_BYTES = 16*1024*1024
+MAX_SURFACE_FIELDS = 64
 
 
 def _require(value, code='scene_space_render_invalid', status=422):
@@ -49,17 +54,35 @@ def _runtime_bytes():
     return raw
 
 
+def _surface_runtime_bytes():
+    raw=SURFACE_RUNTIME.read_bytes()
+    _require(len(raw)<=256*1024,'scene_space_surface_runtime_size_exceeded')
+    return raw
+
+
+def _surface_budget_bytes():
+    raw=SURFACE_BUDGET.read_bytes()
+    _require(len(raw)<=64*1024,'scene_space_surface_budget_size_exceeded')
+    return raw
+
+
 def render_capability(*, admitted_engines=('canvas',)):
     """Only the trusted configured renderer determines actual engine admission."""
     engines=[engine for engine in admitted_engines if engine=='canvas']
     return dict(schema=CAPABILITY_SCHEMA,admitted=bool(engines),engines=engines,
         world_schema='video.scene-world.v1',plan_schema='video.scene-space-plan.v1',
         runtime_sha256=_hash(_runtime_bytes()),host_sha256=_hash(HOST.read_bytes()),
+        surface_runtime_sha256=_hash(_surface_runtime_bytes()),surface_budget_sha256=_hash(_surface_budget_bytes()),artwork_api_revision=2,
         artwork_api='window.__sceneSpaceArtwork',source_files=['scene.html','scene.js','scene.css'],
+        artwork_extensions=dict(coverage='paintCoverage(ctx,object,world,tools) -> null | {substrate:[r,g,b]}',
+            surface='tools.surface',coverage_scope='independent_object_coverage_not_pigment_opacity',
+            geometry_scope='authored_object_local_2_5d_hypothesis_not_observed_3d'),
         clock='absolute_frame',reuse_scope='within_film',cache_policies=['static'],audio_modes=['silent'],
         other_backend_scope='matrix_adapters_not_render_admission',
         limits=dict(width=1280,height=720,fps=24,duration_frames=7200,max_contexts=MAX_CONTEXTS,
-            max_raster_side=MAX_RASTER_SIDE,max_sidecar_bytes=MAX_SIDECAR_BYTES,max_font_faces=64))
+            max_raster_side=MAX_RASTER_SIDE,max_sidecar_bytes=MAX_SIDECAR_BYTES,max_font_faces=64,
+            max_surface_work_bytes=SURFACE_WORK_BYTES,max_surface_retained_bytes=SURFACE_RETAINED_BYTES,
+            max_surface_fields=MAX_SURFACE_FIELDS))
 
 
 def _magnification(matrix):
@@ -106,19 +129,29 @@ def prepare_scene_render(plan, *, source_sha256, engine='canvas', frame_range=No
                 width=width,height=height,pixels=width*height))
     pixels=sum(row['pixels'] for row in caches)
     _require(pixels<=checked['budget']['render']['max_cached_pixels'],'scene_space_object_cache_budget_exceeded')
-    _require(len(caches)+2<=MAX_CONTEXTS,'scene_space_context_budget_exceeded')
+    # A single temporary coverage canvas is reused for every object. No mask
+    # is retained with the static color caches; account for the worst object
+    # before executing the optional source callback.
+    mask_pixels=max(row['pixels'] for row in caches)
+    _require(len(caches)+3<=MAX_CONTEXTS,'scene_space_context_budget_exceeded')
     blur=max((layer['blur'] for world in checked['worlds'] for layer in world['layers']),default=0)
     padding=math.ceil(blur*3)
     viewport=checked['viewport']
     scratch=(viewport['width']+2*padding)*(viewport['height']+2*padding)
-    temporary_bytes=4*(scratch+viewport['width']*viewport['height'])
+    temporary_bytes=4*(scratch+viewport['width']*viewport['height']+mask_pixels)+SURFACE_WORK_BYTES+SURFACE_RETAINED_BYTES
     _require(temporary_bytes<=checked['budget']['render']['max_temporary_bytes'],
         'scene_space_compositor_temporary_budget_exceeded')
     body=dict(schema=SCHEMA,backend=engine,frozen=frozen,source_sha256=source_sha256,
-        runtime_sha256=_hash(_runtime_bytes()),frame_range=deepcopy(frame_range),
+        runtime_sha256=_hash(_runtime_bytes()),surface_runtime_sha256=_hash(_surface_runtime_bytes()),
+        surface_budget_sha256=_hash(_surface_budget_bytes()),
+        artwork_api_revision=2,frame_range=deepcopy(frame_range),
         background=deepcopy(background),object_caches=caches,total_cached_pixels=pixels,
         scratch=dict(width=viewport['width']+2*padding,height=viewport['height']+2*padding,
             padding=padding,pixels=scratch),temporary_bytes=temporary_bytes,
+        coverage=dict(mode='substrate_under_pigment_then_mask',max_mask_pixels=mask_pixels,
+            native_contexts=1,mask_lifetime='one_reused_temporary_canvas_during_cache_initialization'),
+        surface_work_bytes=SURFACE_WORK_BYTES,surface_retained_bytes=SURFACE_RETAINED_BYTES,
+        surface_max_fields=MAX_SURFACE_FIELDS,native_context_budget=len(caches)+3,
         evidence_scope='render_inputs_not_visual_acceptance')
     _require(len(canonical_bytes(body))<=MAX_SIDECAR_BYTES,'scene_space_sidecar_size_exceeded')
     return dict(body,sha256=digest(body))
@@ -171,6 +204,8 @@ class SceneSpaceRenderer:
             assets=dict(caps.get('assets',{}),**library['assets']),
             drawing_libraries={'ink-landscape':library},drawing_library_api=library_api,
             runtime_identity=dict(image_digest=self.owner.image_digest,host_sha256=_hash(HOST.read_bytes()),
+                surface_runtime_sha256=_hash(_surface_runtime_bytes()),artwork_api_revision=2,
+                surface_budget_sha256=_hash(_surface_budget_bytes()),
                 engine_runtime_sha256=_hash(ENGINE_RUNTIME.read_bytes()),
                 admission_id='scene-space-canvas-v1@'+self.owner.image_digest))
 
@@ -235,6 +270,8 @@ class SceneSpaceRenderer:
             files_sha256={name:_hash(text.encode('utf-8')) for name,text in payload['files'].items()},
             assets_sha256=deepcopy(assets),sidecar_sha256=_hash(canonical_bytes(render)),
             scene_runtime_sha256=render['runtime_sha256'],host_sha256=_hash(HOST.read_bytes()),
+            surface_runtime_sha256=render['surface_runtime_sha256'],artwork_api_revision=2,
+            surface_budget_sha256=render['surface_budget_sha256'],
             engine_runtime_sha256=_hash(ENGINE_RUNTIME.read_bytes()),
             project_runtime_sha256=_hash(PROJECT_RUNTIME.read_bytes()),
             hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256,image_digest=self.owner.image_digest,
@@ -257,11 +294,19 @@ class SceneSpaceRenderer:
             _require(type(expected) is dict and expected.get('schema')==CAPABILITY_SCHEMA
                 and expected.get('admitted') is True and payload['engine'] in expected.get('engines',[])
                 and expected.get('host_sha256')==request['host_sha256']
-                and expected.get('runtime_sha256')==request['scene_runtime_sha256'],
+                and expected.get('runtime_sha256')==request['scene_runtime_sha256']
+                and expected.get('surface_runtime_sha256')==request['surface_runtime_sha256']
+                and expected.get('surface_budget_sha256')==request['surface_budget_sha256']
+                and expected.get('artwork_api_revision')==request['artwork_api_revision'],
                 'scene_space_frozen_runtime_changed',409)
         if frozen_image is not None and 'engine_runtime_sha256' in frozen_image:
             _require(frozen_image['engine_runtime_sha256']==request['engine_runtime_sha256'],
                 'scene_space_frozen_engine_runtime_changed',409)
+        if frozen_image is not None and 'surface_runtime_sha256' in frozen_image:
+            _require(frozen_image['surface_runtime_sha256']==request['surface_runtime_sha256']
+                and frozen_image.get('surface_budget_sha256')==request['surface_budget_sha256']
+                and frozen_image.get('artwork_api_revision')==request['artwork_api_revision'],
+                'scene_space_frozen_surface_runtime_changed',409)
         request['identity']=digest(request)
         return dict(schema='video.scene-space-render-operation.v1',operation_id=operation_id,
             source=payload,original_source=deepcopy(source),source_sha256=source_hash,document=deepcopy(document),input_sha256=digest(document),
@@ -336,6 +381,8 @@ class SceneSpaceRenderer:
             files={'host.mjs':HOST.read_bytes(),'engine_runtime.mjs':ENGINE_RUNTIME.read_bytes(),
                 'hyperframes_project.mjs':PROJECT_RUNTIME.read_bytes(),
                 'input/scene-space-runtime.mjs':_runtime_bytes(),
+                'input/scene_space_surface.mjs':_surface_runtime_bytes(),
+                'input/scene_space_surface_budget.mjs':_surface_budget_bytes(),
                 'input/scene-space.json':canonical_bytes(binding['scene_space']),
                 'input/request.json':canonical_bytes(binding['request']),
                 'binding.json':canonical_bytes(binding),'source.json':canonical_bytes(binding['original_source']),
@@ -427,10 +474,20 @@ class SceneSpaceRenderer:
             and receipt.get('request_identity')==request['identity']
             and all(receipt.get(key)==request[key] for key in ('host_sha256','scene_runtime_sha256','sidecar_sha256','image_digest')),
             'scene_space_receipt_changed',409)
+        if 'surface_runtime_sha256' in request:
+            _require(receipt.get('surface_runtime_sha256')==request['surface_runtime_sha256']
+                and receipt.get('surface_budget_sha256')==request['surface_budget_sha256']
+                and receipt.get('artwork_api_revision')==request['artwork_api_revision'],
+                'scene_space_surface_receipt_changed',409)
         for name,key in [('host.mjs','host_sha256'),('input/scene-space-runtime.mjs','scene_runtime_sha256'),
                          ('input/scene-space.json','sidecar_sha256'),('engine_runtime.mjs','engine_runtime_sha256'),
                          ('hyperframes_project.mjs','project_runtime_sha256')]:
             _require(_hash(_read_file(directory/name,MAX_SIDECAR_BYTES))==request[key],'scene_space_runtime_changed',409)
+        if 'surface_runtime_sha256' in request:
+            _require(_hash(_read_file(directory/'input/scene_space_surface.mjs',256*1024))
+                ==request['surface_runtime_sha256'],'scene_space_surface_runtime_changed',409)
+            _require(_hash(_read_file(directory/'input/scene_space_surface_budget.mjs',64*1024))
+                ==request['surface_budget_sha256'],'scene_space_surface_budget_changed',409)
         _require(_read_file(directory/'binding.json',32*1024*1024)==canonical_bytes(binding)
             and _read_file(directory/'input/request.json',256*1024)==canonical_bytes(request),'scene_space_binding_changed',409)
         for name,sha in request['files_sha256'].items():
@@ -479,6 +536,32 @@ class SceneSpaceRenderer:
         _require(observation.get('plan_sha256')==binding['scene_space']['frozen']['plan_sha256']
             and observation.get('recipes_executed')==0 and observation.get('objects_painted')==
             len(binding['scene_space']['object_caches']),'scene_space_consumption_unproven',409)
+        if 'surface_runtime_sha256' in request:
+            callbacks=observation.get('coverage_callbacks');covered=observation.get('coverage_objects')
+            coverage_contexts=observation.get('coverage_contexts');coverage_pixels=observation.get('coverage_peak_pixels')
+            helpers=observation.get('surface_helper_calls')
+            usage=observation.get('surface_field_usage')
+            count=len(binding['scene_space']['object_caches'])
+            _require(observation.get('runtime_revision')=='scene-space-compositor-2'
+                and observation.get('surface_runtime_sha256')==request['surface_runtime_sha256']
+                and observation.get('surface_budget_sha256')==request['surface_budget_sha256']
+                and observation.get('artwork_api_revision')==request['artwork_api_revision']
+                and type(callbacks) is int and callbacks in (0,count)
+                and type(covered) is int and 0<=covered<=callbacks
+                and type(coverage_contexts) is int and coverage_contexts==(1 if callbacks else 0)
+                and type(coverage_pixels) is int and 0<=coverage_pixels<=binding['scene_space']['coverage']['max_mask_pixels']
+                and (callbacks>0 or coverage_pixels==0)
+                and len(contexts)>=count+2+coverage_contexts
+                and type(helpers) is dict and len(helpers)<=32
+                and all(type(key) is str and 0<len(key)<=100 and type(value) is int and 0<value<=2**53-1
+                    for key,value in helpers.items())
+                and type(usage) is dict
+                and all(type(usage.get(key)) is int for key in ('fields_created','fields_reserved','numeric_bytes_reserved'))
+                and 0<=usage['fields_created']<=usage['fields_reserved']<=binding['scene_space']['surface_max_fields']
+                and 0<=usage['numeric_bytes_reserved']<=binding['scene_space']['surface_retained_bytes']
+                and usage.get('max_fields')==binding['scene_space']['surface_max_fields']
+                and usage.get('max_total_field_bytes')==binding['scene_space']['surface_retained_bytes'],
+                'scene_space_coverage_consumption_unproven',409)
         if request.get('drawing_libraries'):
             from .learning_drawing_libraries import validate_observation
             validate_observation(receipt.get('drawing_library_observation'),request['drawing_libraries'])

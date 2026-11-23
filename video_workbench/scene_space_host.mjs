@@ -32,7 +32,14 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
  executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}){
  requireValue(request.schema==='video.scene-space-render-request.v1'&&request.engine==='canvas');
  requireValue(binding.schema==='video.scene-space-render-binding.v1'&&binding.backend==='canvas'
-  &&binding.runtime_sha256===request.scene_runtime_sha256&&binding.source_sha256===request.source_sha256);
+  &&binding.runtime_sha256===request.scene_runtime_sha256&&binding.source_sha256===request.source_sha256
+  &&binding.artwork_api_revision===2&&request.artwork_api_revision===2
+  &&binding.surface_runtime_sha256===request.surface_runtime_sha256
+  &&binding.surface_budget_sha256===request.surface_budget_sha256);
+ const surfaceRuntime=resources.get('/runtime/scene_space_surface.mjs');
+ const surfaceBudget=resources.get('/runtime/scene_space_surface_budget.mjs');
+ requireValue(surfaceRuntime&&hash(surfaceRuntime)===request.surface_runtime_sha256,'scene_space_surface_runtime_changed');
+ requireValue(surfaceBudget&&hash(surfaceBudget)===request.surface_budget_sha256,'scene_space_surface_budget_changed');
  const sources=Object.fromEntries([...resources].filter(([name])=>['/scene.html','/scene.js','/scene.css'].includes(name)).map(([n,b])=>[n.slice(1),b]));
  const assets=Object.fromEntries([...resources].filter(([n])=>n.startsWith('/assets/')).map(([n,b])=>[n.slice(1),b]));
  const project=projectRuntime.buildHyperFramesProject(request.project,sources,assets).project;
@@ -69,7 +76,8 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
     const nodes=document.querySelectorAll('canvas[data-scene-space-output]');
     if(nodes.length!==1||typeof window.__sceneSpaceArtwork?.paintObject!=='function')throw Error('scene_space_artwork_hook_missing');
     const {createSceneSpaceRenderer}=await import('/runtime/scene-space-runtime.mjs');
-    const compositor=createSceneSpaceRenderer({canvas:nodes[0],binding,paintObject:window.__sceneSpaceArtwork.paintObject});
+    const compositor=createSceneSpaceRenderer({canvas:nodes[0],binding,paintObject:window.__sceneSpaceArtwork.paintObject,
+     paintCoverage:window.__sceneSpaceArtwork.paintCoverage});
     const rect=nodes[0].getBoundingClientRect();
     if(Math.abs(rect.x)>1e-7||Math.abs(rect.y)>1e-7||Math.abs(rect.width-binding.frozen.plan.viewport.width)>1e-7
      ||Math.abs(rect.height-binding.frozen.plan.viewport.height)>1e-7)throw Error('scene_space_output_viewport_mismatch');
@@ -121,7 +129,9 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
      module_sha256:library.assets['ink-landscape.mjs'],functions:drawingFunctions}};}
   return{checks:{repeat_passed:true,reverse_passed:true,reload_passed:true,samples},sample_frames:sampleFrames,
    ...(drawingObservation?{drawing_library_observation:drawingObservation}:{}),
-   scene_space_observation:{...firstObservation,frame_range:binding.frame_range,runtime_sha256:request.scene_runtime_sha256},
+   scene_space_observation:{...firstObservation,frame_range:binding.frame_range,runtime_sha256:request.scene_runtime_sha256,
+    surface_runtime_sha256:request.surface_runtime_sha256,surface_budget_sha256:request.surface_budget_sha256,
+    artwork_api_revision:request.artwork_api_revision},
    engine_observation:engineObservation,loaded_scripts:[...scripts].sort(),
    project_runtime:{...runtimeProof,core_sha256:core.core_sha256,project_sha256:request.project_sha256},
    captured_frames:request.static?1:count,frame_bytes:frameBytes};
@@ -134,10 +144,15 @@ async function main(){const began=performance.now(),receipt={schema:'video.scene
    'scene_space_request_binding_invalid');
   requireValue(hash(read(fileURLToPath(import.meta.url),1024*1024))===request.host_sha256,'scene_space_host_changed');
   Object.assign(receipt,{request_identity:request.identity,request_sha256:hash(raw),
-   ...Object.fromEntries(['host_sha256','scene_runtime_sha256','sidecar_sha256','image_digest'].map(k=>[k,request[k]]))});
+   ...Object.fromEntries(['host_sha256','scene_runtime_sha256','surface_runtime_sha256','surface_budget_sha256','artwork_api_revision','sidecar_sha256','image_digest'].map(k=>[k,request[k]]))});
   const sidecar=read('/input/scene-space.json',16*1024*1024),runtime=read('/input/scene-space-runtime.mjs',256*1024);
+  const surfaceRuntime=read('/input/scene_space_surface.mjs',256*1024);
+  const surfaceBudget=read('/input/scene_space_surface_budget.mjs',64*1024);
   requireValue(hash(sidecar)===request.sidecar_sha256&&hash(runtime)===request.scene_runtime_sha256,'scene_space_sidecar_changed');
-  const resources=new Map([['/runtime/scene-space-runtime.mjs',runtime]]);
+  requireValue(hash(surfaceRuntime)===request.surface_runtime_sha256&&request.artwork_api_revision===2,'scene_space_surface_runtime_changed');
+  requireValue(hash(surfaceBudget)===request.surface_budget_sha256,'scene_space_surface_budget_changed');
+  const resources=new Map([['/runtime/scene-space-runtime.mjs',runtime],['/runtime/scene_space_surface.mjs',surfaceRuntime],
+   ['/runtime/scene_space_surface_budget.mjs',surfaceBudget]]);
   for(const [name,sha]of Object.entries(request.files_sha256)){
    requireValue(['scene.html','scene.js','scene.css'].includes(name),'scene_space_source_path_invalid');
    const bytes=read('/input/scene/'+name,512*1024);requireValue(hash(bytes)===sha,'scene_space_source_changed');resources.set('/'+name,bytes);}
@@ -168,7 +183,7 @@ async function main(){const began=performance.now(),receipt={schema:'video.scene
    evidence.media_probe=JSON.parse(probed.stdout);}
   const bytes=read('/work/'+output,request.max_media_bytes);
   Object.assign(receipt,{status:'rendered',request_identity:request.identity,request_sha256:hash(raw),
-   ...Object.fromEntries(['host_sha256','scene_runtime_sha256','sidecar_sha256','image_digest'].map(k=>[k,request[k]])),
+   ...Object.fromEntries(['host_sha256','scene_runtime_sha256','surface_runtime_sha256','surface_budget_sha256','artwork_api_revision','sidecar_sha256','image_digest'].map(k=>[k,request[k]])),
    output_sha256:hash(bytes),output_bytes:bytes.length,evidence_scope:request.static?'static_only':'sampled_frames_only',
    motion_observed:false,audio_observed:false,...evidence});
  }catch(error){receipt.status='failed';receipt.error=String(error).slice(0,1000);process.exitCode=1;}

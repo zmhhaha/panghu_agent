@@ -17,7 +17,7 @@ def effect_scene_offer(run):
     offer['instructions']+=[
         'The spatial carrier belongs in methods[].runtime_requirements.scene_space, not in source.strategy or an extra source file.',
         'All methods describing the same painted candidate must use the same spatial carrier. The host retains it separately from portable method bodies.',
-        'For an executable Canvas plan register window.__sceneSpaceArtwork.paintObject(ctx,object,world) and canvas[data-scene-space-output]. The host owns layer composition, absolute camera seeking and cache resolution.',
+        'For an executable Canvas plan register window.__sceneSpaceArtwork.paintObject(ctx,object,world,tools) and canvas[data-scene-space-output]. Optional paintCoverage separates solid silhouette from pigment alpha; tools.surface helps local form and brush flow. The host owns layer composition, absolute camera seeking and cache resolution.',
         'The plan viewport and duration must equal the current constraints. A world-only hypothesis can be retained without selecting the new compositor.',
         'Keep reusable method guidance and skill_package independent of reference layouts, scene instances and source assets. Extract general principles instead.',
     ]
