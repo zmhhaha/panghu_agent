@@ -5,6 +5,8 @@
 场景空间的[实体覆盖与内部体面](scene-coverage-form.md)说明浅墨遮挡、局部山脊/谷线与皴向，以及真实像素验证边界。
 新增的[共享三维网格与绘画投影](scene-shared-geometry.md)说明共同山体、固定正交视向、可见面采样及API3的证据范围；[实施验证](scene-shared-geometry-validation-20261123.md)记录真实 ARM 样图与学习 executor 更新。
 
+同一共同网格的[笔墨疏密迭代](shared-mountain-brush-validation-20261123.md)保留新旧静态图、实际消费及仍有的画法不足；该例不改变运行时或学习默认。
+
 当前需求与未完成任务以根仓库 `.openspec-project.json` 指向的 OpenSpec 项目为准：`ec663f5a-53d3-4a0e-9037-933eb788d183`，主要变更为 `evolve-video-agent-creation-and-effect-library`。本地设计文档解释已确认的方案；发布、真实模型执行和人工验收必须分别有证据。
 
 2026-11-18 确认的新增目标是需求创作库、图片学习库和视频学习库三个独立成果库，共用创作、渲染、评审和同一套 WikiSkill。[图片学习首版已上线](https://video-service.panghuer.top/dev/animations/picture-library.html)：上传实际参考、直接看图编写源码、真实单帧渲染、对照迭代、换内容验证及源码保存，完整实测见[产品验收](picture-learning-product-validation-20261118.md)。

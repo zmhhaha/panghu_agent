@@ -78,3 +78,7 @@ capability、binding、request、输入挂载与receipt固定 geometry helper、
 ARM 三组静态诊断和仅学习 executor 的更新另见
 [2026-11-23 实施验证记录](scene-shared-geometry-validation-20261123.md)。该记录只扩展其
 明确核验的容器与部署范围，不构成完整影片或用户艺术通过。
+
+后续 [笔墨疏密试稿](../examples/shared-mountain-brush-study/README.md) 保留相同网格、深度、
+覆盖和计划，独立比较画法。它记录减少交叉排线、墨簇疏密和近岸过饱和的效果及仍有的
+木纹/亮肩问题，不以纸纹或粗模正确代替艺术审看，也不改变公共运行能力与学习默认。

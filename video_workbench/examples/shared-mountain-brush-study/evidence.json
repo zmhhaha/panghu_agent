@@ -1,0 +1,239 @@
+{
+  "active": [],
+  "actual_render_seconds": 26.816263739950955,
+  "added_study_tables": [
+    "shared-mountain-brush-studies/scene-space.sqlite3:scene_plans",
+    "shared-mountain-brush-studies/scene-space.sqlite3:scene_tasks"
+  ],
+  "artistic_acceptance": false,
+  "builds": 0,
+  "cases": [
+    {
+      "artistic_acceptance": false,
+      "case_id": "old",
+      "checks": {
+        "reload_passed": true,
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "4e6ebacdcc91b26081095080fdb3a860ab2bc0f537e6b98b16c8ff5c5a7b6f28"
+          }
+        ]
+      },
+      "error": null,
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "measured_controller_seconds": 13.532513204030693,
+      "model_calls": 0,
+      "operation_id": "shared-mountain-brush-20261123-r1-old",
+      "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+      "png_sha256": "4e6ebacdcc91b26081095080fdb3a860ab2bc0f537e6b98b16c8ff5c5a7b6f28",
+      "reserved_seconds": 180,
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "scene_space_observation": {
+        "artwork_api_revision": 3,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "coverage_callbacks": 10,
+        "coverage_contexts": 1,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "frames_composited": 4,
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "projectPoint": 759,
+          "sampleProjection": 235600
+        },
+        "geometry_resource_usage": {
+          "handles_reserved": 4,
+          "max_handles": 32,
+          "max_total_bytes": 16777216,
+          "meshes_created": 2,
+          "numeric_bytes_reserved": 3798576,
+          "projections_created": 2
+        },
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "objects_painted": 10,
+        "peak_work_pixels": 2764800,
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "recipes_executed": 0,
+        "runtime_revision": "scene-space-compositor-3",
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "schema": "video.scene-space-compositor-observation.v1",
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216,
+          "numeric_bytes_reserved": 0
+        },
+        "surface_helper_calls": {},
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+      },
+      "schema": "video.shared-mountain-brush-case.v1",
+      "scope": "same_layout_manual_source_study_not_original_picture_run_success",
+      "source_sha256": "9b163af86fb091efae2caea64caa5e60720157caac016b9b02e9d8b4817b13b2",
+      "status": "rendered",
+      "stop_proven": true,
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "technical_passed": true
+    },
+    {
+      "artistic_acceptance": false,
+      "case_id": "new",
+      "checks": {
+        "reload_passed": true,
+        "repeat_passed": true,
+        "reverse_passed": true,
+        "samples": [
+          {
+            "frame": 0,
+            "sha256": "7f4edb27fc9e3b4609b31262476861555a9b5bd6b66069110e804a1c63985f29"
+          }
+        ]
+      },
+      "error": null,
+      "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+      "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+      "host_sha256": "33f064366b15b8a56ca9655ff23e76176e19329d95c30ec938d44fd8aa609ff9",
+      "measured_controller_seconds": 13.283750535920262,
+      "model_calls": 0,
+      "operation_id": "shared-mountain-brush-20261123-r1-new",
+      "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+      "png_sha256": "7f4edb27fc9e3b4609b31262476861555a9b5bd6b66069110e804a1c63985f29",
+      "reserved_seconds": 180,
+      "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+      "scene_space_observation": {
+        "artwork_api_revision": 3,
+        "cache_hits": 40,
+        "cache_pixels": 1890993,
+        "coverage_callbacks": 10,
+        "coverage_contexts": 1,
+        "coverage_objects": 2,
+        "coverage_peak_pixels": 921600,
+        "frame_range": {
+          "end_frame": 1,
+          "start_frame": 0
+        },
+        "frames_composited": 4,
+        "geometry_budget_sha256": "157ddeb7f3f8e7f9ef7e2d7ca9fb96811a8bd377ada66634c22e386a4b75ea41",
+        "geometry_helper_calls": {
+          "createTerrainMesh": 2,
+          "projectMesh": 2,
+          "projectPoint": 186,
+          "sampleProjection": 235600
+        },
+        "geometry_resource_usage": {
+          "handles_reserved": 4,
+          "max_handles": 32,
+          "max_total_bytes": 16777216,
+          "meshes_created": 2,
+          "numeric_bytes_reserved": 3798576,
+          "projections_created": 2
+        },
+        "geometry_runtime_sha256": "00cabedaad4c5ccef92840d6d91584ef22d03f592b63f6bab6f8e0d23ba239f6",
+        "objects_painted": 10,
+        "peak_work_pixels": 2764800,
+        "plan_sha256": "cce9ed7a44317c7b1c9cbcab0094ef2ca8aca72336c7cdfb8af77d732ffccc58",
+        "recipes_executed": 0,
+        "runtime_revision": "scene-space-compositor-3",
+        "runtime_sha256": "edd73956b1d624065ad61b0e317e06895eb6fda8ce18034412c403d2aa25998f",
+        "schema": "video.scene-space-compositor-observation.v1",
+        "scope": "host_compositor_execution_not_visual_acceptance",
+        "surface_budget_sha256": "6332d309b2d05d895925b27b8b9b6fddb6464a63d5a76a744a9687e4653fa6ca",
+        "surface_field_usage": {
+          "fields_created": 0,
+          "fields_reserved": 0,
+          "max_fields": 64,
+          "max_total_field_bytes": 16777216,
+          "numeric_bytes_reserved": 0
+        },
+        "surface_helper_calls": {},
+        "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918"
+      },
+      "schema": "video.shared-mountain-brush-case.v1",
+      "scope": "same_layout_manual_source_study_not_original_picture_run_success",
+      "source_sha256": "5a9ea515a521027e38d511c8ab98add1ca8595934d09408905f9f4642fe7485f",
+      "status": "rendered",
+      "stop_proven": true,
+      "surface_runtime_sha256": "5689a2f5e2dcbf4b5945ddd5dac952ded8a42b4ce2714eaa09065510d7855918",
+      "technical_passed": true
+    }
+  ],
+  "controller_container_exists": false,
+  "controller_study_wall_seconds": 26.91430634399876,
+  "deployments": 0,
+  "deployments_changed": [],
+  "deployments_checked": 89,
+  "executor_image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:a587a7f224d55e004d37f19c75b640371bf02b1f349deacc30a84a7a5b467d3d",
+  "formal_picture_runs_modified": false,
+  "model_calls": 0,
+  "model_tokens_added": 0,
+  "original_retained_tables": 14,
+  "original_retained_unchanged": true,
+  "runtime_capability_unchanged": true,
+  "runtime_revision": "bbb263faf64f79457b7afab8d8556205e8c34b86",
+  "schema": "video.shared-mountain-brush-study-verification.v1",
+  "settled_reservations": 2,
+  "source_only": true,
+  "status": "passed",
+  "task_id": "shared-mountain-brush-20261123-r1",
+  "total_retained_tables": 16,
+  "unknown_baseline_preserved": true,
+  "wikiskill_published": false,
+  "date": "2026-11-23",
+  "invariants": {
+    "geometry_and_field_source_sha256": "92c228541a4588fae4d8b347b7dddfd8fb85d97a67a0107641f7b674dbf50ac5",
+    "coverage_source_sha256": "205580f399089c1d2480bed9f2f2e70cc562e8beb910d97c04e4cac4cbef5fa9",
+    "plan_file_sha256": "21ef5296f64ce8bce2993e2a16cfa591714608bcee3bee04646338343e2162ae",
+    "geometry_unchanged": true,
+    "coverage_unchanged": true,
+    "plan_unchanged": true,
+    "runtime_unchanged": true,
+    "source_scope": "manual_artwork_example_not_runtime_or_learning_defaults"
+  },
+  "native_evidence": "native-evidence.json",
+  "source_files_sha256": {
+    "scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
+    "scene.js": "376273ac5a24243fc2062dedc2d1c002984eff46a4882e1875e092b83344153f"
+  },
+  "output_files_sha256": {
+    "preview.png": "7f4edb27fc9e3b4609b31262476861555a9b5bd6b66069110e804a1c63985f29",
+    "comparison.png": "c8f7517f7a777e68e59243022608d7861a09adc0c0aa6490505be82d7db82dad"
+  },
+  "visual_review": {
+    "images_viewed": true,
+    "independent_review": true,
+    "artistic_acceptance": false,
+    "improvements": [
+      "Crossed lattice is reduced; stroke width, breaks and empty regions differ more clearly.",
+      "Foreground bank is less saturated while retaining its near weight.",
+      "Right-side mountain is lighter and recedes."
+    ],
+    "limitations": [
+      "Some descending contacts still look like ordered wooden grain.",
+      "Pale saddle regions still form channels and bands.",
+      "Summit and contour breaks are excessive in places."
+    ]
+  },
+  "raw_sanitized_evidence": {
+    "path": "D:\\codex-work\\operations\\shared-mountain-brush-20261123\\release\\evidence\\study-verification.json",
+    "sha256": "5ef76b784e2643ce83164cf3b8243f87d4b59b7c8cb1f6349748674b82acd32c"
+  },
+  "effect_adopted": false,
+  "learning_defaults_modified": false,
+  "motion_observed": false,
+  "audio_observed": false,
+  "whole_video_watched": false
+}
