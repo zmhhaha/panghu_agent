@@ -74,3 +74,7 @@ capability、binding、request、输入挂载与receipt固定 geometry helper、
 浏览器证据见该例 `evidence.json`；底层遮挡与非整数缩放验证见
 [运行时证据](evidence/scene-space-shared-geometry-native-20261123.json)。helper 数值额度
 和作者额外保存的数组分别记账，不能把前者当作整个页面内存实测。
+
+ARM 三组静态诊断和仅学习 executor 的更新另见
+[2026-11-23 实施验证记录](scene-shared-geometry-validation-20261123.md)。该记录只扩展其
+明确核验的容器与部署范围，不构成完整影片或用户艺术通过。

@@ -24,6 +24,11 @@
 桌面平台的旧源码像素摘要未变，旧源码的新几何调用和句柄均为0。详见 `evidence.json`
 和 [几何工具说明](../../docs/scene-shared-geometry.md)；容器及发布证据另行记录。
 
+后续 ARM 容器验证、学习 executor 更新及累计消费见
+[实施验证记录](../../docs/scene-shared-geometry-validation-20261123.md)。本目录
+`preview.png`、`structure-diagnostic.png` 保留实际 ARM 墨稿与独立结构诊断，
+`structure-comparison.png` 为前后版本的主峰局部对照，不是单参数消融。
+
 画面可以读到共同山腰、前后覆盖和连接山脚，但交叉排线仍密，局部坡肩偏亮并呈阶梯感。
 近岸、松树、远山和云雾继承前一研究，未声称全面美术改进。本例是结构与绘画接口
 验证，尚未获得艺术验收，没有效果采用、WikiSkill 发布或原图片学习记录改写。
