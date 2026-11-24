@@ -196,20 +196,21 @@ catch(error) { process.stdout.write(JSON.stringify({accepted:false,error:String(
     return json.loads(result.stdout)
 
 
-def test_native_canvas_omits_unused_library_and_passes_the_actual_unchanged_host(tmp_path):
+def test_native_canvas_omits_unused_library_and_passes_the_actual_pinned_host(tmp_path):
     value, document, source = _native_canvas_binding(tmp_path)
     original_document, original_source = deepcopy(document), deepcopy(source)
     host_sha256 = hashlib.sha256(VIDEO_HOST.read_bytes()).hexdigest()
     binding = value._snapshot('native-canvas', source, document, [])
     request = binding['request']
 
-    # Reproduce the real pre-browser failure when an unused helper is attached.
-    old_request = deepcopy(request)
-    old_request['drawing_libraries'] = document['constraints']['drawing_libraries']
-    old_request['assets_sha256'].update(descriptor()['assets'])
-    assert _actual_video_host_validation(old_request,
+    # The current descriptor passes exact host custody checks; the adapter
+    # still omits this dependency when native Canvas does not reference it.
+    declared_request = deepcopy(request)
+    declared_request['drawing_libraries'] = document['constraints']['drawing_libraries']
+    declared_request['assets_sha256'].update(descriptor()['assets'])
+    assert _actual_video_host_validation(declared_request,
         {'/assets/'+name: raw for name, raw in read_assets().items()}) == dict(
-            accepted=False, error='Error: learning_drawing_library_invalid')
+            accepted=True, libraries=document['constraints']['drawing_libraries'])
     assert _actual_video_host_validation(request, {}) == dict(accepted=True, libraries=None)
     assert 'drawing_libraries' not in request
     assert not (descriptor()['assets'].keys() & request['assets_sha256'].keys())
@@ -267,21 +268,21 @@ def test_changed_vendor_module_bytes_are_rejected_before_native_canvas_execution
     assert not value.root.exists()
 
 
-def test_three_request_omits_incompatible_library_and_passes_the_actual_unchanged_host(tmp_path):
+def test_three_request_omits_incompatible_library_and_passes_the_actual_pinned_host(tmp_path):
     value, document, source = _three_binding(tmp_path)
     original_document, original_source = deepcopy(document), deepcopy(source)
     host_sha256 = hashlib.sha256(VIDEO_HOST.read_bytes()).hexdigest()
     binding = value._snapshot('three', source, document, [])
     request = binding['request']
 
-    # Reconstruct the failed request's unconditional library attachment. The
-    # real host rejects it before scene execution, rather than a mocked check.
-    old_request = deepcopy(request)
-    old_request['drawing_libraries'] = document['constraints']['drawing_libraries']
-    old_request['assets_sha256'].update(descriptor()['assets'])
-    failure = _actual_video_host_validation(old_request,
-        {'/assets/'+name: raw for name, raw in read_assets().items()})
-    assert failure == dict(accepted=False, error='Error: learning_drawing_library_invalid')
+    # Exact current bytes are accepted by the host's dependency validator;
+    # engine compatibility still requires the adapter to omit the unused ink.
+    declared_request = deepcopy(request)
+    declared_request['drawing_libraries'] = document['constraints']['drawing_libraries']
+    declared_request['assets_sha256'].update(descriptor()['assets'])
+    assert _actual_video_host_validation(declared_request,
+        {'/assets/'+name: raw for name, raw in read_assets().items()}) == dict(
+            accepted=True, libraries=document['constraints']['drawing_libraries'])
 
     assert _actual_video_host_validation(request, {}) == dict(accepted=True, libraries=None)
     assert 'drawing_libraries' not in request

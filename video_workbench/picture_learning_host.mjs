@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 // Pinned together with the image-owned vendor module and license.
-const INK_LANDSCAPE = {"assets":{"ink-landscape.LICENSE.txt":"b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108","ink-landscape.mjs":"03ff8324ebee4e33ab1991399fe43ae7751f189bfa0116c30db29d64fd5f7469"},"engines":["canvas"],"entrypoint":"./assets/ink-landscape.mjs","library_id":"ink-landscape","license":"MIT","role":"drawing","schema":"video.learning-drawing-library.v1","source_revision":"bb7338a5c57d4151c3d8635a8549057bb0383ca0","version":"0.1.0"};
+const INK_LANDSCAPE = {"assets":{"ink-landscape.LICENSE.txt":"b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108","ink-landscape.mjs":"c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6"},"engines":["canvas"],"entrypoint":"./assets/ink-landscape.mjs","library_id":"ink-landscape","license":"MIT","role":"drawing","schema":"video.learning-drawing-library.v1","source_revision":"b6c96a5e94124bfad8113aaa136ede2298151b5f","version":"0.1.0"};
 const INK_ASSETS = ['ink-landscape.mjs', 'ink-landscape.LICENSE.txt'];
 export function validateDrawingLibraries(request,resources){
   const libraries=request.drawing_libraries;
