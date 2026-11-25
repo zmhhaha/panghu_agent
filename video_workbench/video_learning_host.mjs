@@ -224,6 +224,39 @@ export function createMethodRenderBudget({deadlineAtMs=Date.now()+3600000,
  return {state,snapshot,publish,timeout,run,substage};
 }
 
+// Learning owns its longer stage windows. Reuse the admitted project protocol
+// without changing the shared runtime bytes or its formal-export deadlines.
+export async function readyLearningHyperFramesProject(page,{projectRuntime,project,runtimePath,legacyBridge,budget}){
+ return await budget.run('project_ready',METHOD_STAGE_TIMEOUTS.project_ready,async timeout=>{
+  projectRuntime.validateHyperFramesProject(project);
+  if(typeof legacyBridge!=='boolean'||typeof runtimePath!=='string')throw Error('hyperframes_install_invalid');
+  const stat=lstatSync(runtimePath);
+  if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16*1024*1024
+   ||hash(readFileSync(runtimePath))!==projectRuntime.HYPERFRAMES_CORE_SHA256)
+   throw Error('hyperframes_runtime_digest_mismatch');
+  budget.substage('scene_prepare');
+  await page.evaluate(projectRuntime.prepareHyperFramesPage,{project,legacyBridge});
+  budget.substage('core_load');
+  await page.addScriptTag({path:runtimePath});
+  budget.substage('core_ready');
+  await page.waitForFunction(()=>window.__playerReady===true&&window.__renderReady===true
+   &&typeof window.__player?.renderSeek==='function',null,{timeout,polling:50});
+  budget.substage('core_bind');
+  const observation=await page.evaluate(projectRuntime.bindHyperFramesCore);
+  return {...observation,version:projectRuntime.HYPERFRAMES_VERSION,core_sha256:projectRuntime.HYPERFRAMES_CORE_SHA256};
+ });
+}
+
+export async function seekLearningHyperFramesProject(page,seconds,{budget}){
+ if(!finite(seconds)||seconds<0)throw Error('hyperframes_seek_time_invalid');
+ return await budget.run('seek',METHOD_STAGE_TIMEOUTS.seek,()=>page.evaluate(async time=>{
+  const trusted=window.__trustedHyperFramesProject;
+  if(!trusted||time>trusted.project.duration_seconds||typeof window.__trustedHyperFramesSeek!=='function')
+   throw Error('hyperframes_project_seek_invalid');
+  return await window.__trustedHyperFramesSeek(time);
+ },seconds));
+}
+
 // Only trusted callers supply the browser and measured engine-runtime module.
 // Scene code receives neither, and never chooses file paths or observations.
 export async function captureMethodFrames({chromium,request,resources,root,engineRuntime=null,
@@ -303,16 +336,14 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   page.on('crash',()=>{budget.state.crashed=true;if(errors.length<32)errors.push('method_page_crashed');});
   page.on('popup',popup=>{if(errors.length<32)errors.push('method_popup_forbidden');popup.close();});
   page.on('dialog',dialog=>dialog.dismiss());
-  const ready=()=>stage('project_ready',async timeout=>{
-   if(projectAware){
-    await projectRuntime.installHyperFramesProject(page,{project,runtimePath:coreRuntime.runtimePath,
-     legacyBridge:request.legacy_bridge,timeoutMs:timeout,onStage:budget.substage});return;
-   }
-   await page.evaluate(async()=>{
+  const ready=()=>{
+   if(projectAware)return readyLearningHyperFramesProject(page,{projectRuntime,project,
+    runtimePath:coreRuntime.runtimePath,legacyBridge:request.legacy_bridge,budget});
+   return stage('project_ready',()=>page.evaluate(async()=>{
     await document.fonts.ready;await window.__animationExperiment?.ready;
     if(typeof window.__animationExperiment?.seek!=='function')throw Error('method_seek_missing');
-   });
-  });
+   }));
+  };
   await stage('navigation',timeout=>page.goto(origin+'/'+(projectAware?project.entry:'scene.html'),{waitUntil:'networkidle',timeout}));
   await ready();assertScene();
   if(resourceAware&&Object.keys(MANIM_HELPERS).some(name=>!scripts.has('/assets/'+name)))
@@ -339,10 +370,8 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   const capture=async(time,name,{seek=true}={})=>{
    budget.state.frame={index:Math.round(time*24),timestamp_seconds:time,name};
    if(seek){
-    await stage('seek',async timeout=>{
-     if(projectAware)await projectRuntime.seekHyperFramesProject(page,time,{timeoutMs:timeout});
-     else await page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time);
-    });
+    if(projectAware)await seekLearningHyperFramesProject(page,time,{budget});
+    else await stage('seek',()=>page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time));
    }
    assertScene();await stage('engine_check',checkRuntime);assertScene();
    if(projectAware)await stage('layout',()=>page.evaluate(()=>{

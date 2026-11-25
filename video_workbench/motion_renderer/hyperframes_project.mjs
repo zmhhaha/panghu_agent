@@ -90,7 +90,7 @@ export function hyperFramesRuntimeArtifact(dist='/opt/renderer/node_modules/hype
 }
 
 export async function withHyperFramesTimeout(operation,timeoutMs,label){
- if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>180000)throw Error('hyperframes_timeout_invalid');
+ if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000)throw Error('hyperframes_timeout_invalid');
  let timer;
  try{return await Promise.race([operation,new Promise((_,reject)=>{
   timer=setTimeout(()=>reject(Error(label)),timeoutMs);
@@ -173,21 +173,17 @@ export function bindHyperFramesCore(){
  return trusted.activate();
 }
 
-export async function installHyperFramesProject(page,{project,runtimePath,legacyBridge=false,timeoutMs=20000,onStage=()=>{}}={}){
+export async function installHyperFramesProject(page,{project,runtimePath,legacyBridge=false,timeoutMs=20000}={}){
  validateHyperFramesProject(project);
- if(typeof legacyBridge!=='boolean'||typeof runtimePath!=='string'||typeof onStage!=='function')throw Error('hyperframes_install_invalid');
+ if(typeof legacyBridge!=='boolean'||typeof runtimePath!=='string')throw Error('hyperframes_install_invalid');
  const stat=lstatSync(runtimePath);
  if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16*1024*1024
   ||hash(readFileSync(runtimePath))!==HYPERFRAMES_CORE_SHA256)throw Error('hyperframes_runtime_digest_mismatch');
  const run=async()=>{
-  onStage('scene_prepare');
   await page.evaluate(prepareHyperFramesPage,{project,legacyBridge});
-  onStage('core_load');
   await page.addScriptTag({path:runtimePath});
-  onStage('core_ready');
   await page.waitForFunction(()=>window.__playerReady===true&&window.__renderReady===true
    &&typeof window.__player?.renderSeek==='function',null,{timeout:timeoutMs,polling:50});
-  onStage('core_bind');
   const observation=await page.evaluate(bindHyperFramesCore);
   return {...observation,version:HYPERFRAMES_VERSION,core_sha256:HYPERFRAMES_CORE_SHA256};
  };

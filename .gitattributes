@@ -21,6 +21,7 @@ video_workbench/motion_renderer/hyperframes_project.mjs text eol=lf
 video_workbench/motion_renderer/manim_frame_layer.mjs text eol=lf
 video_workbench/motion_renderer/manim_method_frames.mjs text eol=lf
 video_workbench/picture_learning_host.mjs text eol=lf
+video_workbench/animation_method_host.mjs text eol=lf
 video_workbench/video_learning_host.mjs text eol=lf
 video_workbench/scene_space_host.mjs text eol=lf
 video_workbench/motion_renderer/scene_space*.mjs text eol=lf

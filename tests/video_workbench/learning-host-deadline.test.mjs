@@ -1,11 +1,60 @@
 // Offline clock/control-flow fixtures; these do not claim real rendering.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,existsSync,rmSync} from 'node:fs';
+import {mkdtempSync,existsSync,rmSync,writeFileSync,readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import vm from 'node:vm';
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname,basename} from 'node:path';
-import {createMethodRenderBudget,METHOD_STAGE_TIMEOUTS,captureMethodFrames}
+import {createMethodRenderBudget,METHOD_STAGE_TIMEOUTS,captureMethodFrames,
+ readyLearningHyperFramesProject,seekLearningHyperFramesProject}
  from '../../video_workbench/video_learning_host.mjs';
+import * as sharedProjectRuntime from '../../video_workbench/motion_renderer/hyperframes_project.mjs';
+
+test('the admitted shared project runtime retains its exact bytes and original timeout bound',async()=>{
+ const file=new URL('../../video_workbench/motion_renderer/hyperframes_project.mjs',import.meta.url);
+ assert.equal(createHash('sha256').update(readFileSync(file)).digest('hex'),
+  '7579ce3f54c548d2cd68a736fe65f86612f3284ea7177876132627f4be8ee1ce');
+ await assert.rejects(sharedProjectRuntime.withHyperFramesTimeout(Promise.resolve(),60001,'fixture'),/hyperframes_timeout_invalid/);
+});
+
+test('learning readiness reuses the admitted prepare/core protocol inside its own finite window',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'learning-host-deadline-')),core=join(root,'core.js');
+ const raw=Buffer.from('offline core identity fixture');writeFileSync(core,raw);
+ const projectRuntime={...sharedProjectRuntime,HYPERFRAMES_CORE_SHA256:createHash('sha256').update(raw).digest('hex')};
+ const project={schema:'video.hyperframes-project.v1',project_id:'learning-fixture',width:320,height:180,fps:24,
+  duration_seconds:1,entry:'scene.html',scenes:[{id:'scene',start_seconds:0,duration_seconds:1,
+   entry:'scene.html',source_sha256:'a'.repeat(64),engine:'canvas'}]};
+ const observed=[],stages=[];
+ const budget=createMethodRenderBudget({onDiagnostic:value=>{if(value.substage)stages.push(value.substage);}});
+ const page={async evaluate(fn){
+  observed.push(fn);return fn===sharedProjectRuntime.bindHyperFramesCore?{runtime:'hyperframes-core-project-1'}:{};
+ },async addScriptTag(options){assert.equal(options.path,core);},async waitForFunction(_,__,options){
+  assert.ok(options.timeout>60000&&options.timeout<=180000);
+ }};
+ try{
+  const value=await readyLearningHyperFramesProject(page,{projectRuntime,project,runtimePath:core,legacyBridge:true,budget});
+  assert.equal(value.runtime,'hyperframes-core-project-1');
+  assert.deepEqual(observed,[sharedProjectRuntime.prepareHyperFramesPage,sharedProjectRuntime.bindHyperFramesCore]);
+  assert.deepEqual([...new Set(stages)],['scene_prepare','core_load','core_ready','core_bind']);
+  writeFileSync(core,'changed');
+  await assert.rejects(readyLearningHyperFramesProject(page,{projectRuntime,project,runtimePath:core,legacyBridge:true,budget}),
+   /hyperframes_runtime_digest_mismatch/);
+ }finally{clean(root);}
+});
+
+test('learning seek keeps the trusted absolute clock with a separate bounded window',async()=>{
+ const budget=createMethodRenderBudget(),caps=[];
+ const run=budget.run;budget.run=(name,cap,operation)=>{caps.push([name,cap]);return run(name,cap,operation);};
+ let actual;
+ const context=vm.createContext({window:{__trustedHyperFramesProject:{project:{duration_seconds:2}},
+  async __trustedHyperFramesSeek(seconds){actual=seconds;return{actual_seconds:seconds};}}});
+ const page={async evaluate(fn,seconds){return vm.runInContext('('+fn.toString()+')',context)(seconds);}};
+ const value=await seekLearningHyperFramesProject(page,1.5,{budget});
+ assert.equal(actual,1.5);assert.equal(value.actual_seconds,1.5);assert.deepEqual(caps,[['seek',120000]]);
+ await assert.rejects(seekLearningHyperFramesProject(page,3,{budget}),/hyperframes_project_seek_invalid/);
+ await assert.rejects(seekLearningHyperFramesProject(page,-1,{budget}),/hyperframes_seek_time_invalid/);
+});
 
 test('stage windows allow bounded software rendering and shrink across one total deadline',()=>{
  let clock=50;

@@ -20,6 +20,27 @@ from test_video_learning_renderer import document as video_document, source as v
 from test_animation_method_renderer import IMAGE, SOURCE, document as method_document
 
 
+def test_learning_stage_windows_keep_actual_formal_and_manim_admission_runtime_pins():
+    """Pins from the retained context500-r2 engine and Manim admissions.
+
+    Dynamic fixture hashes would approve a shared-runtime edit together with
+    the fixture, so retain the original admission bytes as an independent gate.
+    """
+    from video_workbench.animation_method_renderer import HOST, ENGINE_RUNTIME, PROJECT_RUNTIME
+    pins = {
+        HOST: 'df7253899839aef3df112e13ccc3a2c2ca09ceee96b037c84800021e1dd26d81',
+        ENGINE_RUNTIME: 'f6f8415c6167d0f066db8edccce86167779eb953212bf266949473a1a7d7f80e',
+        PROJECT_RUNTIME: '7579ce3f54c548d2cd68a736fe65f86612f3284ea7177876132627f4be8ee1ce',
+        PROJECT_RUNTIME.with_name('creative.mjs'): '7755767d316d6b4cff7ffbca2c592b05f052cbbd0266c0d7e70aac41fc92537e',
+        PROJECT_RUNTIME.with_name('manim_frame_layer.mjs'): 'de34dea66d0ce8449080b35668f38b4e1ed6ae55e10690d9a3f1b118bb07fa51',
+        PROJECT_RUNTIME.with_name('manim_method_frames.mjs'): '6c1d5cd90cbfbe862a646b014ad988a6637c5b74a9af1cb7bd4d5513a8606bfc',
+    }
+    for path, expected in pins.items():
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, path
+    assert shared.PROJECT_RUNTIME == PROJECT_RUNTIME
+    assert VIDEO_HOST != HOST
+
+
 def observation(*, loaded=False):
     return dict(schema='video.learning-drawing-library-observation.v1',
         scope='loaded_scripts_not_api_calls_or_visual_application',

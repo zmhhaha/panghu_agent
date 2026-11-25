@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
 import {buildHyperFramesProject,validateHyperFramesProject,prepareHyperFramesPage,
- bindHyperFramesCore,withHyperFramesTimeout,installHyperFramesProject,HYPERFRAMES_CORE_SHA256}
+ bindHyperFramesCore,withHyperFramesTimeout,HYPERFRAMES_CORE_SHA256}
  from '../../video_workbench/motion_renderer/hyperframes_project.mjs';
 import {verifyRuntime} from '../../video_workbench/motion_renderer/contract.mjs';
 
@@ -105,22 +105,6 @@ test('multi-scene legacy bridge is rejected rather than silently using one sourc
 test('bounded async readiness rejects instead of leaving a renderer hung',async()=>{
  await assert.rejects(withHyperFramesTimeout(new Promise(()=>{}),10,'ready_timeout'),/ready_timeout/);
  assert.equal(await withHyperFramesTimeout(Promise.resolve('ready'),20,'ready_timeout'),'ready');
- assert.equal(await withHyperFramesTimeout(Promise.resolve('ready'),180000,'ready_timeout'),'ready');
- await assert.rejects(withHyperFramesTimeout(Promise.resolve(),180001,'ready_timeout'),/timeout_invalid/);
-});
-
-test('installation reports ordered trusted substages and uses the supplied finite window',async()=>{
- const stages=[],operations=[];
- const context=vm.createContext({validateHyperFramesProject,lstatSync:()=>({isFile:()=>true,isSymbolicLink:()=>false,size:100}),
-  hash:()=>HYPERFRAMES_CORE_SHA256,readFileSync:()=>Buffer.from('offline artifact fixture'),
-  HYPERFRAMES_CORE_SHA256,HYPERFRAMES_VERSION:'0.8.149',prepareHyperFramesPage,bindHyperFramesCore,withHyperFramesTimeout});
- const install=vm.runInContext('('+installHyperFramesProject.toString()+')',context);
- const page={async evaluate(){operations.push('evaluate');return{};},async addScriptTag(){operations.push('script');},
-  async waitForFunction(_,__,options){assert.equal(options.timeout,180000);operations.push('wait');}};
- await install(page,{project:project(),runtimePath:'offline-fixture',timeoutMs:180000,
-  onStage:value=>stages.push(value)});
- assert.deepEqual(stages,['scene_prepare','core_load','core_ready','core_bind']);
- assert.deepEqual(operations,['evaluate','script','wait','evaluate']);
 });
 
 test('new runtime identity independently binds real core and project host instead of v2 admission',()=>{
