@@ -271,6 +271,11 @@ def test_video_remote_clip_and_independent_analysis_use_same_source_without_stor
     assert analysis['state'] == 'completed', analysis
     assert len(analysis['observation_request_history']) == 1
     assert len(reviewer.submissions) == 2 and reviewer.submissions[0] != reviewer.submissions[1]
+    initial, continued = [upload[0] for upload in reviewer.uploads]
+    assert initial['constraints']['reference_analysis_sampling']['initial_sample_count'] == 8
+    assert initial['constraints']['reference_analysis_sampling']['supplied_frame_count'] == 8
+    assert continued['constraints']['reference_analysis_sampling']['initial_sample_count'] == 8
+    assert continued['constraints']['reference_analysis_sampling']['supplied_frame_count'] == 10
     assert reviewer.uploads[-1][0]['observation_request_history'][0]['request']['times'] == [21, 22]
     assert len(reviewer.uploads[-1][0]['observation']['frames']) <= service.protocol.MAX_FRAMES
     observed = analysis['reference_observation']
@@ -281,6 +286,99 @@ def test_video_remote_clip_and_independent_analysis_use_same_source_without_stor
     assert error.value.status == 404
     with pytest.raises(ServiceError):
         service.analysis_reference_artifact(OWNER, ref['id'], analysis['id'], '0' * 64)
+
+
+def test_new_remote_analysis_finishes_within_a_bounded_overview_before_any_detail(tmp_path):
+    class BudgetedRemote(Remote):
+        sample_counts = None
+
+        def observe(self, source, *, times, **kwargs):
+            self.sample_counts = (self.sample_counts or []) + [len(times)]
+            # Model the cumulative source-read limit that 24 remote decodes hit.
+            if len(times) > 8:
+                raise ServiceError('remote_reference_byte_limit', 413)
+            return super().observe(source, times=times, **kwargs)
+
+    remote, reviewer, author = BudgetedRemote(), VideoGateway(), VideoGateway()
+    service = VideoLearningService(tmp_path / 'videos', author_gateway=author,
+        review_gateway=reviewer, renderer=object(), remote_media_adapter=remote)
+    ref, _ = register(service, picture=False)
+    analysis = service.analyze_reference(OWNER, ref['id'], dict(request_id=uuid4().hex, max_seconds=900))
+    frozen = service.store.analysis(OWNER, analysis['id'])['frozen']
+    assert frozen['sample_count'] == 8
+    assert not remote.reads and not reviewer.submissions and not author.submissions
+    service.advance(OWNER, analysis['id'])
+    completed = service.advance(OWNER, analysis['id'])
+    assert completed['state'] == 'completed', completed
+    assert remote.sample_counts == [8]  # No failed 24-frame attempt or full reread.
+    assert remote.reads[0]['deadline_at'] == analysis['deadline_at']
+    assert remote.reads[0]['times'] == [index * 90 / 8 for index in range(8)]
+    assert completed['observation']['coverage']['requested_samples'] == 8
+    assert completed['continuous_motion_verified'] is completed['audio_verified'] is False
+    document = reviewer.uploads[0][0]
+    guidance = document['constraints']['reference_analysis_sampling']
+    assert guidance['strategy'] == 'sparse_overview_then_requested_detail'
+    assert guidance['initial_sample_count'] == guidance['supplied_frame_count'] == 8
+    assert any('observation_request' in text for text in guidance['instructions'])
+    assert any('unobserved gaps' in text for text in guidance['instructions'])
+    assert len(reviewer.submissions) == 1 and not author.submissions
+    assert service.catalogue(OWNER)['projects'] == []
+
+
+def test_remote_analysis_byte_guard_failure_does_not_retry_or_start_a_model(tmp_path):
+    remote, reviewer, author = Remote(), VideoGateway(), VideoGateway()
+    service = VideoLearningService(tmp_path / 'videos', author_gateway=author,
+        review_gateway=reviewer, renderer=object(), remote_media_adapter=remote)
+    ref, _ = register(service, picture=False)
+    calls = []
+
+    def fail_read(source, *, times, deadline_at, **kwargs):
+        calls.append((list(times), deadline_at))
+        raise ServiceError('remote_reference_byte_limit', 413)
+
+    remote.observe = fail_read
+    analysis = service.analyze_reference(OWNER, ref['id'], dict(request_id=uuid4().hex))
+    failed = service.advance(OWNER, analysis['id'])
+    assert failed['state'] == 'failed' and failed['stop_proven'] is True
+    assert failed['error']['code'] == 'remote_reference_byte_limit'
+    saved = service.store.analysis(OWNER, analysis['id'])
+    assert saved['job_id'] is saved['input_sha256'] is None
+    service.advance(OWNER, analysis['id'])
+    assert len(calls) == 1 and len(calls[0][0]) == 8
+    assert calls[0][1] == analysis['deadline_at']
+    assert not reviewer.submissions and not author.submissions
+
+
+def test_existing_remote_analysis_keeps_its_frozen_24_sample_contract(tmp_path):
+    remote, reviewer = Remote(), VideoGateway()
+    service = VideoLearningService(tmp_path / 'videos', author_gateway=VideoGateway(),
+        review_gateway=reviewer, renderer=object(), remote_media_adapter=remote)
+    ref, _ = register(service, picture=False)
+    body = dict(request_id=uuid4().hex, goal='Find an observed effect.', max_seconds=900)
+    created = service.analyze_reference(OWNER, ref['id'], body)
+    current = service.store.analysis(OWNER, created['id'])
+    # Seed a pre-change row rather than changing any existing frozen record.
+    legacy = deepcopy(current)
+    legacy['id'], legacy['request_id'] = 'analysis-' + uuid4().hex, uuid4().hex
+    legacy['frozen']['sample_count'] = 24
+    legacy['frozen_sha256'] = digest(legacy['frozen'])
+    prior_frozen = deepcopy(legacy['frozen'])
+    prior_hash = legacy['frozen_sha256']
+    legacy_body = dict(body, request_id=legacy['request_id'])
+    with service.store.db() as db:
+        db.execute('BEGIN IMMEDIATE')
+        service.store.save_analysis(legacy, insert=True, db=db)
+        service.store.bind_request(OWNER, 'reference-analysis:' + ref['id'],
+            legacy['request_id'], legacy_body, legacy['id'], db)
+    assert service.analyze_reference(OWNER, ref['id'], legacy_body)['id'] == legacy['id']
+    service.advance(OWNER, legacy['id'])
+    completed = service.advance(OWNER, legacy['id'])
+    assert completed['state'] == 'completed', completed
+    assert len(remote.reads) == 1 and len(remote.reads[0]['times']) == 24
+    saved = service.store.analysis(OWNER, legacy['id'])
+    assert saved['frozen'] == prior_frozen and saved['frozen_sha256'] == prior_hash
+    assert service.store.analysis(OWNER, current['id']) == current
+    assert reviewer.uploads[0][0]['constraints']['reference_analysis_sampling']['initial_sample_count'] == 24
 
 
 def test_role_view_prioritizes_detail_without_overrunning_existing_frame_contract(tmp_path):

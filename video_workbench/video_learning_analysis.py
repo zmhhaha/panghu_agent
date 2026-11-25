@@ -9,6 +9,10 @@ from .video_learning_media import LIMITATIONS
 from .remote_reference_service import remote_reference, MAX_OBSERVATION_REQUESTS, MAX_SUPPLEMENTAL_FRAMES, normalized_crop
 
 
+REMOTE_ANALYSIS_OVERVIEW_SAMPLES = 8
+UPLOADED_ANALYSIS_OVERVIEW_SAMPLES = 24
+
+
 class VideoLearningAnalysis:
     def analyze_reference(self, owner, reference_id, body):
         owner_id(owner)
@@ -27,7 +31,11 @@ class VideoLearningAnalysis:
                 'video_learning_analysis_budget_invalid')
         now, identity = self.clock(), 'analysis-' + new_id()
         frozen = dict(reference=deepcopy(reference), goal=goal, max_seconds=seconds,
-            sample_count=24, frame_observation='sampled_frames_only',
+            # Remote decoders share a bounded network budget across samples.
+            # Begin with an overview; a stopped role can request specific detail.
+            # Existing analyses continue to use their own frozen sample count.
+            sample_count=(REMOTE_ANALYSIS_OVERVIEW_SAMPLES if remote_reference(reference)
+                else UPLOADED_ANALYSIS_OVERVIEW_SAMPLES), frame_observation='sampled_frames_only',
             audio_observation='unverified', input_boundary='frozen_for_entire_analysis')
         value = dict(id=identity, owner=owner, request_id=body['request_id'], reference_id=reference_id,
             frozen=frozen, frozen_sha256=digest(frozen), state='queued', operation_status='reserved',
@@ -134,6 +142,17 @@ class VideoLearningAnalysis:
             base_source=None, feedback='', knowledge_snapshot=None, prior_review=None,
             learned_method=None, knowledge_binding=dict(use_wikiskill=False), assets={},
             frozen_at=value['created_at'])
+        if remote_reference(reference):
+            document['constraints']['reference_analysis_sampling'] = dict(
+                strategy='sparse_overview_then_requested_detail',
+                initial_sample_count=value['frozen']['sample_count'],
+                supplied_frame_count=len(document['observation']['frames']),
+                instructions=[
+                    'The supplied pixels are sparse samples, not continuous playback or an exhaustive effect inventory.',
+                    'If an interval or effect is uncertain, use a bounded observation_request under the existing source contract only when needed. Do not infer unseen effects from the title or fill a requested count.',
+                    'Keep the same analysis deadline and existing supplemental frame/request limits. Do not repeat the whole-source overview, generate source or start creation.',
+                    'Ground candidate intervals in the actual supplied frame IDs and report unobserved gaps or ambiguity in limitations.',
+                ])
         return self._remote_document(view, document)
 
     def _analysis_observation_handoff(self, value, result, receipt):

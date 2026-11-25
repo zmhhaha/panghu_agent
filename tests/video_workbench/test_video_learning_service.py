@@ -346,6 +346,7 @@ def test_analysis_is_durable_budgeted_idempotent_and_never_starts_creation(syste
     analysis = service.analyze_reference('developer', ref['id'], body)
     assert analysis['state'] == 'queued' and analysis['creation_started'] is False
     assert analysis['max_seconds'] == 600
+    assert service.store.analysis('developer', analysis['id'])['frozen']['sample_count'] == 24
     assert service.analyze_reference('developer', ref['id'], body)['id'] == analysis['id']
     assert not author.submissions and not reviewer.submissions and not renderer.calls
     assert not service.catalogue('developer')['projects']
@@ -355,6 +356,7 @@ def test_analysis_is_durable_budgeted_idempotent_and_never_starts_creation(syste
     assert result['state'] == 'completed', result
     assert result['candidates'][0]['title'] == 'Trajectory changes'
     assert result['observation']['coverage']['unique_presentation_frames'] <= 24
+    assert 'reference_analysis_sampling' not in reviewer.uploads[0][0]['constraints']
     assert result['continuous_motion_verified'] is result['audio_verified'] is False
     assert len(reviewer.submissions) == 1 and not author.submissions and not renderer.calls
     catalogue = service.catalogue('developer')
