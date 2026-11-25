@@ -184,6 +184,183 @@ function videoFormDocument() {
     createDocumentFragment:()=>new Element('fragment')};
 }
 
+function referenceAnalysisCatalog() {
+  return {...catalog(), references:[
+    {id:'ref-a',file_name:'山水漫游.mp4',duration_seconds:40},
+    {id:'ref-b',file_name:'霓虹城市.mp4',duration_seconds:40}
+  ], analyses:[
+    {id:'a-success',reference_id:'ref-a',created_at:100,state:'completed',goal:'HISTORICAL-GOAL：早期空间效果',candidates:[
+      {title:'第一个旧片段',learning_goal:'学习早期淡入',start_seconds:2,end_seconds:6},
+      {title:'HiddenWaterfall 云瀑',learning_goal:'学习云瀑的前后遮挡',start_seconds:21,end_seconds:28}
+    ]},
+    {id:'b-success',reference_id:'ref-b',created_at:250,state:'completed',goal:'城市尺度递进',candidates:[
+      {title:'城市镜头',learning_goal:'学习城市镜头推进',start_seconds:8,end_seconds:12}
+    ]},
+    {id:'a-failed',reference_id:'ref-a',created_at:200,state:'failed',goal:'旧的失败尝试',error:{code:'old_analysis_timeout'}},
+    {id:'a-latest',reference_id:'ref-a',created_at:300,state:'failed',goal:'最新的空间分析',error:{code:'latest_analysis_failed'}}
+  ]};
+}
+function deepFreeze(value) {
+  if(value&&typeof value==='object') {
+    for(const child of Object.values(value))deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+function mountedAnalysisLibrary(t, initial) {
+  const formDoc=videoFormDocument(),get=id=>formDoc.getElementById(id),requests=[],scheduled=new Map();
+  let current=initial,timerId=0;
+  const fetcher=async(url,request={})=>{
+    requests.push({path:url.pathname,method:request.method??'GET',body:request.body?JSON.parse(request.body):null});
+    return {ok:true,status:200,json:async()=>url.pathname.endsWith('/catalog')?current:project()};
+  };
+  const app=mountVideoLibrary(formDoc,{root,fetcher,storage:memoryStorage(),uuid:()=>uuid,
+    schedule:callback=>{scheduled.set(++timerId,callback);return timerId;},unschedule:id=>scheduled.delete(id)});
+  t.after(()=>app.destroy());
+  return {app,get,requests,setCatalog:value=>{current=value;},async poll(){
+    assert.ok(scheduled.size,'an active raw analysis must schedule polling');
+    const [id,callback]=scheduled.entries().next().value;scheduled.delete(id);await callback();
+  }};
+}
+const analysisCards=host=>all(host).filter(node=>node.tagName==='ARTICLE'&&node.getAttribute('data-analysis-id'));
+const analysisAttempt=(host,id)=>all(host).find(node=>node.tagName==='BUTTON'&&node.getAttribute('data-analysis-id')===id);
+const analysisStatus=host=>all(host).find(node=>node.className==='video-status');
+async function clickButton(host,label) {
+  const node=all(host).find(node=>node.tagName==='BUTTON'&&node.textContent===label);
+  assert.ok(node,'missing button: '+label);await node.handlers.click();
+}
+function installFormDataShim(t) {
+  const NativeFormData=globalThis.FormData;
+  globalThis.FormData=class {
+    constructor(form){this.entries=form.elements.filter(node=>node.name&&!node.disabled
+      &&(node.type!=='checkbox'||node.checked)).map(node=>[node.name,node.value]);}
+    [Symbol.iterator](){return this.entries[Symbol.iterator]();}
+  };
+  t.after(()=>{globalThis.FormData=NativeFormData;});
+}
+
+test('mounted reference cards group immutable attempts and default to the latest failure without hiding another video', async t => {
+  const input=deepFreeze(referenceAnalysisCatalog()),snapshot=structuredClone(input);
+  const {app,get,requests}=mountedAnalysisLibrary(t,input);await app.ready;
+  const cards=analysisCards(get('video-analyses'));
+  assert.deepEqual(cards.map(node=>[node.getAttribute('data-reference-id'),node.getAttribute('data-analysis-id')]),
+    [['ref-a','a-latest'],['ref-b','b-success']]);
+  assert.match(cards[0].textContent,/分析失败/);assert.match(cards[0].textContent,/latest_analysis_failed/);
+  assert.match(cards[0].textContent,/3 次分析/);assert.doesNotMatch(cards[0].textContent,/待选学习片段/);
+  assert.match(get('video-count').textContent,/2 个参考视频 · 4 次分析/);
+  await clickButton(cards[0],'查看分析与候选');
+  assert.equal(analysisAttempt(get('video-analysis-detail'),'a-latest').getAttribute('aria-pressed'),'true');
+  assert.deepEqual(all(detailsNamed(get('video-analysis-detail'),'分析历史')).filter(node=>node.tagName==='BUTTON')
+    .map(node=>node.getAttribute('data-analysis-id')),['a-latest','a-failed','a-success']);
+  assert.deepEqual(input,snapshot,'rendering must not rewrite or reorder raw catalog history');
+  assert.ok(requests.every(row=>row.method==='GET'),'browsing must never commission another analysis');
+});
+
+test('latest queued and running attempts stay visible while a successful attempt remains in history', async t => {
+  for(const [state,label]of [['queued','等待分析'],['running','正在分析']]) {
+    const input=referenceAnalysisCatalog();Object.assign(input.analyses.at(-1),{state,error:null});
+    const {app,get,requests}=mountedAnalysisLibrary(t,deepFreeze(input));await app.ready;
+    const card=analysisCards(get('video-analyses')).find(node=>node.getAttribute('data-reference-id')==='ref-a');
+    assert.equal(card.getAttribute('data-analysis-id'),'a-latest');assert.match(card.textContent,new RegExp(label));
+    assert.doesNotMatch(card.textContent,/待选学习片段/);
+    await clickButton(card,'查看分析与候选');
+    assert.equal(analysisStatus(get('video-analysis-detail')).querySelector('strong').textContent,label);
+    assert.equal(analysisAttempt(get('video-analysis-detail'),'a-success').getAttribute('aria-pressed'),'false');
+    assert.ok(requests.every(row=>row.method==='GET'));app.destroy();
+  }
+});
+
+test('history browsing shows the selected failure and submits an old successful candidate with its original identity and index', async t => {
+  installFormDataShim(t);
+  const input=deepFreeze(referenceAnalysisCatalog()),snapshot=structuredClone(input);
+  const {app,get,requests}=mountedAnalysisLibrary(t,input);await app.ready;
+  await clickButton(analysisCards(get('video-analyses'))[0],'查看分析与候选');
+  detailsNamed(get('video-analysis-detail'),'分析历史').open=true;
+  await analysisAttempt(get('video-analysis-detail'),'a-failed').handlers.click();
+  const failedStatus=analysisStatus(get('video-analysis-detail'));
+  assert.match(failedStatus.textContent,/old_analysis_timeout/);assert.doesNotMatch(failedStatus.textContent,/latest_analysis_failed/);
+  assert.equal(analysisAttempt(get('video-analysis-detail'),'a-failed').getAttribute('aria-pressed'),'true');
+  assert.equal(detailsNamed(get('video-analysis-detail'),'分析历史').open,true);
+  await analysisAttempt(get('video-analysis-detail'),'a-success').handlers.click();
+  const choices=all(get('video-analysis-detail')).filter(node=>node.tagName==='BUTTON'&&node.textContent==='选择这个片段');
+  assert.equal(choices.length,2);await choices[1].handlers.click();
+  assert.equal(get('video-form-panel').hidden,false);
+  assert.equal(get('video-analysis-id').value,'a-success');assert.equal(Number(get('video-segment-index').value),1);
+  assert.equal(get('video-reference-id').value,'ref-a');assert.equal(get('video-name').value,'HiddenWaterfall 云瀑');
+  assert.equal(Number(get('video-start').value),21);assert.equal(Number(get('video-end').value),28);
+  assert.ok(requests.every(row=>row.method==='GET'),'choosing a candidate only fills the form');
+  await get('video-form').handlers.submit({preventDefault(){}});
+  const posts=requests.filter(row=>row.method==='POST');assert.equal(posts.length,1);
+  assert.ok(posts[0].path.endsWith('/projects'));
+  assert.equal(posts[0].body.analysis_id,'a-success');assert.equal(posts[0].body.segment_index,1);
+  assert.deepEqual(posts[0].body.reference_ids,['ref-a']);
+  assert.equal(posts[0].body.start_seconds,21);assert.equal(posts[0].body.end_seconds,28);
+  assert.equal(posts[0].body.goal,'学习云瀑的前后遮挡');assert.deepEqual(input,snapshot);
+});
+
+test('search includes older goals and candidate titles while the form lists one latest card per selected reference', async t => {
+  const {app,get,requests}=mountedAnalysisLibrary(t,deepFreeze(referenceAnalysisCatalog()));await app.ready;
+  for(const query of ['historical-goal','hiddenwaterfall']) {
+    get('video-search').value=query;await get('video-search').handlers.input();
+    assert.deepEqual(analysisCards(get('video-analyses')).map(node=>node.getAttribute('data-analysis-id')),['a-latest']);
+  }
+  get('video-search').value='does-not-exist';await get('video-search').handlers.input();
+  assert.equal(analysisCards(get('video-analyses')).length,0);
+  get('video-search').value='';await get('video-search').handlers.input();
+  await get('video-new').handlers.click();
+  assert.deepEqual(analysisCards(get('video-form-analyses')).map(node=>node.getAttribute('data-analysis-id')),['a-latest','b-success']);
+  get('video-saved-reference').value='ref-a';await get('video-saved-reference').handlers.change();
+  assert.deepEqual(analysisCards(get('video-form-analyses')).map(node=>node.getAttribute('data-analysis-id')),['a-latest']);
+  await clickButton(analysisCards(get('video-form-analyses'))[0],'查看分析与候选');
+  await analysisAttempt(get('video-analysis-detail'),'a-success').handlers.click();
+  await clickButton(get('video-analysis-detail'),'返回填写需求');
+  assert.equal(get('video-form-panel').hidden,false);assert.equal(get('video-reference-id').value,'ref-a');
+  assert.ok(requests.every(row=>row.method==='GET'));
+});
+
+test('polling refreshes grouped history and latest status while preserving an explicitly selected older attempt', async t => {
+  const initial=referenceAnalysisCatalog();Object.assign(initial.analyses.at(-1),{state:'running',error:null});
+  const {app,get,requests,setCatalog,poll}=mountedAnalysisLibrary(t,deepFreeze(initial));await app.ready;
+  await clickButton(analysisCards(get('video-analyses'))[0],'查看分析与候选');
+  detailsNamed(get('video-analysis-detail'),'分析历史').open=true;
+  await analysisAttempt(get('video-analysis-detail'),'a-failed').handlers.click();
+  const next=structuredClone(initial);
+  Object.assign(next.analyses.at(-1),{state:'completed',candidates:[{title:'新完成片段',learning_goal:'新目标',start_seconds:5,end_seconds:9}]});
+  next.analyses.push({id:'a-newest',reference_id:'ref-a',created_at:400,state:'queued',goal:'新排队的分析'});
+  setCatalog(deepFreeze(next));await poll();
+  const card=analysisCards(get('video-analyses'))[0];assert.equal(card.getAttribute('data-analysis-id'),'a-newest');
+  assert.match(card.textContent,/等待分析/);assert.match(card.textContent,/4 次分析/);
+  const host=get('video-analysis-detail'),history=detailsNamed(host,'分析历史');
+  assert.equal(history.open,true);assert.match(history.querySelector('summary').textContent,/4 次/);
+  assert.equal(analysisAttempt(host,'a-failed').getAttribute('aria-pressed'),'true');
+  assert.equal(analysisAttempt(host,'a-newest').getAttribute('aria-pressed'),'false');
+  assert.match(analysisStatus(host).textContent,/old_analysis_timeout/);
+  assert.match(history.textContent,/待选学习片段/,'history-only changes must invalidate the detail cache');
+  await clickButton(host,'返回视频学习库');await clickButton(analysisCards(get('video-analyses'))[0],'查看分析与候选');
+  assert.equal(analysisAttempt(get('video-analysis-detail'),'a-newest').getAttribute('aria-pressed'),'true');
+  assert.ok(requests.every(row=>row.method==='GET'));
+});
+
+test('owner changes clear chosen history and prevent retained controls from exposing the previous account', async t => {
+  const {app,get,requests,setCatalog}=mountedAnalysisLibrary(t,deepFreeze(referenceAnalysisCatalog()));await app.ready;
+  await clickButton(analysisCards(get('video-analyses'))[0],'查看分析与候选');
+  const oldHistory=analysisAttempt(get('video-analysis-detail'),'a-success');await oldHistory.handlers.click();
+  const oldChoice=all(get('video-analysis-detail')).filter(node=>node.tagName==='BUTTON'&&node.textContent==='选择这个片段')[1];
+  await oldChoice.handlers.click();assert.equal(get('video-analysis-id').value,'a-success');
+  setCatalog(deepFreeze({...catalog(),owner_key:'other-video-owner',references:[{id:'ref-a',file_name:'另一账号.mp4',duration_seconds:40}],
+    analyses:[{id:'a-success',reference_id:'ref-a',created_at:500,state:'completed',goal:'另一账号的分析',candidates:[]}]}));
+  await app.controller.refresh();
+  assert.equal(get('video-analysis-id').value,'');assert.equal(get('video-segment-index').value,'');
+  assert.equal(get('video-reference-id').value,'');assert.equal(get('video-analysis-detail').textContent,'');
+  assert.equal(get('video-home').hidden,false);assert.equal(get('video-form-panel').hidden,true);
+  await oldChoice.handlers.click();assert.equal(get('video-analysis-id').value,'');
+  await oldHistory.handlers.click();
+  assert.match(get('video-analysis-detail').textContent,/另一账号的分析/);
+  assert.doesNotMatch(get('video-analysis-detail').textContent,/HISTORICAL-GOAL|old_analysis_timeout|HiddenWaterfall/);
+  assert.match(detailsNamed(get('video-analysis-detail'),'分析历史').querySelector('summary').textContent,/1 次/);
+  assert.ok(requests.every(row=>row.method==='GET'));
+});
+
 test('mounted new, continued and fresh forms reset and submit the one-hour one-round defaults', async t => {
   const formDoc=videoFormDocument(), get=id=>formDoc.getElementById(id), sent=[];
   const current=project({candidates:[{id:'work',work_kind:'reproduction',media_url:'/api/video-lab/projects/video-one/artifacts/media'}]});

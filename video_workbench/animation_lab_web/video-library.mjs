@@ -484,13 +484,48 @@ export function renderVideoCard(doc, project, {root, onOpen}) {
     + (videoCandidates(project).length ? ' · ' + videoCandidates(project).length + ' 份作品' : ''))); article.append(body); return article;
 }
 const analysisCandidates = analysis => rows(analysis?.candidates ?? analysis?.candidate_segments);
+const analysisCreatedAt = analysis => typeof analysis?.created_at === 'number' && Number.isFinite(analysis.created_at)
+  ? analysis.created_at : -Infinity;
+export function groupVideoAnalyses(analyses) {
+  const groups = new Map();
+  for (const [index, analysis] of rows(analyses).entries()) {
+    if (!analysis || typeof analysis !== 'object') continue;
+    const referenceId = text(analysis.reference_id).trim() ? analysis.reference_id : null;
+    // A missing reference cannot establish that two attempts concern the same video.
+    const key = referenceId === null ? viewKey('unknown-reference', index) : viewKey('reference', referenceId);
+    if (!groups.has(key)) groups.set(key, {reference_id: referenceId, entries: []});
+    groups.get(key).entries.push({analysis, index});
+  }
+  const newestFirst = (a, b) => {
+    const first = analysisCreatedAt(a.analysis), second = analysisCreatedAt(b.analysis);
+    return first === second ? a.index - b.index : first > second ? -1 : 1;
+  };
+  return [...groups.values()].map(group => {
+    group.entries.sort(newestFirst);
+    return {...group, latest: group.entries[0]};
+  }).sort((a, b) => newestFirst(a.latest, b.latest)).map(group => ({reference_id: group.reference_id,
+    latest: group.latest.analysis, history: group.entries.map(entry => entry.analysis)}));
+}
+export function videoAnalysisGroupMatches(group, query, reference = null) {
+  const needle = text(query).trim().toLocaleLowerCase();
+  return !needle || [reference?.file_name, reference?.source_url, ...group.history.flatMap(analysis =>
+    [analysis.goal, analysis.title, ...analysisCandidates(analysis).map(candidate => candidate.title)])]
+    .join('\n').toLocaleLowerCase().includes(needle);
+}
+const analysisDate = analysis => Number.isFinite(analysisCreatedAt(analysis))
+  ? new Date(analysis.created_at * 1000).toLocaleString() : '创建时间未记录';
+const analysisHistoryKey = analysis => text(analysis.reference_id).trim()
+  ? viewKey('analysis-history', 'reference', analysis.reference_id)
+  : viewKey('analysis-history', 'unknown-reference', analysis.id);
 function analysisState(analysis) {
-  return ({queued: '等待分析', running: '正在分析', stopping: '正在停止分析', failed: '分析失败',
+  return ({queued: '等待分析', running: '正在分析', observing_reference: '正在补充参考画面', stopping: '正在停止分析', failed: '分析失败',
     cancelled: '分析已停止', submission_unknown: '提交结果待核对'})[analysis.state]
     ?? (analysis.state === 'completed' ? analysisCandidates(analysis).length ? '待选学习片段' : '分析已结束' : videoState(analysis.state));
 }
-export function renderVideoAnalysisCard(doc, analysis, {reference = null, onOpen = () => {}} = {}) {
+export function renderVideoAnalysisCard(doc, analysis, {reference = null, history = [analysis], onOpen = () => {}} = {}) {
   const article = el(doc, 'article', 'effect-card video-card video-analysis-card');
+  article.setAttribute('data-analysis-id', analysis.id);
+  if (text(analysis.reference_id).trim()) article.setAttribute('data-reference-id', analysis.reference_id);
   const image = el(doc, 'div', 'video-card-placeholder');
   image.append(el(doc, 'span', '', '▷'), el(doc, 'small', '', '参考分析')); article.append(image);
   const body = el(doc, 'div', 'card-body');
@@ -498,18 +533,34 @@ export function renderVideoAnalysisCard(doc, analysis, {reference = null, onOpen
     el(doc, 'p', 'card-goal', text(analysis.goal).slice(0, 160) || '分析参考视频中的可学习效果片段。'),
     el(doc, 'span', 'badge', analysisState(analysis)));
   const count = analysisCandidates(analysis).length;
-  body.append(el(doc, 'div', 'card-meta', count ? count + ' 个候选片段' : '候选片段尚未生成'),
+  if (analysis.error) body.append(el(doc, 'p', 'small muted', '分析执行信息：' + (analysis.error.code ?? analysis.error)));
+  body.append(el(doc, 'div', 'card-meta', history.length + ' 次分析 · ' + (count ? count + ' 个候选片段' : '候选片段尚未生成')),
     button(doc, '查看分析与候选', () => onOpen(analysis.id)));
   article.append(body); return article;
 }
 export function renderVideoAnalysisDetail(doc, analysis, {root, reference = null, locked = false,
-  onBack = () => {}, onStop = () => {}, onChoose = () => {}, backLabel = '返回视频学习库'} = {}) {
+  history = [analysis], onSelectAnalysis = () => {}, onBack = () => {}, onStop = () => {}, onChoose = () => {}, backLabel = '返回视频学习库'} = {}) {
   reference = analysis.reference_observation ?? reference;
   const fragment = doc.createDocumentFragment(), header = el(doc, 'div', 'detail-heading'), intro = el(doc, 'div');
   intro.append(el(doc, 'p', 'eyebrow', '参考视频分析'), el(doc, 'h1', '', reference?.file_name || '参考视频分析'),
     el(doc, 'p', 'muted', analysis.goal)); header.append(intro);
   fragment.append(button(doc, backLabel, onBack), header);
+  const attempts = stateKey(el(doc, 'details', 'technical-details video-analysis-history'), analysisHistoryKey(analysis));
+  attempts.append(el(doc, 'summary', '', '分析历史（' + history.length + ' 次）'));
+  const historyList = el(doc, 'ol', 'video-history');
+  for (const [index, attempt] of history.entries()) {
+    const item = el(doc, 'li'), content = el(doc, 'div');
+    content.append(el(doc, 'strong', '', (index === 0 ? '最新分析' : '历史分析') + ' · ' + analysisState(attempt)),
+      el(doc, 'p', 'small muted', analysisDate(attempt)), el(doc, 'p', 'small muted', text(attempt.goal).slice(0, 160)));
+    if (attempt.error) content.append(el(doc, 'p', 'small muted', '分析执行信息：' + (attempt.error.code ?? attempt.error)));
+    const select = button(doc, attempt.id === analysis.id ? '正在查看' : '查看这次分析', () => onSelectAnalysis(attempt.id));
+    select.setAttribute('aria-pressed', String(attempt.id === analysis.id));
+    select.setAttribute('data-analysis-id', attempt.id);
+    item.append(content, select); historyList.append(item);
+  }
+  attempts.append(historyList); fragment.append(attempts);
   const status = el(doc, 'div', 'video-status'); status.append(el(doc, 'strong', '', analysisState(analysis)),
+    el(doc, 'p', 'small muted', (history[0]?.id === analysis.id ? '最新分析' : '正在查看历史分析') + ' · ' + analysisDate(analysis)),
     el(doc, 'p', 'small muted', '先查看候选，再选择要学习的片段。选择只填写需求，点击“开始视频学习”才会制作。'));
   if (!['completed', 'failed', 'cancelled'].includes(analysis.state)) status.append(button(doc, '停止本次分析', onStop,
     {disabled: locked || analysis.state === 'stopping'}));
@@ -662,10 +713,10 @@ export function updateVideoDetail(doc, host, project, options) {
     (key, value) => key === 'updated_at' ? undefined : value);
   return updateVideoView(host, viewKey(options.ownerKey ?? null, project.id), signature, () => renderVideoDetail(doc, project, options));
 }
-function updateVideoAnalysisDetail(doc, host, analysis, options) {
-  const signature = JSON.stringify({analysis, reference: options.reference, locked: options.locked, backLabel: options.backLabel},
+export function updateVideoAnalysisDetail(doc, host, analysis, options) {
+  const signature = JSON.stringify({analysis, history: options.history, reference: options.reference, locked: options.locked, backLabel: options.backLabel},
     (key, value) => key === 'updated_at' ? undefined : value);
-  return updateVideoView(host, viewKey(options.ownerKey ?? null, 'analysis', analysis.id), signature,
+  return updateVideoView(host, viewKey(options.ownerKey ?? null, analysisHistoryKey(analysis)), signature,
     () => renderVideoAnalysisDetail(doc, analysis, options));
 }
 function updateVideoView(host, scope, signature, render) {
@@ -759,19 +810,19 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   };
   const renderCards = () => {
     const catalog = currentCatalog(controller.state), projects = rows(catalog?.projects), analyses = rows(catalog?.analyses), query = $('video-search').value;
+    const groups = groupVideoAnalyses(analyses);
     const filtered = projects.filter(project => videoProjectMatches(project, query));
     $('video-cards').replaceChildren(...filtered.map(project => renderVideoCard(doc, project, {root, onOpen: async id => {
       await controller.open(id); if (controller.state.detail?.id === id) { show('detail'); render(controller.state); }
     }})));
-    $('video-count').textContent = projects.length + ' 个学习项目' + (analyses.length ? ' · ' + analyses.length + ' 份参考分析' : '');
+    $('video-count').textContent = projects.length + ' 个学习项目' + (groups.length ? ' · ' + groups.length + ' 个参考视频 · ' + analyses.length + ' 次分析' : '');
     $('video-empty').hidden = projects.length > 0 || analyses.length > 0;
     if (projects.length && !filtered.length) $('video-cards').append(el(doc, 'p', 'muted', '没有符合条件的学习项目。'));
     $('video-analyses-section').hidden = !analyses.length;
-    const refs = rows(catalog?.references), needle = query.trim().toLocaleLowerCase();
-    const matches = analyses.filter(row => !needle || [refs.find(ref => ref.id === row.reference_id)?.file_name,
-      row.goal, ...analysisCandidates(row).map(candidate => candidate.title)].join('\n').toLocaleLowerCase().includes(needle));
-    $('video-analyses').replaceChildren(...matches.map(analysis => renderVideoAnalysisCard(doc, analysis,
-      {reference: refs.find(ref => ref.id === analysis.reference_id), onOpen: id => openAnalysis(id)})));
+    const refs = rows(catalog?.references);
+    const matches = groups.filter(group => videoAnalysisGroupMatches(group, query, refs.find(ref => ref.id === group.reference_id)));
+    $('video-analyses').replaceChildren(...matches.map(group => renderVideoAnalysisCard(doc, group.latest,
+      {history: group.history, reference: refs.find(ref => ref.id === group.reference_id), onOpen: id => openAnalysis(id)})));
     if (analyses.length && !matches.length) $('video-analyses').append(el(doc, 'p', 'muted', '没有符合条件的参考分析。'));
   };
   const render = state => {
@@ -803,15 +854,17 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
       if (refs.some(ref => ref.id === previous)) select.value = previous;
     }
     const selectedReference = $('video-reference-id').value;
-    const formAnalyses = selectedReference ? analyses.filter(row => row.reference_id === selectedReference) : analyses;
+    const groups = groupVideoAnalyses(analyses);
+    const formAnalyses = selectedReference ? groups.filter(group => group.reference_id === selectedReference) : groups;
     $('video-form-analyses-section').hidden = !formAnalyses.length;
-    $('video-form-analyses').replaceChildren(...formAnalyses.map(analysis => renderVideoAnalysisCard(doc, analysis,
-      {reference: refs.find(ref => ref.id === analysis.reference_id), onOpen: id => openAnalysis(id, 'form')})));
+    $('video-form-analyses').replaceChildren(...formAnalyses.map(group => renderVideoAnalysisCard(doc, group.latest,
+      {history: group.history, reference: refs.find(ref => ref.id === group.reference_id), onOpen: id => openAnalysis(id, 'form')})));
     $('video-analyze').disabled = !controller.enabled() || controller.locked();
     if (shown === 'analysis') {
       const analysis = analyses.find(row => row.id === selectedAnalysisId);
       if (!analysis) { selectedAnalysisId = null; show('home'); $('video-analysis-detail').replaceChildren(); }
-      else updateVideoAnalysisDetail(doc, $('video-analysis-detail'), analysis, {root, reference: refs.find(ref => ref.id === analysis.reference_id),
+      else updateVideoAnalysisDetail(doc, $('video-analysis-detail'), analysis, {root, history: groups.find(group => group.history.includes(analysis))?.history ?? [analysis],
+        reference: refs.find(ref => ref.id === analysis.reference_id), onSelectAnalysis: id => openAnalysis(id, analysisReturnTo),
         ownerKey: state.owner_key, locked: controller.locked(), backLabel: analysisReturnTo === 'form' ? '返回填写需求' : '返回视频学习库',
         onBack: () => { show(analysisReturnTo); render(controller.state); }, onStop: () => void controller.stopAnalysis(analysis),
         onChoose: index => {
