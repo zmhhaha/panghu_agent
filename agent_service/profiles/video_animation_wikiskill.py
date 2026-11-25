@@ -60,11 +60,11 @@ class VideoAnimationWikiSkillProfile:
         require(type(task) is dict and set(task) == {'input_sha256'})
         checksum(task['input_sha256'])
 
-    def _input(self, workspace, task, *, input_root=None):
+    def _input(self, workspace, task, *, input_root=None, compilation_revision='1'):
         self.validate_task(task)
         root = Path(workspace) / 'inputs' if input_root is None else Path(input_root)
         raw = _read(root, INPUT_NAME, INPUT_MAX_BYTES)
-        document = validate_input(decode_video_json(raw))
+        document = validate_input(decode_video_json(raw), compilation_revision=compilation_revision)
         require(raw == canonical_bytes(document) and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
                 'animation_wikiskill_input_binding_mismatch')
         files = {INPUT_NAME: raw}
@@ -75,7 +75,7 @@ class VideoAnimationWikiSkillProfile:
                         for path in [root, *root.parents, *entries]), 'animation_wikiskill_unexpected_input')
         require({path.relative_to(root).as_posix() for path in entries if path.is_file()} == set(files),
                 'animation_wikiskill_unexpected_input')
-        validate_input_files(document, files)
+        validate_input_files(document, files, compilation_revision=compilation_revision)
         return document, files
 
     def validate_inputs(self, workspace, task, *, input_root=None):

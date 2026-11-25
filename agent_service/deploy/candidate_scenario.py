@@ -199,7 +199,7 @@ def load_scenario(path, source_dir, parent_dir, policy):
         and value['profile'] == policy.name and type(value['timeout_seconds']) is int
         and 1 <= value['timeout_seconds'] <= policy.max_timeout_seconds)
     _uuid(value['scenario_id'])
-    implementation(policy.name).validate_task(value['task'])
+    implementation(policy.name, policy.revision).validate_task(value['task'])
     require(type(value['inputs']) is list and len(value['inputs']) <= policy.max_input_files)
     files, total = {}, 0
     for row in value['inputs']:
@@ -352,7 +352,7 @@ def load_scenario(path, source_dir, parent_dir, policy):
         # Validate the exact root-owned, explicitly projected JSON/frame files.
         # No temporary workspace, renamed inputs, or implicit source is created.
         require(export is None, 'candidate_animation_role_business_export_not_supported')
-        implementation(policy.name).validate_inputs(None, task, input_root=source_dir)
+        implementation(policy.name, policy.revision).validate_inputs(None, task, input_root=source_dir)
     elif policy.name == 'video.motion-plan.v1':
         require(set(files) == {'motion-input.json'}, 'candidate_motion_input_required')
         from agent_service.profiles.video import decode_video_json

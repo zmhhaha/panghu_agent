@@ -287,7 +287,8 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
             policy = registry.policy(item['profile'], item['profile_revision'])
             from .profiles import implementation
             from .registry import required_model_capabilities
-            item['required_model_capabilities'] = list(required_model_capabilities(implementation(item['profile'])))
+            item['required_model_capabilities'] = list(required_model_capabilities(
+                implementation(item['profile'], item['profile_revision'])))
             item['ready'] = item['configured'] and await run_in_threadpool(_ready, adapters.get(engine), policy)
             if getattr(adapters.get(engine), 'provisioning', None) == 'kubernetes_per_attempt':
                 item['provisioning'] = 'kubernetes_per_attempt'

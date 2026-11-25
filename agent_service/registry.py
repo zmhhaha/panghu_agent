@@ -103,7 +103,7 @@ class TaskContract(_Record):
 
     @model_validator(mode='after')
     def reviewed_handler(self):
-        handler = implementation(self.name)
+        handler = implementation(self.name, self.revision)
         if (self.task_schema != handler.task_schema or self.output_schema != handler.output_schema
                 or set(self.required_tools) != set(handler.required_tools)
                 or not {'text', 'tool_calls'} <= set(self.required_model_capabilities)):
@@ -118,11 +118,11 @@ class TaskContract(_Record):
 
     @property
     def task_validator(self):
-        return implementation(self.name).validate_task
+        return implementation(self.name, self.revision).validate_task
 
     def limits(self):
         return {key: getattr(self, key) if getattr(self, key) is not None else maximum
-                for key, maximum in implementation(self.name).limits.as_dict().items()}
+                for key, maximum in implementation(self.name, self.revision).limits.as_dict().items()}
 
 
 class Resource(_Record):
@@ -195,9 +195,10 @@ class ToolEnvironment(_Record):
         elif 'read_compilation_input' in self.tools:
             from .compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
                 COMPILATION_EVIDENCE_ENVIRONMENT_NAME, COMPILATION_CHECKED_ENVIRONMENT_NAME,
+                COMPILATION_CAPACITY_ENVIRONMENT_NAME,
                 compilation_input_environment_revision, compilation_tools)
             if (self.name not in {COMPILATION_INPUT_ENVIRONMENT_NAME, COMPILATION_EVIDENCE_ENVIRONMENT_NAME,
-                                 COMPILATION_CHECKED_ENVIRONMENT_NAME}
+                                 COMPILATION_CHECKED_ENVIRONMENT_NAME, COMPILATION_CAPACITY_ENVIRONMENT_NAME}
                     or set(self.tools) != compilation_tools(self.name)
                     or self.revision != compilation_input_environment_revision(self.model_dump(mode='json'))):
                 raise ValueError('Compilation reader requires its fixed extension identity and tool scope')
@@ -372,7 +373,7 @@ class DeploymentRegistry:
                 environment.runtime_revision, environment.image_digest,
                 enabled=route.enabled, max_timeout_seconds=contract.max_timeout_seconds,
                 task_validator=contract.task_validator,
-                supports_inputs=implementation(contract.name).supports_inputs,
+                supports_inputs=implementation(contract.name, contract.revision).supports_inputs,
                 execution_binding=pins, task_schema=contract.task_schema,
                 output_schema=contract.output_schema, **contract.limits()))
         return cls(contracts, bundles, environments, bindings, ProfileRegistry(policies),
@@ -397,7 +398,7 @@ class DeploymentRegistry:
         return ProfilePolicy(c.name, c.revision, binding.engine, e.runtime_revision, e.image_digest,
             enabled=bool(active and active.execution_binding == pins and active.enabled),
             max_timeout_seconds=c.max_timeout_seconds, task_validator=c.task_validator,
-            supports_inputs=implementation(c.name).supports_inputs, execution_binding=pins,
+            supports_inputs=implementation(c.name, c.revision).supports_inputs, execution_binding=pins,
             task_schema=c.task_schema, output_schema=c.output_schema, **c.limits())
 
     def contract(self, name, revision):

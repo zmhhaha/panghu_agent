@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import time
 
-from agent_service.animation_wikiskill_contract import make_snapshot, build_input, input_files
+from agent_service.animation_wikiskill_contract import make_snapshot, build_input, input_files, require
 from agent_service.contracts import ServiceError
-from .animation_wikiskill_store import TERMINAL, validate_start
+from .animation_wikiskill_store import TERMINAL, stored_compiler_revision, validate_start
 
 _REMOTE_TERMINAL = {'failed', 'cancelled', 'timed_out', 'quarantined', 'needs_input'}
 
@@ -30,8 +30,19 @@ class WikiSkillCoordinator:
             if prior['request_sha256'] != digest(request):
                 raise ServiceError('animation_wikiskill_request_conflict', 409)
             return prior
-        snapshot = make_snapshot(owner, self.capture(owner), captured_at=self.clock())
-        return self.store.create(owner, request, snapshot, build_input(snapshot, note=request['note']))
+        revision = '2'
+        snapshot = make_snapshot(owner, self.capture(owner), captured_at=self.clock(),
+                                 compilation_revision=revision)
+        document = build_input(snapshot, note=request['note'], compilation_revision=revision)
+        return self.store.create(owner, request, snapshot, document, compilation_revision=revision)
+
+    def _gateway_for_revision(self, revision):
+        factory = getattr(self.gateway, 'for_revision', None)
+        if callable(factory):
+            return factory(revision)
+        require(getattr(self.gateway, 'profile_revision', revision) == revision,
+                'animation_wikiskill_compiler_revision_unavailable', 503)
+        return self.gateway
 
     def get(self, owner, job_id):
         return self.store.get(owner, job_id)
@@ -63,11 +74,13 @@ class WikiSkillCoordinator:
             return self.store.get(owner, job_id)
         try:
             operation = self.store.operation(owner, job_id, token)
+            revision = stored_compiler_revision(operation)
+            gateway = self._gateway_for_revision(revision)
             state = operation['state']
             document = operation['input_document']
             if state in {'submitting', 'submission_unknown'}:
                 try:
-                    remote = self.gateway.lookup(operation['operation_id'])
+                    remote = gateway.lookup(operation['operation_id'])
                 except ServiceError as error:
                     self.store.change(owner, job_id, token, state='submission_unknown',
                         error=dict(code='animation_wikiskill_submission_unknown', lookup_code=error.code))
@@ -78,17 +91,17 @@ class WikiSkillCoordinator:
                     return self.store.get(owner, job_id)
                 self.store.change(owner, job_id, token, state='running', job_id=remote['job_id'], error=None,
                     remote_receipt=remote, remote_state=remote['state'],
-                    remote_stop_proven=self.gateway.stopped(remote))
+                    remote_stop_proven=gateway.stopped(remote))
                 return self.store.get(owner, job_id)
             if state in {'queued', 'uploading'}:
                 if operation['deadline_at'] <= self.clock():
                     self.store.change(owner, job_id, token, state='failed',
                         error=dict(code='animation_wikiskill_deadline_expired_before_submission'))
                     return self.store.get(owner, job_id)
-                self.gateway.preflight(operation['deadline_at'])
+                gateway.preflight(operation['deadline_at'])
                 self.store.change(owner, job_id, token, state='uploading', error=None)
-                snapshot = self.store.snapshot(owner, operation['snapshot_id'])
-                refs = self.gateway.upload(document, input_files(snapshot, document))
+                snapshot = self.store.snapshot(owner, operation['snapshot_id'], compilation_revision=revision)
+                refs = gateway.upload(document, input_files(snapshot, document, compilation_revision=revision))
                 self.store.change(owner, job_id, token, state='prepared', input_refs=refs, error=None)
                 return self.store.get(owner, job_id)
             if state == 'prepared':
@@ -96,7 +109,7 @@ class WikiSkillCoordinator:
                     self.store.change(owner, job_id, token, state='failed',
                         error=dict(code='animation_wikiskill_deadline_expired_before_submission'))
                     return self.store.get(owner, job_id)
-                admit = self.gateway.prepare_submission(operation['operation_id'], document,
+                admit = gateway.prepare_submission(operation['operation_id'], document,
                     operation['deadline_at'], operation['input_refs'])
                 self.store.change(owner, job_id, token, state='submitting', submission_attempted=True, error=None)
                 try:
@@ -108,15 +121,15 @@ class WikiSkillCoordinator:
                     return self.store.get(owner, job_id)
                 self.store.change(owner, job_id, token, state='running', job_id=remote['job_id'],
                     remote_receipt=remote, remote_state=remote['state'],
-                    remote_stop_proven=self.gateway.stopped(remote), error=None)
+                    remote_stop_proven=gateway.stopped(remote), error=None)
                 return self.store.get(owner, job_id)
             if state == 'running':
-                remote = self.gateway.poll(operation['job_id'])
-                stopped = self.gateway.stopped(remote)
+                remote = gateway.poll(operation['job_id'])
+                stopped = gateway.stopped(remote)
                 self.store.change(owner, job_id, token, remote_receipt=remote,
                     remote_state=remote['state'], remote_stop_proven=stopped)
                 if remote['state'] == 'completed' and stopped:
-                    result = self.gateway.collect(operation['job_id'], operation['input_sha256'], document)
+                    result = gateway.collect(operation['job_id'], operation['input_sha256'], document)
                     self.store.publish(owner, job_id, token, result)
                 elif remote['state'] in _REMOTE_TERMINAL and stopped:
                     self.store.change(owner, job_id, token, state='failed',

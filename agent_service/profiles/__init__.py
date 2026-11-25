@@ -2,7 +2,7 @@
 from .base import ProfileImplementation, ProfileLimits
 
 
-def implementation(name):
+def implementation(name, revision='1'):
     if name in {'video.reference-learning-author.v1', 'video.reference-learning-review.v1'}:
         from .video_reference_learning import VideoReferenceLearningProfile
         return VideoReferenceLearningProfile(review=name == 'video.reference-learning-review.v1')
@@ -14,7 +14,7 @@ def implementation(name):
         return VideoAnimationCollaborationProfile()
     if name == 'video.animation-wikiskill-compile.v4':
         from .video_animation_wikiskill_v4 import VideoAnimationWikiSkillV4Profile
-        return VideoAnimationWikiSkillV4Profile()
+        return VideoAnimationWikiSkillV4Profile(profile_revision=revision)
     if name == 'video.animation-wikiskill-compile.v3':
         from .video_animation_wikiskill_v3 import VideoAnimationWikiSkillV3Profile
         return VideoAnimationWikiSkillV3Profile()
