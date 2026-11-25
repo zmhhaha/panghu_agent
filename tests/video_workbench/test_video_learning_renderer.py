@@ -1,5 +1,6 @@
 """Immutable full-video custody; synthetic fixtures do not establish artistry."""
 from copy import deepcopy
+import hashlib
 import json
 
 import pytest
@@ -111,6 +112,90 @@ def test_failed_container_keeps_original_stop_proof(renderer):
     result=value.render('failed',source(),document())
     assert result['status']=='failed' and result['stop_proven'] and not result['technical_passed']
     assert 'media_path' not in result
+
+
+def with_native_progress(renderer, monkeypatch):
+    """Complete native-output custody fixture; its media is synthetic."""
+    value, execution = renderer
+
+    def capture(root):
+        outcome = execution(root)
+        path = root / 'work/render-receipt.json'
+        receipt = json.loads(path.read_bytes())
+        receipt['diagnostics'] = dict(schema='video.method-render-diagnostics.v1', stage='media',
+            substage=None, frame=dict(index=0, name='seek-initial-reload.jpg', timestamp_seconds=0),
+            page_errors=[], blocked=[], crashed=False, history=[], elapsed_ms=123, stage_elapsed_ms=1,
+            remaining_ms=30000)
+        path.write_bytes(canonical_bytes(receipt))
+        (root / 'work/render-progress.json').write_bytes(canonical_bytes(receipt['diagnostics']))
+        return outcome
+
+    monkeypatch.setattr(shared, 'execute_method_render', capture)
+    return value, execution
+
+
+def test_existing_completed_native_output_reconciles_without_rerender_or_evidence_rewrite(renderer, monkeypatch):
+    value, execute = with_native_progress(renderer, monkeypatch)
+    # Reproduce the older collector's failure after the one native execution.
+    with monkeypatch.context() as previous:
+        previous.setattr(value, '_diagnostic_outputs', lambda *args: {})
+        with pytest.raises(ServiceError, match='render_extra_output'):
+            value.render('native-progress', source(), document())
+    root = value._directory('native-progress')
+    row, _ = value._row('native-progress', historical=True)
+    assert row['proof_sha256'] is None and row['result'] is None
+    evidence = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in root.rglob('*') if p.is_file()}
+    result = value.lookup('native-progress')
+    assert result['status'] == 'rendered' and result['technical_passed'] is True and result['stop_proven'] is True
+    assert value.lookup('native-progress') == result and execute.calls == 1
+    assert {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in evidence} == evidence
+
+
+@pytest.mark.parametrize('mutation', ['mismatch', 'schema', 'oversized', 'directory', 'extra'])
+def test_native_progress_is_bounded_bound_to_receipt_and_does_not_allow_other_outputs(renderer, monkeypatch, mutation):
+    value, execute = with_native_progress(renderer, monkeypatch)
+    with monkeypatch.context() as previous:
+        previous.setattr(value, '_diagnostic_outputs', lambda *args: {})
+        with pytest.raises(ServiceError, match='render_extra_output'):
+            value.render('invalid-progress', source(), document())
+    root = value._directory('invalid-progress')
+    progress = root / 'work/render-progress.json'
+    receipt_path = root / 'work/render-receipt.json'
+    receipt = json.loads(receipt_path.read_bytes())
+    if mutation == 'mismatch':
+        value_json = json.loads(progress.read_bytes());value_json['elapsed_ms'] += 1
+        progress.write_bytes(canonical_bytes(value_json))
+    elif mutation == 'schema':
+        receipt['diagnostics']['schema'] = 'unbound-diagnostics'
+        progress.write_bytes(canonical_bytes(receipt['diagnostics']))
+        receipt_path.write_bytes(canonical_bytes(receipt))
+    elif mutation == 'oversized':
+        progress.write_bytes(b' ' * 65537)
+    elif mutation == 'directory':
+        progress.unlink();progress.mkdir()
+    else:
+        (root / 'work/arbitrary-output.json').write_bytes(b'{}')
+    with pytest.raises(ServiceError):
+        value.lookup('invalid-progress')
+    assert execute.calls == 1
+    assert value._row('invalid-progress', historical=True)[0]['proof_sha256'] is None
+
+
+def test_progress_bytes_remain_inside_the_total_evidence_budget(renderer, monkeypatch):
+    value, execute = with_native_progress(renderer, monkeypatch)
+    with monkeypatch.context() as previous:
+        previous.setattr(value, '_diagnostic_outputs', lambda *args: {})
+        with pytest.raises(ServiceError, match='render_extra_output'):
+            value.render('progress-budget', source(), document())
+    root = value._directory('progress-budget')
+    receipt = json.loads((root / 'work/render-receipt.json').read_bytes())
+    media_bytes = (root / 'work/output.mp4').stat().st_size
+    frame_bytes = sum(frame['bytes'] for frame in receipt['frames'] + receipt['seek_checks']['probes'])
+    monkeypatch.setattr(shared, 'MAX_EVIDENCE_BYTES', media_bytes + frame_bytes)
+    with pytest.raises(ServiceError, match='render_evidence_budget_exceeded'):
+        value.lookup('progress-budget')
+    assert execute.calls == 1
 
 
 def test_input_rebind_and_tampered_source_cannot_render_under_existing_claim(renderer):

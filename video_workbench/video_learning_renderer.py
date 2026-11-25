@@ -11,7 +11,7 @@ from pathlib import Path
 from agent_service.contracts import digest
 from agent_service.profiles import video_reference_learning as protocol
 from agent_service.profiles import video_animation_method as method
-from .animation_method_renderer import MethodAnimationRenderer, ASSET_SHA256, _require, _read
+from .animation_method_renderer import MethodAnimationRenderer, ASSET_SHA256, _require, _read, _json
 from .learning_drawing_libraries import drawing_libraries, validate_observation
 
 
@@ -118,6 +118,17 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         binding['input_sha256'] = digest(context)
         binding['learning_source_sha256'] = checked['source_sha256']
         return binding
+
+    def _diagnostic_outputs(self, work, request, receipt):
+        path = work / 'render-progress.json'
+        if not path.exists():
+            return {}
+        progress, raw = _json(path, 65536)
+        diagnostics = receipt.get('diagnostics')
+        _require(progress.get('schema') == 'video.method-render-diagnostics.v1'
+            and type(diagnostics) is dict and digest(progress) == digest(diagnostics),
+            'video_learning_render_diagnostics_changed', 409)
+        return {'render-progress.json': len(raw)}
 
     def _outputs(self, root, binding, outcome):
         receipt, raw, audio = super()._outputs(root, binding, outcome)

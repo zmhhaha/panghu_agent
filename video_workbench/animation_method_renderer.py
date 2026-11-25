@@ -727,6 +727,10 @@ class MethodAnimationRenderer:
             # the claim. A lost response never authorizes another container.
         return self.lookup(operation_id)
 
+    def _diagnostic_outputs(self, work, request, receipt):
+        """Subclass-owned auxiliary diagnostics; formal renders admit none."""
+        return {}
+
     def _outputs(self, root, binding, outcome):
         request = binding['request']
         work = root / 'work'
@@ -868,9 +872,10 @@ class MethodAnimationRenderer:
                      'animation_method_render_unexpected_audio')
         _require(receipt.get('sound_events_sha256') == digest(request['sound_events']),
                  'animation_method_render_sound_events_changed')
-        _require(total + len(media) <= MAX_EVIDENCE_BYTES,
+        diagnostics = self._diagnostic_outputs(work, request, receipt)
+        _require(total + len(media) + sum(diagnostics.values()) <= MAX_EVIDENCE_BYTES,
                  'animation_method_render_evidence_budget_exceeded')
-        allowed = {'frames', 'output.mp4', 'render-receipt.json'}
+        allowed = {'frames', 'output.mp4', 'render-receipt.json'} | diagnostics.keys()
         if expected_audio:
             allowed.add('sound-effects.wav')
         _require({p.name for p in work.iterdir()} <= allowed,

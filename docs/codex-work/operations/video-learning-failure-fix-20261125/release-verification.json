@@ -1,0 +1,87 @@
+{
+  "schema": "video.learning-failure-fix-evidence.v1",
+  "revision": "bbc0b4a68f91084eb906bf200721095b90b7cd4e",
+  "build": {
+    "built_image_id": "sha256:818aa8483afd41d6eec1ec0700ad91c72e8565d73288b168fd6d05a61e3415b4",
+    "deployments": 0,
+    "dockerfile": "video_workbench/Dockerfile.animation-creation-executor",
+    "dockerfile_sha256": "5e935e63cd33644bacefd51b238234bcdaf3219b220b057c990fe5e6cb059c8f",
+    "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89",
+    "model_requests": 0,
+    "pushed": true,
+    "revision": "bbc0b4a68f91084eb906bf200721095b90b7cd4e",
+    "revision_label_verified": true,
+    "role": "executor",
+    "schema": "agent-full-source-image-build.v1",
+    "source_context_sha256": null,
+    "source_files_manifest_sha256": "1b9c5a66072dcabe849d0d9373e9656d4224f39896f7c16cb7bbda5d0d2ef269",
+    "source_git_clean": true
+  },
+  "startup": {
+    "status": "passed",
+    "pod_uid": "aa80adf6-5819-44b5-841b-07fa6807bd2e",
+    "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89",
+    "model_submissions": 0,
+    "pumps_started": false,
+    "agent_write_requests": 0,
+    "persistent_state_unchanged": true,
+    "probe_pod_removed": true,
+    "failure_type": null,
+    "startup_receipt": {
+      "schema": "video.executor-startup-admission-preflight.v1",
+      "status": "passed",
+      "all_configured_startup_admissions_checked": true,
+      "configured_admissions": {
+        "engine_admission_file": "d7bb1fc9dc169f7e651c1f2826e4727d4f91c373d760300020f7eaf56e93a4a5",
+        "authoring_library_admission_file": "092beb94878bf613cbeb4c500120168bd41b1f7d12932766ca82f178747fa46a",
+        "manim_resource_admission_file": "24a64893ab8f3d4f0c3b067e844387528b0accfd9bb65946a43e401079a9f220",
+        "film_manim_admission_file": "f3e6ad682aa344d831193826e631cd7c4b282159f2c1cbc1a0a14dbf766f90de"
+      },
+      "pumps_checked": [
+        "film_resource_pump",
+        "film_review_pump",
+        "method_pump",
+        "picture_pump",
+        "pump",
+        "scene_space_pump",
+        "video_learning_pump",
+        "wikiskill_pump"
+      ],
+      "pumps_started": false,
+      "model_submissions": 0,
+      "agent_write_requests": 0
+    },
+    "actual_image_id": "docker-pullable://arm-cluster-master:5000/video-animation-creation@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89"
+  },
+  "deployment": {
+    "active_tasks": 0,
+    "analysis_or_learning_started": false,
+    "health": {
+      "executor": {
+        "status": 200
+      },
+      "lab": {
+        "status": 200
+      }
+    },
+    "model_requests": 0,
+    "protected_workloads_unchanged": true,
+    "retained_state_unchanged": true,
+    "status": "deployed_and_verified"
+  },
+  "full_database_state_verification": {
+    "status": "passed",
+    "sqlite_files": 30,
+    "all_tables_and_schema_unchanged": true,
+    "health": {
+      "executor": {
+        "status": 200
+      },
+      "lab": {
+        "status": 200
+      }
+    }
+  },
+  "worker_image_changed": false,
+  "five_recoveries_complete": false
+}

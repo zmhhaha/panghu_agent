@@ -270,6 +270,24 @@ def test_fractional_sound_values_bind_original_python_request_bytes(adapter):
     assert request['sound_events_sha256'] == digest(events)
 
 
+def test_formal_method_outputs_keep_rejecting_learning_progress_files(adapter, monkeypatch):
+    value, execution = adapter
+
+    def capture(root):
+        result = execution(root)
+        path = root / 'work/render-receipt.json'
+        receipt = json.loads(path.read_bytes())
+        receipt['diagnostics'] = dict(schema='video.method-render-diagnostics.v1', stage='media')
+        path.write_bytes(canonical_bytes(receipt))
+        (root / 'work/render-progress.json').write_bytes(canonical_bytes(receipt['diagnostics']))
+        return result
+
+    monkeypatch.setattr(renderer, 'execute_method_render', capture)
+    with pytest.raises(ServiceError, match='render_extra_output'):
+        value.render('formal-progress-is-not-admitted', SOURCE, document())
+    assert execution.calls == 1
+
+
 def test_container_adapter_grants_frozen_input_read_access_and_bounds_actual_timeout(tmp_path, monkeypatch):
     """Exercise the actual launch adapter with synthetic Docker CLI replies."""
     root = tmp_path / 'launch'
