@@ -1,0 +1,39 @@
+{
+  "validation": {
+    "projectId": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "id": "repair-video-learning-execution-failures",
+    "valid": true,
+    "result": {
+      "items": [
+        {
+          "id": "repair-video-learning-execution-failures",
+          "type": "change",
+          "valid": true,
+          "issues": [],
+          "durationMs": 89
+        }
+      ],
+      "summary": {
+        "totals": {
+          "items": 1,
+          "passed": 1,
+          "failed": 0
+        },
+        "byType": {
+          "change": {
+            "items": 1,
+            "passed": 1,
+            "failed": 0
+          }
+        }
+      },
+      "version": "1.0"
+    }
+  },
+  "change_revision": "fc1f7a6674ca892856f4cd0b54f9341438b5e070",
+  "tasks": {
+    "total": 6,
+    "completed": 6,
+    "remaining": 0
+  }
+}

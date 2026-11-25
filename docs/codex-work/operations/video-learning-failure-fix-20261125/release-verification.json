@@ -1,87 +1,189 @@
 {
   "schema": "video.learning-failure-fix-evidence.v1",
-  "revision": "bbc0b4a68f91084eb906bf200721095b90b7cd4e",
-  "build": {
-    "built_image_id": "sha256:818aa8483afd41d6eec1ec0700ad91c72e8565d73288b168fd6d05a61e3415b4",
-    "deployments": 0,
-    "dockerfile": "video_workbench/Dockerfile.animation-creation-executor",
-    "dockerfile_sha256": "5e935e63cd33644bacefd51b238234bcdaf3219b220b057c990fe5e6cb059c8f",
-    "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89",
-    "model_requests": 0,
-    "pushed": true,
+  "running_code_revision": "1749e6ff2f85c11aebf2b45197ff3f52583bc5ae",
+  "initial_runtime_release": {
+    "schema": "video.learning-failure-fix-evidence.v1",
     "revision": "bbc0b4a68f91084eb906bf200721095b90b7cd4e",
-    "revision_label_verified": true,
-    "role": "executor",
-    "schema": "agent-full-source-image-build.v1",
-    "source_context_sha256": null,
-    "source_files_manifest_sha256": "1b9c5a66072dcabe849d0d9373e9656d4224f39896f7c16cb7bbda5d0d2ef269",
-    "source_git_clean": true
-  },
-  "startup": {
-    "status": "passed",
-    "pod_uid": "aa80adf6-5819-44b5-841b-07fa6807bd2e",
-    "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89",
-    "model_submissions": 0,
-    "pumps_started": false,
-    "agent_write_requests": 0,
-    "persistent_state_unchanged": true,
-    "probe_pod_removed": true,
-    "failure_type": null,
-    "startup_receipt": {
-      "schema": "video.executor-startup-admission-preflight.v1",
+    "build": {
+      "built_image_id": "sha256:818aa8483afd41d6eec1ec0700ad91c72e8565d73288b168fd6d05a61e3415b4",
+      "deployments": 0,
+      "dockerfile": "video_workbench/Dockerfile.animation-creation-executor",
+      "dockerfile_sha256": "5e935e63cd33644bacefd51b238234bcdaf3219b220b057c990fe5e6cb059c8f",
+      "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89",
+      "model_requests": 0,
+      "pushed": true,
+      "revision": "bbc0b4a68f91084eb906bf200721095b90b7cd4e",
+      "revision_label_verified": true,
+      "role": "executor",
+      "schema": "agent-full-source-image-build.v1",
+      "source_context_sha256": null,
+      "source_files_manifest_sha256": "1b9c5a66072dcabe849d0d9373e9656d4224f39896f7c16cb7bbda5d0d2ef269",
+      "source_git_clean": true
+    },
+    "startup": {
       "status": "passed",
-      "all_configured_startup_admissions_checked": true,
-      "configured_admissions": {
-        "engine_admission_file": "d7bb1fc9dc169f7e651c1f2826e4727d4f91c373d760300020f7eaf56e93a4a5",
-        "authoring_library_admission_file": "092beb94878bf613cbeb4c500120168bd41b1f7d12932766ca82f178747fa46a",
-        "manim_resource_admission_file": "24a64893ab8f3d4f0c3b067e844387528b0accfd9bb65946a43e401079a9f220",
-        "film_manim_admission_file": "f3e6ad682aa344d831193826e631cd7c4b282159f2c1cbc1a0a14dbf766f90de"
-      },
-      "pumps_checked": [
-        "film_resource_pump",
-        "film_review_pump",
-        "method_pump",
-        "picture_pump",
-        "pump",
-        "scene_space_pump",
-        "video_learning_pump",
-        "wikiskill_pump"
-      ],
-      "pumps_started": false,
+      "pod_uid": "aa80adf6-5819-44b5-841b-07fa6807bd2e",
+      "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89",
       "model_submissions": 0,
-      "agent_write_requests": 0
-    },
-    "actual_image_id": "docker-pullable://arm-cluster-master:5000/video-animation-creation@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89"
-  },
-  "deployment": {
-    "active_tasks": 0,
-    "analysis_or_learning_started": false,
-    "health": {
-      "executor": {
-        "status": 200
+      "pumps_started": false,
+      "agent_write_requests": 0,
+      "persistent_state_unchanged": true,
+      "probe_pod_removed": true,
+      "failure_type": null,
+      "startup_receipt": {
+        "schema": "video.executor-startup-admission-preflight.v1",
+        "status": "passed",
+        "all_configured_startup_admissions_checked": true,
+        "configured_admissions": {
+          "engine_admission_file": "d7bb1fc9dc169f7e651c1f2826e4727d4f91c373d760300020f7eaf56e93a4a5",
+          "authoring_library_admission_file": "092beb94878bf613cbeb4c500120168bd41b1f7d12932766ca82f178747fa46a",
+          "manim_resource_admission_file": "24a64893ab8f3d4f0c3b067e844387528b0accfd9bb65946a43e401079a9f220",
+          "film_manim_admission_file": "f3e6ad682aa344d831193826e631cd7c4b282159f2c1cbc1a0a14dbf766f90de"
+        },
+        "pumps_checked": [
+          "film_resource_pump",
+          "film_review_pump",
+          "method_pump",
+          "picture_pump",
+          "pump",
+          "scene_space_pump",
+          "video_learning_pump",
+          "wikiskill_pump"
+        ],
+        "pumps_started": false,
+        "model_submissions": 0,
+        "agent_write_requests": 0
       },
-      "lab": {
-        "status": 200
+      "actual_image_id": "docker-pullable://arm-cluster-master:5000/video-animation-creation@sha256:42398a285bf31d735fa278de403b47557eda3f6ef1ecb127fe37e7145c4d7e89"
+    },
+    "deployment": {
+      "active_tasks": 0,
+      "analysis_or_learning_started": false,
+      "health": {
+        "executor": {
+          "status": 200
+        },
+        "lab": {
+          "status": 200
+        }
+      },
+      "model_requests": 0,
+      "protected_workloads_unchanged": true,
+      "retained_state_unchanged": true,
+      "status": "deployed_and_verified"
+    },
+    "full_database_state_verification": {
+      "status": "passed",
+      "sqlite_files": 30,
+      "all_tables_and_schema_unchanged": true,
+      "health": {
+        "executor": {
+          "status": 200
+        },
+        "lab": {
+          "status": 200
+        }
       }
     },
-    "model_requests": 0,
-    "protected_workloads_unchanged": true,
-    "retained_state_unchanged": true,
-    "status": "deployed_and_verified"
+    "worker_image_changed": false,
+    "five_recoveries_complete": false
   },
-  "full_database_state_verification": {
-    "status": "passed",
-    "sqlite_files": 30,
-    "all_tables_and_schema_unchanged": true,
-    "health": {
-      "executor": {
-        "status": 200
+  "collector_correction": {
+    "build": {
+      "built_image_id": "sha256:d15437ceaf2e617f5c3ad10a6ded888eed817602b426ce71057f541c4d6a7396",
+      "deployments": 0,
+      "dockerfile": "video_workbench/Dockerfile.animation-creation-executor",
+      "dockerfile_sha256": "5e935e63cd33644bacefd51b238234bcdaf3219b220b057c990fe5e6cb059c8f",
+      "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:9036699e4e42ab9c6a02bfd63e891f4b49b437df5437fc28e180a0f34d124f6f",
+      "model_requests": 0,
+      "pushed": true,
+      "revision": "1749e6ff2f85c11aebf2b45197ff3f52583bc5ae",
+      "revision_label_verified": true,
+      "role": "executor",
+      "schema": "agent-full-source-image-build.v1",
+      "source_context_sha256": null,
+      "source_files_manifest_sha256": "134bb8e89e66aa120f5291147b2b9412bb27c877805e97680749b607c1b2627e",
+      "source_git_clean": true
+    },
+    "startup": {
+      "status": "passed",
+      "pod_uid": "5771b564-3cdb-4a71-be9a-d018c2a02971",
+      "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:9036699e4e42ab9c6a02bfd63e891f4b49b437df5437fc28e180a0f34d124f6f",
+      "model_submissions": 0,
+      "pumps_started": false,
+      "agent_write_requests": 0,
+      "persistent_state_unchanged": true,
+      "probe_pod_removed": true,
+      "failure_type": null,
+      "startup_receipt": {
+        "schema": "video.executor-startup-admission-preflight.v1",
+        "status": "passed",
+        "all_configured_startup_admissions_checked": true,
+        "configured_admissions": {
+          "engine_admission_file": "d7bb1fc9dc169f7e651c1f2826e4727d4f91c373d760300020f7eaf56e93a4a5",
+          "authoring_library_admission_file": "092beb94878bf613cbeb4c500120168bd41b1f7d12932766ca82f178747fa46a",
+          "manim_resource_admission_file": "24a64893ab8f3d4f0c3b067e844387528b0accfd9bb65946a43e401079a9f220",
+          "film_manim_admission_file": "f3e6ad682aa344d831193826e631cd7c4b282159f2c1cbc1a0a14dbf766f90de"
+        },
+        "pumps_checked": [
+          "film_resource_pump",
+          "film_review_pump",
+          "method_pump",
+          "picture_pump",
+          "pump",
+          "scene_space_pump",
+          "video_learning_pump",
+          "wikiskill_pump"
+        ],
+        "pumps_started": false,
+        "model_submissions": 0,
+        "agent_write_requests": 0,
+        "existing_output_checks": [
+          {
+            "operation_id": "1be123bc6fdc46c68189f4953000783a-2",
+            "output_sha256": "14f4b18ea6d2ad5e69f41b35171113d92e18b9edd1cba0708b82a766173c81d6",
+            "frame_count": 144,
+            "receipt_sha256": "84ea0befaf0369dd87f7b8e2310d98601a3741e1dcdc7a14a3ad0a9cfce96295",
+            "validation": "actual_outputs_only_no_lookup_or_seal"
+          },
+          {
+            "operation_id": "a1255cc57d594791b379dbf8308d9542-2",
+            "output_sha256": "9a16380f026441bf77886cd858e7c70580fe03282661acf987e9919c9715479d",
+            "frame_count": 288,
+            "receipt_sha256": "982f42862003f94388ca386aeb0377b315cb9c6bd5d25fa490a7af14bf477b15",
+            "validation": "actual_outputs_only_no_lookup_or_seal"
+          }
+        ]
       },
-      "lab": {
-        "status": 200
-      }
-    }
+      "actual_image_id": "docker-pullable://arm-cluster-master:5000/video-animation-creation@sha256:9036699e4e42ab9c6a02bfd63e891f4b49b437df5437fc28e180a0f34d124f6f"
+    },
+    "deployment": {
+      "health": {
+        "executor": {
+          "status": 200
+        },
+        "lab": {
+          "status": 200
+        }
+      },
+      "historical_state_unchanged": true,
+      "independent_review_progress_permitted": true,
+      "native_files_unchanged": true,
+      "new_author_jobs": 0,
+      "new_native_executions": 0,
+      "pending_three_recoveries_started": false,
+      "protected_workloads_unchanged": true,
+      "quiescent_native_claims_reused": 2,
+      "release_model_requests": 0,
+      "requests_unchanged": true,
+      "status": "deployed_and_verified"
+    },
+    "targeted_regression": {
+      "passed": 101,
+      "added_collector_cases": 8
+    },
+    "host_and_admission_bytes_changed": false
   },
   "worker_image_changed": false,
-  "five_recoveries_complete": false
+  "five_recoveries_complete": true
 }

@@ -1,0 +1,194 @@
+{
+  "schema": "video.learning-failure-recovery-results.v1",
+  "status": "five_completed_and_verified",
+  "code_revision": "1749e6ff2f85c11aebf2b45197ff3f52583bc5ae",
+  "rows": [
+    {
+      "name": "inverse-peak",
+      "title": "逆光峰林与云层的纵深和遮挡",
+      "experiment_id": "1be123bc6fdc46c68189f4953000783a",
+      "request_id": "b0482710-07f7-4ea3-9a6d-ef62cf2e87dc",
+      "state": "completed",
+      "stop_proven": true,
+      "source_sha256": "1f64a785529b85e0da18835fc4a940cca27f47f5d53172ec12c371d6fbdc997a",
+      "media_sha256": "14f4b18ea6d2ad5e69f41b35171113d92e18b9edd1cba0708b82a766173c81d6",
+      "media": {
+        "audio_streams": 0,
+        "decoded_frames": 144,
+        "duration_seconds": 6.0,
+        "expected_duration_seconds": 6.0,
+        "expected_frames": 144,
+        "fps": 24,
+        "height": 720,
+        "width": 1280
+      },
+      "comparison_baseline_candidate_id": "0442d32a6bea4796a211aa21a266376b",
+      "comparison_baseline_score": 61,
+      "review_score": 77,
+      "review_transport": [
+        {
+          "completed_transport_covers_inputs": true,
+          "expected_unique_images": 24,
+          "job_id": "ff732fc4-3743-451c-97e8-51e8baa34208",
+          "operation_id": "1be123bc6fdc46c68189f4953000783a-3",
+          "scope": "sampled_images_only_not_whole_video_or_audio",
+          "status": "completed"
+        }
+      ],
+      "new_author_jobs": 0,
+      "origin_kind": "candidate",
+      "operator_reconstruction": false
+    },
+    {
+      "name": "neon-city",
+      "title": "霓虹城市中的空间视点变化与尺度递进",
+      "experiment_id": "a1255cc57d594791b379dbf8308d9542",
+      "request_id": "8ca99f3f-9b96-4eb5-af42-0d27618b48d7",
+      "state": "completed",
+      "stop_proven": true,
+      "source_sha256": "d1e151b5d6126d1ed4ac32d4b339d167ecca77c51f0d4a80107ca75ab6bb5acd",
+      "media_sha256": "9a16380f026441bf77886cd858e7c70580fe03282661acf987e9919c9715479d",
+      "media": {
+        "audio_streams": 0,
+        "decoded_frames": 288,
+        "duration_seconds": 12.0,
+        "expected_duration_seconds": 12.0,
+        "expected_frames": 288,
+        "fps": 24,
+        "height": 720,
+        "width": 1280
+      },
+      "comparison_baseline_candidate_id": "2c206dee19904137a28e4184a9762b76",
+      "comparison_baseline_score": 64,
+      "review_score": 79,
+      "review_transport": [
+        {
+          "completed_transport_covers_inputs": true,
+          "expected_unique_images": 24,
+          "job_id": "55393cb5-bcb0-494c-9055-99c7ea8d04e0",
+          "operation_id": "a1255cc57d594791b379dbf8308d9542-3",
+          "scope": "sampled_images_only_not_whole_video_or_audio",
+          "status": "completed"
+        }
+      ],
+      "new_author_jobs": 0,
+      "origin_kind": "candidate",
+      "operator_reconstruction": false
+    },
+    {
+      "name": "pixel-planet",
+      "title": "像素行星：蓝色地表、发光裂纹与熔融变化",
+      "experiment_id": "f4e9b09eb16b4763b59436570f3744f0",
+      "request_id": "47fc308f-e132-429d-bf61-959c882e02b6",
+      "state": "completed",
+      "stop_proven": true,
+      "source_sha256": "3e3bb4abfbc23bbf51d3c41621c35cafe1d7c13754a4e96ab3feba822194d9f0",
+      "media_sha256": "eeab9e981168427db98b34c53d7ce65120488f84643fe47e11b513f5a2c2adac",
+      "media": {
+        "audio_streams": 0,
+        "decoded_frames": 480,
+        "duration_seconds": 20.0,
+        "expected_duration_seconds": 20.0,
+        "expected_frames": 480,
+        "fps": 24,
+        "height": 480,
+        "width": 852
+      },
+      "comparison_baseline_candidate_id": "8ce18b172a314cbb81084f6e06785509",
+      "comparison_baseline_score": 76,
+      "review_score": 83,
+      "review_transport": [
+        {
+          "completed_transport_covers_inputs": true,
+          "expected_unique_images": 24,
+          "job_id": "7711cda3-f590-4db0-b7dd-8abb8c9f6216",
+          "operation_id": "f4e9b09eb16b4763b59436570f3744f0-3",
+          "scope": "sampled_images_only_not_whole_video_or_audio",
+          "status": "completed"
+        }
+      ],
+      "new_author_jobs": 0,
+      "origin_kind": "author_result",
+      "operator_reconstruction": false
+    },
+    {
+      "name": "ink-landscape",
+      "title": "山水由疏到密的层次建立与墨色材质",
+      "experiment_id": "856bddb89f544deea8c99387511906c1",
+      "request_id": "99e937f0-e9f0-48d0-8390-36da80ce5ea8",
+      "state": "completed",
+      "stop_proven": true,
+      "source_sha256": "f7f38040798a766e7063047450298f2d7565391a908cf29a9ac9e49b69015bff",
+      "media_sha256": "aeeb711a2d2a9341b96fb9827c3030deb5aac6c586adbca670d6e2b44c42ec40",
+      "media": {
+        "audio_streams": 0,
+        "decoded_frames": 240,
+        "duration_seconds": 10.0,
+        "expected_duration_seconds": 10.0,
+        "expected_frames": 240,
+        "fps": 24,
+        "height": 720,
+        "width": 1280
+      },
+      "comparison_baseline_candidate_id": "b911c12e74604d02844184ba850b1023",
+      "comparison_baseline_score": 77,
+      "review_score": 79,
+      "review_transport": [
+        {
+          "completed_transport_covers_inputs": true,
+          "expected_unique_images": 24,
+          "job_id": "63e3dde1-7234-44ae-aa86-d7481d83f183",
+          "operation_id": "856bddb89f544deea8c99387511906c1-3",
+          "scope": "sampled_images_only_not_whole_video_or_audio",
+          "status": "completed"
+        }
+      ],
+      "new_author_jobs": 0,
+      "origin_kind": "operator_reconstruction",
+      "operator_reconstruction": true
+    },
+    {
+      "name": "halo",
+      "title": "光环交叠、三角网络与球面空间的结构递进",
+      "experiment_id": "eeeccd11cc04412986ddac08faa46dc7",
+      "request_id": "52b31533-3df0-4cc1-8334-abae8a41ac8f",
+      "state": "completed",
+      "stop_proven": true,
+      "source_sha256": "fe80f990b39d491e4e5b1b94f8f7fddd02d436bfc10557e8321163030f986ec9",
+      "media_sha256": "e6edc087cd5f5a584adfad0dec01e6b30966a0fc1d01501486eab1e495b96c30",
+      "media": {
+        "audio_streams": 0,
+        "decoded_frames": 360,
+        "duration_seconds": 15.0,
+        "expected_duration_seconds": 15.0,
+        "expected_frames": 360,
+        "fps": 24,
+        "height": 720,
+        "width": 1280
+      },
+      "comparison_baseline_candidate_id": "881323c6a3e74eea840ece937fd20ee8",
+      "comparison_baseline_score": 80,
+      "review_score": 82,
+      "review_transport": [
+        {
+          "completed_transport_covers_inputs": true,
+          "expected_unique_images": 24,
+          "job_id": "e566bd8e-8dcd-46c1-9438-7af2e7940914",
+          "operation_id": "eeeccd11cc04412986ddac08faa46dc7-3",
+          "scope": "sampled_images_only_not_whole_video_or_audio",
+          "status": "completed"
+        }
+      ],
+      "new_author_jobs": 0,
+      "origin_kind": "candidate",
+      "operator_reconstruction": false
+    }
+  ],
+  "prior_experiments_verified": 13,
+  "historical_records_unchanged": true,
+  "adoption_unchanged": true,
+  "publication_unchanged": true,
+  "source_reauthoring_jobs": 0,
+  "changed_content_validation_started": false,
+  "continuous_visual_or_audio_acceptance_claimed": false
+}

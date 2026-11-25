@@ -1,0 +1,72 @@
+{
+  "automatic_new_iterations": false,
+  "heartbeat": {
+    "checked_at": 1795604251.524014,
+    "completed_count": 5,
+    "failed_count": 0,
+    "pid": 2204,
+    "rejected_count": 0,
+    "settled_count": 5,
+    "state": "completed",
+    "total": 5
+  },
+  "items": [
+    {
+      "experiment_id": "1be123bc6fdc46c68189f4953000783a",
+      "name": "inverse-peak",
+      "post_attempted_by_this_controller": true,
+      "request_id": "b0482710-07f7-4ea3-9a6d-ef62cf2e87dc",
+      "request_sha256": "ba6cf939baa20eb4490af7446bc282a32abd1995627ee3af6ec60a815fb98626",
+      "response_request_sha_matches": true,
+      "response_status": 202,
+      "status": "completed",
+      "stop_proven": true
+    },
+    {
+      "experiment_id": "a1255cc57d594791b379dbf8308d9542",
+      "name": "neon-city",
+      "post_attempted_by_this_controller": true,
+      "request_id": "8ca99f3f-9b96-4eb5-af42-0d27618b48d7",
+      "request_sha256": "b0e82606baa668fa4f3b2813235e5bec30771e684675241f168d284724939f94",
+      "response_request_sha_matches": true,
+      "response_status": 202,
+      "status": "completed",
+      "stop_proven": true
+    },
+    {
+      "experiment_id": "f4e9b09eb16b4763b59436570f3744f0",
+      "name": "pixel-planet",
+      "post_attempted_by_this_controller": true,
+      "request_id": "47fc308f-e132-429d-bf61-959c882e02b6",
+      "request_sha256": "0bee159ae59be7704dc0e7f21566d6109f0610d21dc81cc98aa9c71cd1e36bd8",
+      "response_request_sha_matches": true,
+      "response_status": 202,
+      "status": "completed",
+      "stop_proven": true
+    },
+    {
+      "experiment_id": "856bddb89f544deea8c99387511906c1",
+      "name": "ink-landscape",
+      "post_attempted_by_this_controller": true,
+      "request_id": "99e937f0-e9f0-48d0-8390-36da80ce5ea8",
+      "request_sha256": "2a62f2984947f9e3c0d59a29bc9306fff593d534c27719e42be2eac2db150dda",
+      "response_request_sha_matches": true,
+      "response_status": 202,
+      "status": "completed",
+      "stop_proven": true
+    },
+    {
+      "experiment_id": "eeeccd11cc04412986ddac08faa46dc7",
+      "name": "halo",
+      "post_attempted_by_this_controller": true,
+      "request_id": "52b31533-3df0-4cc1-8334-abae8a41ac8f",
+      "request_sha256": "61c5908ea3623add70a382ad70485b9b653a93eee61f129abf8a62239a21843c",
+      "response_request_sha_matches": true,
+      "response_status": 202,
+      "status": "completed",
+      "stop_proven": true
+    }
+  ],
+  "manifest_sha256": "55988b8d6bde42c1f1d6beb5280b245b9482bd091de1c46859482ef9d1ef7206",
+  "new_author_jobs": 0
+}
