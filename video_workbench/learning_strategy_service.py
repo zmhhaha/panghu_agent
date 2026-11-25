@@ -348,6 +348,40 @@ class LearningStrategyMixin:
         """Bind the reviewed reproduction that supplied this transfer method."""
         candidates = self._context_candidates(run)
         best = next((row for row in candidates if row['id'] == run['best_candidate_id']), None)
+        if type(run['frozen'].get('transfer_approval')) is dict:
+            # User approval is independent of an Agent score or review. The
+            # exact real output, source and method remain bound for recovery.
+            best = self._approved_transfer_candidate(run)
+            strategy.require(self._manual_transfer_method(best['method']) == run.get('transfer_method'),
+                'retry_transfer_lineage_changed', 409)
+            author = self.store.read('operations', run['owner'], best['author_operation_id'])
+            render = self.store.read('operations', run['owner'], best['render_operation_id'])
+            review = (self.store.read('operations', run['owner'], best['review_operation_id'])
+                if best.get('review_operation_id') else None)
+            for operation in [author, render] + ([review] if review is not None else []):
+                origin = self.store.read('experiments', run['owner'], operation['experiment_id'])
+                strategy.require(operation.get('owner') == run['owner']
+                    and operation['id'] in origin['operation_ids']
+                    and operation.get('status') == 'completed'
+                    and origin['project_id'] == run['project_id']
+                    and digest(operation['input']) == operation['input_sha256'],
+                    'retry_transfer_lineage_changed', 409)
+            strategy.require(author['stage'] == 'author'
+                and author['result'].get('source') == best['source']
+                and render['stage'] == 'render'
+                and render['result'].get('sha256') == (best.get('media_sha256') or best.get('picture_sha256')),
+                'retry_transfer_lineage_changed', 409)
+            if best.get('review') is not None:
+                strategy.require(review is not None and review['stage'] == 'review'
+                    and review['input']['work_kind'] == 'reproduction'
+                    and review['result'].get('review') == best['review'],
+                    'retry_transfer_lineage_changed', 409)
+            return dict(candidate_id=best['id'], candidate_sha256=digest(best),
+                approval=deepcopy(run['frozen']['transfer_approval']),
+                author_operation=strategy.operation_binding(author),
+                render_operation_sha256=digest(render),
+                review_operation=strategy.operation_binding(review) if review else None,
+                review_receipt_sha256=digest(review.get('observation_receipt')) if review else None)
         strategy.require(best is not None and best['work_kind'] == 'reproduction'
             and best.get('status') == 'reviewed' and best.get('review') is not None
             and self._has_picture(best) and best.get('method') == run.get('transfer_method'),

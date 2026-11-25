@@ -9,7 +9,7 @@ from agent_service.contracts import canonical_bytes, digest
 from agent_service.contracts import ServiceError
 from video_workbench.picture_learning_service import PictureLearningService
 from video_workbench.scene_space_plan import automatic_plan, default_budget
-from test_picture_learning_service import Gateway, Renderer, finish, start
+from test_picture_learning_service import Gateway, Renderer, finish, request_transfer, start
 from test_scene_space_learning import carrier
 from test_video_learning_service import (
     Gateway as VideoGateway, Renderer as VideoRenderer, real_mp4,
@@ -103,7 +103,7 @@ def test_unknown_model_budget_keeps_one_diagnostic_png_without_review_or_transfe
     assert run['state']=='completed' and run['stop_reason']=='scene_space_diagnostic_preview_only'
     assert len(author.submissions)==len(renderer.calls)==1
     assert reviewer.submissions==reviewer.uploads==[]
-    assert run['transfer_task'] is None and run['transfer_status']=='not_verified'
+    assert run['transfer_task'] is None and run['transfer_status']=='not_requested'
     assert len(run['candidates'])==1 and run['candidates'][0]['review'] is None
     candidate=run['candidates'][0]
     assert candidate['picture_sha256'] and candidate['source_sha256']
@@ -247,6 +247,12 @@ def test_new_learning_carries_a_validated_plan_and_transfers_only_general_princi
     project,_=start(service,max_rounds=1)
     completed=finish(service,project)
     assert completed['state']=='completed'
+    assert len(renderer.scene_plans)==1
+    assert completed['experiments'][-1]['transfer_status']=='awaiting_approval'
+    assert all(work['work_kind']=='reproduction' for work in completed['candidates'])
+    approved=completed['candidates'][0]['id']
+    completed=finish(service,request_transfer(service,completed,approved))
+    assert completed['state']=='completed'
     assert len(renderer.scene_plans)==2
     assert all(plan is not None for plan in renderer.scene_plans)
     assert renderer.scene_plans[0]['worlds'][0]['id']!=renderer.scene_plans[1]['worlds'][0]['id']
@@ -267,7 +273,7 @@ def test_new_learning_carries_a_validated_plan_and_transfers_only_general_princi
     assert review['constraints']['scene_space_learning']['candidate_method']['plan']
     # Source custody stays separate from the new carrier.
     assert all('scene-space.json' not in work['source']['files'] for work in
-        service.store.read('experiments','developer',project['latest_experiment_id'])['candidates'])
+        service.store.read('experiments','developer',completed['latest_experiment_id'])['candidates'])
 
 
 def test_an_old_frozen_run_does_not_pick_up_new_capabilities_mid_run(system):
@@ -277,7 +283,7 @@ def test_an_old_frozen_run_does_not_pick_up_new_capabilities_mid_run(system):
     renderer.admitted=True
     completed=finish(service,project)
     assert completed['state']=='completed'
-    assert renderer.scene_plans==[None,None]
+    assert renderer.scene_plans==[None]
     assert all('scene_space_learning' not in document['constraints'] for document,_ in author.uploads)
     assert all('scene_space' not in work for work in completed['candidates'])
 
@@ -310,7 +316,7 @@ def test_retry_keeps_the_original_admission_plan_and_source(system):
     assert after['candidates'][0]['source']==before['candidates'][0]['source']
     assert digest(after['candidates'][0]['scene_space']['plan'])==digest(original)
     # Recovery creates no second author for the failed reproduction.
-    assert len(author.submissions)==calls+1  # Only the independent transfer author.
+    assert len(author.submissions)==calls
     assert after['scene_space_render_budget']['root_experiment_id']==before['id']
     assert after['scene_space_render_budget']['limit_seconds']==before['budget']['max_seconds']
     prior_events=before['scene_space_render_budget']['events']
@@ -330,8 +336,8 @@ def test_actual_job_usage_components_are_preserved_and_not_invented(system,monke
     completed=finish(service,project)
     status=completed['experiments'][-1]['scene_space_model_usage']
     assert status['completeness']=='complete'
-    assert status['request_count']==8
-    assert status['token_components']==dict(input_tokens=40,output_tokens=80,cache_read_tokens=4,cache_write_tokens=8)
+    assert status['request_count']==4
+    assert status['token_components']==dict(input_tokens=20,output_tokens=40,cache_read_tokens=2,cache_write_tokens=4)
     run=service.store.read('experiments','developer',completed['latest_experiment_id'])
     operations=[service.store.read('operations','developer',identity) for identity in run['operation_ids']]
     paid=[operation for operation in operations if operation['stage']!='render']
@@ -341,7 +347,8 @@ def test_actual_job_usage_components_are_preserved_and_not_invented(system,monke
 def test_missing_usage_remains_unknown_and_unknown_render_cost_blocks_further_output(system):
     service,author,reviewer,renderer=system
     renderer.lose_result=True
-    project,_=start(service,max_rounds=1)
+    reviewer.scores=[60]
+    project,_=start(service,max_rounds=2)
     completed=finish(service,project)
     assert completed['state']=='completed'
     run=service.store.read('experiments','developer',completed['latest_experiment_id'])
@@ -433,7 +440,7 @@ def test_pure_preflight_pins_the_request_before_claim(system,monkeypatch):
     project,_=start(service,max_rounds=1)
     completed=finish(service,project)
     assert completed['state']=='completed'
-    assert states==['reserved','claimed','reserved','claimed']
+    assert states==['reserved','claimed']
     run=service.store.read('experiments','developer',completed['latest_experiment_id'])
     renders=[service.store.read('operations','developer',identity) for identity in run['operation_ids']
         if service.store.read('operations','developer',identity)['stage']=='render']
@@ -541,7 +548,7 @@ def test_cancel_between_pure_prepare_and_claim_settles_cost_and_allows_frozen_re
     service.next_experiment('developer',project['id'],dict(request_id=uuid4().hex,mode='retry'))
     completed=finish(service,project)
     assert completed['state']=='completed'
-    assert len(author.submissions)==2  # Original author and independent transfer only.
+    assert len(author.submissions)==1  # Frozen retry reuses the original authored source.
 
 
 def test_shared_settlement_survives_a_crash_before_the_learning_run_is_saved(system):
@@ -618,6 +625,11 @@ def test_video_sidecar_preserves_measured_frame_and_unobserved_motion_boundaries
     service=VideoLearningService(tmp_path/'video',author_gateway=author,review_gateway=reviewer,renderer=renderer)
     project,_=start_video(service,real_mp4,max_rounds=1)
     completed=finish_video(service,project)
+    assert completed['state']=='completed'
+    assert len(renderer.scene_plans)==1
+    assert all(work['work_kind']=='reproduction' for work in completed['candidates'])
+    approved=completed['candidates'][0]['id']
+    completed=finish_video(service,request_transfer(service,completed,approved))
     assert completed['state']=='completed'
     assert len(renderer.scene_plans)==2
     assert all(plan['duration_frames']==48 for plan in renderer.scene_plans)

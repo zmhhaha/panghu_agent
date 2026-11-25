@@ -23,7 +23,9 @@ class LearningCapabilitiesMixin:
             else dict(kind='manim', admitted=False))
         return dict(creation=list(runtime.get('allowed_engines', ['html-svg', 'canvas']))
             + (['manim'] if resource['admitted'] else []), motion=motion_tools(runtime),
-            manim=resource, strategy=options())
+            manim=resource, strategy=options(), transfer=dict(automatic=False,
+                requires_user_approval=True, experiment_mode='transfer',
+                default_max_rounds=1, default_max_seconds=3600))
 
     def _freeze_learning_options(self, body, frozen, *, prior=None):
         selection = validate_new_selection(body.get('capability_selection',

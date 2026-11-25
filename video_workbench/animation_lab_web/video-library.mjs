@@ -64,8 +64,15 @@ const ERROR_MESSAGES = {
   video_learning_baseline_not_rendered: '这份作品尚未生成视频，请技术重试或从零重做。',
   video_learning_candidate_not_rendered: '这份作品尚未生成视频，暂时不能采用为默认作品。',
   video_learning_retry_input_frozen: '技术重试沿用原始需求和预算；需要更改时，请继续优化或从零重做。',
+  picture_learning_transfer_approval_required: '请先选择并明确认可一份已出片的复现作品，再单独开始换内容验证。',
+  picture_learning_transfer_approval_changed: '所选作品或方法发生变化，请重新选择并认可要验证的版本。',
+  picture_learning_transfer_candidate_required: '请选择同项目的复现作品，再开始换内容验证。',
+  picture_learning_transfer_candidate_not_rendered: '这份作品尚未实际出片，请先完成复现。',
+  picture_learning_transfer_method_required: '这份作品尚未形成可验证的方法，请先继续学习。',
+  picture_learning_transfer_rounds_invalid: '换内容验证每次只进行一轮，请单独设置本次时间预算。',
+  picture_learning_transfer_retry_requires_approval: '这次历史换内容验证没有用户认可记录，请选中认可的复现作品后单独发起验证。',
 };
-const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验'};
+const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验', transfer: '换内容验证'};
 function errorMessage(error) {
   return remoteReferenceErrorMessage(error) ?? ERROR_MESSAGES[error?.code] ?? (error?.status === 403 ? '登录或页面授权已失效，请重新登录后刷新。'
     : error?.status === 413 ? '提交内容过大，请缩小参考视频后重试。' : text(error?.message) || '请求未完成，请刷新核对。');
@@ -338,6 +345,12 @@ export class VideoLibraryController {
   async experiment(fields) {
     const detail = this.state.detail;
     if (!detail?.id || !this.enabled() || this.locked() || videoIsActive(detail)) return false;
+    if (fields.mode === 'transfer') {
+      const approved = videoCandidates(detail).find(row => row.id === fields.base_candidate_id);
+      if ((fields.approved_project_id && fields.approved_project_id !== detail.id) || !videoCanTransfer(approved, detail, this.root)) {
+        this.setMessage('请选择同项目中已实际出片并形成方法的复现作品。'); return false;
+      }
+    }
     const base = videoDefaultCandidate(detail, fields.base_candidate_id);
     if ((fields.mode ?? 'continue') === 'continue'
       && (!videoMediaUrl(base, detail, this.root) || (base?.role ?? base?.work_kind) === 'transfer')) {
@@ -387,6 +400,11 @@ function candidateArtifact(candidate, kind, projectId) {
 export function videoMediaUrl(candidate, project, root) {
   return videoAssetUrl(candidateArtifact(candidate, 'media', project?.id)
     ?? candidate?.media_url, root);
+}
+export function videoCanTransfer(candidate, project, root) {
+  return Boolean(candidate && ['rendered', 'reviewed'].includes(candidate.status)
+    && (candidate.role ?? candidate.work_kind) !== 'transfer' && videoMediaUrl(candidate, project, root)
+    && candidate.method && typeof candidate.method === 'object' && !Array.isArray(candidate.method) && Object.keys(candidate.method).length > 0);
 }
 function referenceUrl(reference, root) {
   if (isRemoteReference(reference)) return null;
@@ -532,12 +550,14 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
   else {
     if (candidate && selectedMediaUrl && (candidate.role ?? candidate.work_kind) !== 'transfer') toolbar.append(button(doc, '继续优化', () => onExperiment('continue'), {className: 'button primary', disabled: locked}));
     toolbar.append(button(doc, '从零重做', () => onExperiment('fresh'), {disabled: locked}));
-    if (videoProjectState(project) === 'failed') toolbar.append(button(doc, '技术重试', () => onExperiment('retry'), {disabled: locked}));
+    if (videoCanTransfer(candidate, project, root)) toolbar.append(button(doc, '认可并验证换内容', () => onExperiment('transfer', candidate.id), {disabled: locked}));
+    const unapprovedTransfer = !current?.frozen?.transfer_approval && (current?.work_kind === 'transfer' || current?.stage === 'transfer_plan');
+    if (videoProjectState(project) === 'failed' && !unapprovedTransfer) toolbar.append(button(doc, '技术重试', () => onExperiment('retry'), {disabled: locked}));
   }
   const status = el(doc, 'div', 'video-status'); status.append(el(doc, 'strong', '', videoState(videoProjectState(project))));
   const reason = videoStopReason(current?.stop_reason ?? project.stop_reason); if (reason) status.append(el(doc, 'p', 'small muted', reason));
   status.append(el(doc, 'p', 'small muted', active ? '本次需求、参考和知识版本已经冻结。运行中只查看或停止，新的意见用于下一次实验。'
-    : '内部最佳与默认作品分别保存。采用一幅视频不会发布知识，也不代表运动已经验证。'));
+    : '默认只复现和优化。你认可选定作品的效果后，可单独发起换内容验证；内部评分不代替你的认可。'));
   if (typeof current?.frozen?.use_wikiskill === 'boolean') status.append(el(doc, 'p', 'small muted',
     current.frozen.use_wikiskill === false ? '本次未加载已发布 WikiSkill。'
       : current.frozen.library_binding?.release_id ? '本次固定 WikiSkill 版本：' + current.frozen.library_binding.release_id
@@ -585,8 +605,11 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
   const evidence = el(doc, 'div', 'video-evidence-grid'); evidence.append(reviewPanel(doc, candidate?.review ?? candidate?.assessment, sectionKey('review')));
   const scope = el(doc, 'section', 'panel'); scope.append(el(doc, 'h3', '', '本次验证范围'));
   const transfer = candidates.filter(row => (row.role ?? row.work_kind) === 'transfer');
+  const transferRequested = current?.mode === 'transfer' || current?.work_kind === 'transfer' || ['planning', 'running', 'reviewed'].includes(current?.transfer_status);
   scope.append(el(doc, 'p', 'muted', '实际抽帧支持画面与关键状态对照；连续运动、声音与音画配合须实际观看或听审，不能由静帧补签。'),
-    el(doc, 'p', '', transfer.length ? '已有换内容验证作品，请切换作品查看实际结果与评审。' : '换内容验证尚无产物；复现进展不能替代迁移通过。'));
+    el(doc, 'p', '', transfer.length ? '已有换内容验证作品，请切换作品查看实际结果与评审。' : transferRequested ? '本次换内容验证已发起，实际产物和评审尚未完成。' : '尚未发起换内容验证。先打磨复现效果，认可选定作品后再单独验证；复现进展不代表迁移通过。'));
+  if (current?.transfer_status === 'not_requested') scope.append(el(doc, 'p', 'small muted', '当前实验未发起换内容验证。'));
+  if (!active && current?.transfer_status === 'awaiting_approval') scope.append(el(doc, 'p', 'small muted', '本次复现已结束，换内容验证等待你认可作品后单独发起。'));
   if ((candidate?.role ?? candidate?.work_kind) === 'transfer') {
     const experiment = rows(project.experiments).find(row => rows(row.candidates).some(item => item.id === candidate.id));
     if (experiment?.transfer_task) scope.append(jsonSection(doc, '本次换内容验证的任务', experiment.transfer_task, true, sectionKey('transfer')));
@@ -692,7 +715,7 @@ function updateVideoView(host, scope, signature, render) {
 export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location?.href), fetcher = globalThis.fetch,
   storage = browserStorage(), uuid, schedule, unschedule, URLObject = globalThis.URL} = {}) {
   const $ = id => doc.getElementById(id), app = $('video-library-app'); if (!app) return null;
-  let formMode = null, shown = 'home', selectedId = null, previewUrl = null, controller;
+  let formMode = null, shown = 'home', selectedId = null, transferCandidateId = null, transferProjectId = null, previewUrl = null, controller;
   let referencesSignature = '', renderedOwner = null, selectedAnalysisId = null, analysisReturnTo = 'home';
   const currentCatalog = state => state.catalog?.owner_key === state.owner_key ? state.catalog : null;
   const request = async (path, options = {}) => {
@@ -753,7 +776,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   };
   const render = state => {
     if (renderedOwner !== state.owner_key) {
-      renderedOwner = state.owner_key; referencesSignature = ''; selectedId = null; selectedAnalysisId = null; analysisReturnTo = 'home'; formMode = null;
+      renderedOwner = state.owner_key; referencesSignature = ''; selectedId = null; transferCandidateId = null; transferProjectId = null; selectedAnalysisId = null; analysisReturnTo = 'home'; formMode = null;
       clearPreview(); $('video-form').reset(); $('video-reference-id').value = ''; $('video-analysis-id').value = ''; $('video-segment-index').value = '';
       $('video-reference-preview').replaceChildren(); $('video-reference-preview').hidden = true;
       show('home');
@@ -766,9 +789,10 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     $('video-availability').textContent = state.catalog?.availability?.enabled === false ? text(state.catalog.availability.reason) || '视频学习执行器尚未启用。' : '';
     $('video-submit').disabled = !controller.enabled() || controller.locked();
     for (const element of $('video-form').elements) element.disabled = state.busy || Boolean(state.pending)
-      || formMode === 'retry' && element.id !== 'video-submit';
+      || formMode === 'retry' && element.id !== 'video-submit'
+      || formMode === 'transfer' && element.id === 'video-rounds';
     $('video-submit').disabled = !controller.enabled() || controller.locked();
-    updateLearningControls(doc, 'video', state.catalog, {locked: state.busy || Boolean(state.pending), retry: formMode === 'retry'});
+    updateLearningControls(doc, 'video', state.catalog, {locked: state.busy || Boolean(state.pending), retry: ['retry', 'transfer'].includes(formMode)});
     syncReferenceSource();
     renderCards();
     const catalog = currentCatalog(state), refs = rows(catalog?.references), analyses = rows(catalog?.analyses), refSignature = JSON.stringify(refs.map(row => [row.id, row.file_name]));
@@ -808,21 +832,32 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
       const projectId = state.detail.id;
       updateVideoDetail(doc, $('video-detail'), state.detail, {root, selection: selectedId, locked: controller.locked(), ownerKey: state.owner_key,
           onSelect: id => { selectedId = id; render(state); }, onBack: () => show('home'),
-          onStop: () => void controller.stop(), onExperiment: mode => openForm(mode), onAdopt: id => void controller.adopt(id),
+          onStop: () => void controller.stop(), onExperiment: (mode, candidateId) => openForm(mode, candidateId), onAdopt: id => void controller.adopt(id),
           onInspect: experimentId => request(videoRequestPath(projectId, 'experiments/' + encodeURIComponent(videoId(experimentId)) + '/input'))});
     }
   };
-  const openForm = (mode = null) => {
+  const openForm = (mode = null, candidateId = null) => {
     if (controller.locked()) return;
+    const approved = mode === 'transfer' ? videoCandidates(controller.state.detail).find(row => row.id === candidateId) : null;
+    if (mode === 'transfer' && !videoCanTransfer(approved, controller.state.detail, root)) return;
+    transferCandidateId = approved?.id ?? null; transferProjectId = approved ? controller.state.detail.id : null;
     controller.clearAnalysis();
     formMode = mode; clearPreview(); $('video-form').reset(); $('video-reference-preview').replaceChildren(); $('video-reference-preview').hidden = true;
     $('video-reference-id').value = ''; $('video-saved-reference').value = '';
-    $('video-new-fields').hidden = Boolean(mode); $('video-feedback-label').hidden = !mode || mode === 'retry';
+    $('video-new-fields').hidden = Boolean(mode); $('video-feedback-label').hidden = !mode || ['retry', 'transfer'].includes(mode);
+    $('video-transfer-fields').hidden = mode !== 'transfer';
+    $('video-transfer-source').textContent = mode === 'transfer' ? '所选复现作品：版本 ' + (videoCandidates(controller.state.detail).findIndex(row => row.id === transferCandidateId) + 1) : '';
+    $('video-learning-options').hidden = mode === 'transfer'; $('video-wikiskill-field').hidden = mode === 'transfer';
+    $('video-rounds-label').hidden = mode === 'transfer';
+    if (mode === 'transfer') { $('video-rounds').value = '1'; $('video-minutes').value = '60'; }
+    $('video-budget-help').textContent = mode === 'transfer' ? '本次单独进行一轮换内容验证，预算覆盖拟定新任务、创作、渲染和评审。'
+      : '预算只用于本次复现、创作和评审。效果满意后，可以再单独发起换内容验证。';
     $('video-budget-fields').hidden = mode === 'retry';
     $('video-form-title').textContent = mode ? MODE_NAMES[mode] : '新建视频学习';
-    $('video-submit').textContent = mode ? '开始' + MODE_NAMES[mode] : '开始视频学习';
+    $('video-submit').textContent = mode === 'transfer' ? '认可此版本并开始验证' : mode ? '开始' + MODE_NAMES[mode] : '开始视频学习';
     $('video-form-note').hidden = !mode;
     $('video-form-note').textContent = mode === 'fresh' ? '保留同一参考和学习目标，从零创作。旧源码、布局和专用方法不会作为起点；可在下方填写精简的问题。'
+      : mode === 'transfer' ? '本次将独立验证你选定作品的方法能否用于不同内容。确认认可该作品的效果，再设置预算开始；原作品和原实验保持。'
       : mode === 'retry' ? '保留原来的目标、参考、标准、预算和确切知识版本，重试失败环节。需要改变要求或预算时，请发起继续优化或从零重做。'
         : '保留同一参考和学习目标，在已有作品上继续改善。下方意见会冻结进下一次实验，不修改历史需求。';
     for (const id of ['video-name', 'video-goal', 'video-width', 'video-height', 'video-start', 'video-end']) $(id).required = !mode;
@@ -830,8 +865,8 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     $('video-feedback').required = mode === 'continue';
     $('video-use-wikiskill').checked = mode === 'retry' ? latestVideoExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
     restoreLearningControls(doc, 'video', mode ? latestVideoExperiment(controller.state.detail)?.frozen : {});
-    $('video-skill-help').hidden = mode === 'retry';
-    show('form'); render(controller.state); (mode === 'retry' ? $('video-submit') : mode ? $('video-feedback') : $('video-name')).focus();
+    $('video-skill-help').hidden = ['retry', 'transfer'].includes(mode);
+    show('form'); render(controller.state); (['transfer', 'retry'].includes(mode) ? $('video-submit') : mode ? $('video-feedback') : $('video-name')).focus();
   };
   controller = new VideoLibraryController({request, root, storage, uuid, schedule, unschedule, onChange: render});
   $('video-refresh').addEventListener('click', () => void controller.refresh());
@@ -840,7 +875,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   $('video-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); render(controller.state); });
   $('video-search').addEventListener('input', renderCards);
   $('video-learning-options')?.addEventListener('change', () => updateLearningControls(doc, 'video', controller.state.catalog,
-    {locked: controller.state.busy || Boolean(controller.state.pending), retry: formMode === 'retry'}));
+    {locked: controller.state.busy || Boolean(controller.state.pending), retry: ['retry', 'transfer'].includes(formMode)}));
   $('video-reference').addEventListener('change', () => {
     controller.clearAnalysis();
     $('video-reference-source').value = 'upload';
@@ -884,9 +919,13 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   });
   $('video-form').addEventListener('submit', async event => {
     event.preventDefault(); if (controller.locked()) return;
-    const fields = Object.fromEntries(new FormData($('video-form'))); fields.use_wikiskill = $('video-use-wikiskill').checked; fields.learn_audio = $('video-learn-audio').checked;
-    Object.assign(fields, readLearningControls(doc, 'video'));
-    if (formMode === 'continue') fields.base_candidate_id = videoDefaultCandidate(controller.state.detail, selectedId)?.id;
+    const fields = Object.fromEntries(new FormData($('video-form')));
+    if (formMode === 'transfer') Object.assign(fields, {base_candidate_id: transferCandidateId, approved_project_id: transferProjectId, approve_candidate: true});
+    else {
+      fields.use_wikiskill = $('video-use-wikiskill').checked; fields.learn_audio = $('video-learn-audio').checked;
+      Object.assign(fields, readLearningControls(doc, 'video'));
+      if (formMode === 'continue') fields.base_candidate_id = videoDefaultCandidate(controller.state.detail, selectedId)?.id;
+    }
     try {
       const success = formMode ? await controller.experiment({...fields, mode: formMode}) : await controller.start(fields, $('video-reference').files?.[0]);
       if (success && controller.state.detail) { clearPreview(); show('detail'); selectedId = null; render(controller.state); void controller.refresh(); }

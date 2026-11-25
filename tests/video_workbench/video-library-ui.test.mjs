@@ -320,3 +320,78 @@ test('paused playback stays paused and a superseded metadata callback cannot res
   updateVideoDetail(doc,host,displayedProject({id:'new-project'}),settings);
   await detached.handlers.loadedmetadata();assert.equal(detached.paused,true);assert.equal(detached.playCalls,0);
 });
+
+
+test('manual video validation requires explicit approval and has an independent one-round budget', () => {
+  const input={mode:'transfer',base_candidate_id:'chosen',approve_candidate:true,use_wikiskill:true,feedback:'old',max_rounds:8};
+  assert.deepEqual(buildVideoExperiment(input,uuid),{request_id:uuid,mode:'transfer',base_candidate_id:'chosen',
+    approve_candidate:true,max_rounds:1,max_seconds:3600});
+  assert.equal(buildVideoExperiment({...input,max_minutes:5},uuid).max_seconds,300);
+  for(const approve_candidate of [undefined,false,'true'])assert.throws(()=>buildVideoExperiment({...input,approve_candidate},uuid),/认可/);
+  assert.throws(()=>buildVideoExperiment({...input,base_candidate_id:undefined},uuid),/编号/);
+  assert.equal('approve_candidate' in buildVideoExperiment({mode:'fresh'},uuid),false);
+});
+
+test('manual video validation accepts unscored rendered work and rejects unavailable or transfer work before POST', async () => {
+  const work={id:'chosen',status:'rendered',work_kind:'reproduction',method:{technique:'local form'},
+    media_url:'/api/video-lab/projects/video-one/artifacts/chosen-media'};
+  const p=project({candidates:[work],best_candidate_id:work.id});
+  assert.ok(all(renderVideoDetail(doc,p,{root})).some(row=>row.tagName==='BUTTON'&&row.textContent==='认可并验证换内容'));
+  const h=harness((path,r)=>r.method?p:path.endsWith('catalog')?catalog([p]):p);
+  await h.controller.refresh();await h.controller.open(p.id);
+  await assert.rejects(h.controller.experiment({mode:'transfer',base_candidate_id:work.id}),/认可/);
+  for(const change of [{status:'authored'},{method:null},{method:{}},{work_kind:'transfer'},{media_url:null}]) {
+    Object.assign(work,{status:'rendered',method:{technique:'local form'},work_kind:'reproduction',
+      media_url:'/api/video-lab/projects/video-one/artifacts/chosen-media'},change);
+    assert.equal(await h.controller.experiment({mode:'transfer',base_candidate_id:work.id,approve_candidate:true}),false);
+  }
+  assert.ok(h.requests.every(row=>!row.request.method));
+  Object.assign(work,{status:'rendered',method:{technique:'local form'},work_kind:'reproduction',
+    media_url:'/api/video-lab/projects/video-one/artifacts/chosen-media'});
+  assert.equal(await h.controller.experiment({mode:'transfer',base_candidate_id:work.id,approve_candidate:true}),true);
+  const post=h.requests.find(row=>row.request.method);assert.equal(post.path,'api/video-lab/projects/video-one/experiments');
+  assert.equal(JSON.parse(post.request.body).base_candidate_id,work.id);
+  assert.ok(h.requests.every(row=>!row.path.endsWith('/adopt')));
+});
+
+test('video approval form waits for submission and keeps its chosen version across polling', async t => {
+  const formDoc=videoFormDocument(),get=id=>formDoc.getElementById(id),sent=[];
+  const first={id:'chosen',status:'rendered',work_kind:'reproduction',method:{technique:'chosen'},media_url:'/api/video-lab/projects/video-one/artifacts/chosen-media'};
+  const later={...first,id:'later',status:'reviewed',method:{technique:'later'},media_url:'/api/video-lab/projects/video-one/artifacts/later-media'};
+  const p=project({candidates:[first,later],best_candidate_id:first.id});
+  const fetcher=async(url,request={})=>{
+    if(request.method)sent.push({path:url.pathname,body:JSON.parse(request.body)});
+    return{ok:true,status:200,json:async()=>url.pathname.endsWith('/catalog')?catalog([p]):p};
+  };
+  const NativeFormData=globalThis.FormData;
+  globalThis.FormData=class{constructor(form){this.entries=form.elements.filter(node=>node.name&&!node.disabled
+    &&(node.type!=='checkbox'||node.checked)).map(node=>[node.name,node.value]);}[Symbol.iterator](){return this.entries[Symbol.iterator]();}};
+  t.after(()=>{globalThis.FormData=NativeFormData;});
+  const app=mountVideoLibrary(formDoc,{root,fetcher,storage:memoryStorage(),uuid:()=>uuid,schedule:()=>1,unschedule:()=>{}});
+  await app.ready;
+  await all(get('video-cards')).find(row=>row.tagName==='BUTTON'&&row.textContent===p.title).handlers.click();
+  await all(get('video-detail')).find(row=>row.tagName==='BUTTON'&&row.textContent==='认可并验证换内容').handlers.click();
+  assert.equal(sent.length,0);assert.equal(get('video-minutes').value,'60');
+  assert.equal(get('video-learning-options').hidden,true);assert.equal(get('video-wikiskill-field').hidden,true);
+  assert.equal(get('video-submit').textContent,'认可此版本并开始验证');
+  p.best_candidate_id=later.id;p.adopted_candidate_id=later.id;await app.controller.refresh();
+  get('video-minutes').value='2';await get('video-form').handlers.submit({preventDefault(){}});
+  assert.equal(sent.length,1);
+  assert.deepEqual(sent[0].body,{request_id:uuid,mode:'transfer',base_candidate_id:first.id,approve_candidate:true,max_rounds:1,max_seconds:120});
+  assert.ok(sent[0].path.endsWith('/experiments'));app.destroy();
+});
+
+test('lost approved video validation replays the original candidate and approval without adoption', async () => {
+  const storage=memoryStorage(),work={id:'chosen',status:'rendered',work_kind:'reproduction',method:{technique:'form'},
+    media_url:'/api/video-lab/projects/video-one/artifacts/chosen-media'};
+  const p=project({candidates:[work],experiments:[{id:'old',state:'completed',request_id:'00000000-0000-4000-8000-000000000002'}]});
+  const first=harness((path,r)=>{if(r.method)throw Error('lost');return path.endsWith('catalog')?catalog([p]):p;},storage);
+  await first.controller.refresh();await first.controller.open(p.id);
+  await first.controller.experiment({mode:'transfer',base_candidate_id:work.id,approve_candidate:true,max_minutes:2});
+  const original=JSON.parse(first.requests.find(row=>row.request.method).request.body);p.best_candidate_id='different';
+  const next=harness((path,r)=>r.method?p:path.endsWith('catalog')?catalog([p]):p,storage);
+  await next.controller.refresh();assert.ok(next.controller.state.pending);
+  assert.equal(await next.controller.replayPending(),true);
+  assert.deepEqual(JSON.parse(next.requests.find(row=>row.request.method).request.body),original);
+  assert.ok(next.requests.every(row=>!row.path.endsWith('/adopt')));
+});

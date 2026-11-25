@@ -4,7 +4,7 @@
   "info": {
     "title": "Video reference learning API",
     "version": "1.0.0",
-    "description": "独立的视频学习项目：上传实际参考视频或登记源站链接并按需读取，异步创作、真实渲染、独立比较和换内容验证。与网页共用合同。GET 为只读；不会自动发布 WikiSkill。沿用 OAuth 登录 Cookie 和开发者权限，未提供 Bearer 或长期机器令牌。外部调用方使用用户安全提供的 Cookie 文件，不读取浏览器凭据。POST 必须提供同源 Origin、catalog.csrf_token 对应的 X-Animation-Lab-Token 和 application/json。 创建与继续/从零实验支持 capability_selection、allow_collaboration、allow_probes；以 catalog 当前准入为准，内部小样与分工共用预算并按依赖顺序执行。技术重试不允许改变这些冻结字段。"
+    "description": "独立的视频学习项目：上传实际参考视频或登记源站链接并按需读取，异步创作、真实渲染、独立比较；默认仅复现与优化，用户认可选定作品后另行发起换内容验证。与网页共用合同。GET 为只读；不会自动发布 WikiSkill。沿用 OAuth 登录 Cookie 和开发者权限，未提供 Bearer 或长期机器令牌。外部调用方使用用户安全提供的 Cookie 文件，不读取浏览器凭据。POST 必须提供同源 Origin、catalog.csrf_token 对应的 X-Animation-Lab-Token 和 application/json。 创建与继续/从零实验支持 capability_selection、allow_collaboration、allow_probes；以 catalog 当前准入为准，内部小样与分工共用预算并按依赖顺序执行。技术重试不允许改变这些冻结字段。"
   },
   "servers": [
     {
@@ -158,8 +158,29 @@
                               "type": "boolean"
                             }
                           }
+                        },
+                        "transfer": {
+                          "type": "object",
+                          "properties": {
+                            "automatic": {
+                              "const": false
+                            },
+                            "requires_user_approval": {
+                              "const": true
+                            },
+                            "experiment_mode": {
+                              "const": "transfer"
+                            },
+                            "default_max_rounds": {
+                              "const": 1
+                            },
+                            "default_max_seconds": {
+                              "const": 3600
+                            }
+                          }
                         }
-                      }
+                      },
+                      "description": "当前运行准入能力。transfer描述默认不自动换内容，用户认可具体产物后单独发起；不表示已实际验证效果。"
                     }
                   }
                 }
@@ -344,7 +365,7 @@
       "post": {
         "operationId": "continueVideoLearning",
         "summary": "继续、从零重做或技术重试",
-        "description": "运行中的项目不能改变需求。continue 继承明确选定且已实际生成视频的复现作品；fresh 保留参考与目标，移除旧源码、布局和专用方法；retry 只发送 request_id 与 mode，保持原始需求、预算与知识绑定，仅重试技术失败。更改预算须使用 continue 或 fresh。开发者可反复发起新的有界实验。",
+        "description": "运行中只能查看或停止。continue 继承选定且已实际渲染的复现作品；fresh 保留参考与目标，从零创作；两者评审后结束，不自动换内容。transfer 只接受用户明确认可的、同项目已实际渲染且有方法的复现作品，approve_candidate 必须为 true；认可按具体作品、源码和媒体摘要冻结，不依赖 AI 评分，也不自动采用默认作品或发布 WikiSkill。换内容验证独立预算，固定一轮、默认3600秒；规划者只看所认可作品及方法，创作者只得到方法和新任务。retry 仅发送 request_id 与 mode，并保留原冻结输入；没有用户认可记录的历史自动换内容阶段不能通过retry绕过认可。",
         "parameters": [
           {
             "$ref": "#/components/parameters/Origin"
@@ -972,7 +993,8 @@
             "enum": [
               "continue",
               "fresh",
-              "retry"
+              "retry",
+              "transfer"
             ]
           },
           "feedback": {
@@ -980,7 +1002,8 @@
             "maxLength": 8000
           },
           "base_candidate_id": {
-            "$ref": "#/components/schemas/Identifier"
+            "$ref": "#/components/schemas/Identifier",
+            "description": "continue可选基线；transfer必须明确选择同项目、已实际渲染且有方法的复现作品。不能用内部最佳或AI评分代替用户选择。"
           },
           "use_wikiskill": {
             "type": "boolean",
@@ -1010,6 +1033,10 @@
             "type": "boolean",
             "default": true,
             "description": "Allow 0-2 focused internal technique studies, each actually authored, rendered and independently reviewed. Evidence belongs to internal_attempts, not normal works. Shares the experiment budget; no forced extra planning loop."
+          },
+          "approve_candidate": {
+            "type": "boolean",
+            "description": "仅transfer允许，且必须是true。提交表示用户认可base_candidate_id对应的具体作品，开始一次独立换内容验证。"
           }
         },
         "allOf": [
@@ -1063,7 +1090,75 @@
                     "required": [
                       "allow_probes"
                     ]
+                  },
+                  {
+                    "required": [
+                      "approve_candidate"
+                    ]
                   }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "transfer"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "base_candidate_id",
+                "approve_candidate"
+              ],
+              "properties": {
+                "approve_candidate": {
+                  "const": true
+                },
+                "max_rounds": {
+                  "const": 1,
+                  "default": 1
+                },
+                "max_seconds": {
+                  "default": 3600
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "feedback"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "use_wikiskill"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "capability_selection"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "allow_collaboration"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "allow_probes"
+                    ]
+                  }
+                ]
+              }
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "approve_candidate"
                 ]
               }
             }
@@ -1137,6 +1232,14 @@
           "resource_descriptor": {
             "type": "object",
             "description": "Verified real preproduced resource descriptor, not a tool-selection claim."
+          },
+          "status": {
+            "enum": [
+              "authored",
+              "rendered",
+              "reviewed"
+            ],
+            "description": "只有rendered或reviewed且带真实产物和非空method的复现作品可被用户认可后验证。评审意见可选。"
           }
         }
       },
@@ -1227,7 +1330,55 @@
                   ]
                 },
                 "frozen": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "transfer_policy": {
+                      "const": "manual"
+                    },
+                    "base_candidate_id": {
+                      "$ref": "#/components/schemas/Identifier"
+                    },
+                    "transfer_approval": {
+                      "type": "object",
+                      "description": "服务生成的不可伪造认可记录，绑定用户、请求及具体产物；与采用默认作品和知识发布分别记录。",
+                      "properties": {
+                        "approve_candidate": {
+                          "const": true
+                        },
+                        "candidate_id": {
+                          "$ref": "#/components/schemas/Identifier"
+                        },
+                        "source_experiment_id": {
+                          "$ref": "#/components/schemas/Identifier"
+                        },
+                        "source_sha256": {
+                          "type": "string"
+                        },
+                        "media_sha256": {
+                          "type": "string"
+                        },
+                        "method_sha256": {
+                          "type": "string"
+                        },
+                        "transfer_method_sha256": {
+                          "type": "string"
+                        },
+                        "candidate_sha256": {
+                          "type": "string"
+                        },
+                        "owner": {
+                          "type": "string"
+                        },
+                        "approved_at": {
+                          "type": "number"
+                        },
+                        "request_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      }
+                    }
+                  }
                 },
                 "candidates": {
                   "type": "array",
@@ -1242,7 +1393,8 @@
                   ]
                 },
                 "transfer_status": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "not_requested表示未发起换内容验证；awaiting_approval表示复现已结束，等待用户认可作品后单独发起；planning/running/reviewed用于显式认可后的验证；历史状态保持原义。"
                 },
                 "learning_progress": {
                   "$ref": "#/components/schemas/LearningProgress"
@@ -1253,6 +1405,10 @@
                   "items": {
                     "$ref": "#/components/schemas/Candidate"
                   }
+                },
+                "transfer_policy": {
+                  "const": "manual",
+                  "description": "新实验默认由用户认可并单独发起换内容验证。"
                 }
               }
             }

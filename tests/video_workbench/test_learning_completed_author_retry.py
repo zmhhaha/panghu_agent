@@ -110,6 +110,10 @@ def test_real_service_reuses_completed_compose_once_across_restarts_and_lost_ren
     assert len(author.submissions) == 4 and len(renderer.calls) == 1
     completed = finish(service, retried, limit=80)
     assert completed['state'] == 'completed', completed['experiments'][-1].get('error')
+    assert completed['experiments'][-1]['transfer_status'] == 'awaiting_approval'
+    assert len(author.submissions) == 4 and len(renderer.calls) == 1
+    from test_picture_learning_service import request_transfer
+    completed = finish(service, request_transfer(service, completed), limit=80)
     assert len(author.submissions) == 5  # Only the legitimate changed-content author is new.
     assert len(renderer.calls) == 2 and len(completed['candidates']) == 2
     assert service.store.read('experiments', 'developer', prior['id']) == prior

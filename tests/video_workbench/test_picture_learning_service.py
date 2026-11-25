@@ -87,7 +87,7 @@ class Gateway:
             self.review_count += 1
             result['review'] = dict(score=score, summary='Actual reference and output compared.',
                 issues=[] if score >= 80 else ['Contour needs improvement.'], stop_recommended=score >= 80)
-            if document['work_kind'] == 'reproduction':
+            if document['work_kind'] == 'reproduction' or document['mode'] == 'transfer_plan':
                 result['transfer_task'] = dict(goal='Change the subject silhouette and foreground relation.',
                     criteria=['New silhouette preserves the learned contrast technique.'])
         protocol.validate_result(result, input_sha256, document)
@@ -174,11 +174,27 @@ def finish(service, project, *, limit=60):
     raise AssertionError(project)
 
 
+def request_transfer(service, project, candidate_id=None, **overrides):
+    candidate_id = candidate_id or next(item['id'] for item in project['candidates']
+        if item['work_kind'] == 'reproduction' and (item.get('picture_sha256') or item.get('media_sha256')))
+    body = dict(request_id=uuid4().hex, mode='transfer', base_candidate_id=candidate_id,
+        approve_candidate=True, max_rounds=1, max_seconds=3600)
+    body.update(overrides)
+    return service.next_experiment('developer', project['id'], body)
+
+
 def test_reproduction_then_independent_transfer_is_one_project_with_sources(system):
     service, author, reviewer, renderer = system
     project, _ = start(service)
     completed = finish(service, project)
     assert completed['state'] == 'completed'
+    assert [item['work_kind'] for item in completed['candidates']] == ['reproduction', 'reproduction']
+    assert completed['experiments'][0]['transfer_status'] == 'awaiting_approval'
+    assert len(renderer.calls) == 2
+    # The user's choice can differ from the internal higher-scored best.
+    approved = completed['candidates'][0]
+    assert approved['id'] != completed['best_candidate_id']
+    completed = finish(service, request_transfer(service, completed, approved['id']))
     candidates = completed['candidates']
     assert [item['work_kind'] for item in candidates] == ['reproduction', 'reproduction', 'transfer']
     assert len(service.catalogue('developer')['projects']) == 1
@@ -198,7 +214,8 @@ def test_reproduction_then_independent_transfer_is_one_project_with_sources(syst
     assert transferred['work_kind'] == 'transfer' and transferred['base_source'] is None
     assert transferred['observation']['frames'] == []
     assert transferred['learned_method'] and transferred['knowledge_snapshot'] is None
-    assert completed['experiments'][0]['transfer_status'] == 'reviewed'
+    assert completed['experiments'][-1]['transfer_status'] == 'reviewed'
+    assert completed['experiments'][-1]['frozen']['transfer_approval']['candidate_id'] == approved['id']
 
 
 @pytest.mark.parametrize('use_wikiskill', [False, True])
@@ -217,6 +234,7 @@ def test_picture_transfer_keeps_runtime_api_without_original_goal_or_knowledge(
     original_goal = 'Learn the visible contour; this goal contains no library API documentation.'
     project, _ = start(service, goal=original_goal, use_wikiskill=use_wikiskill)
     completed = finish(service, project)
+    completed = finish(service, request_transfer(service, completed))
     assert completed['state'] == 'completed'
     documents = [document for document, _ in author.uploads + reviewer.uploads]
     transfer = next(document for document, _ in author.uploads if document['work_kind'] == 'transfer')
@@ -225,8 +243,9 @@ def test_picture_transfer_keeps_runtime_api_without_original_goal_or_knowledge(
     for document in documents:
         assert document['constraints']['drawing_library_api'] == runtime_guidance()
         assert document['constraints']['drawing_libraries'] == {'ink-landscape': library}
-        assert document['knowledge_binding']['use_wikiskill'] is use_wikiskill
-        assert (document['knowledge_snapshot'] is not None) is use_wikiskill
+        expected_knowledge = use_wikiskill and document['work_kind'] != 'transfer'
+        assert document['knowledge_binding']['use_wikiskill'] is expected_knowledge
+        assert (document['knowledge_snapshot'] is not None) is expected_knowledge
     assert bool(knowledge_reads) is use_wikiskill
 
 
@@ -441,7 +460,7 @@ def test_manual_release_capture_is_exact_static_records_and_never_executes(syste
     snapshot = make_snapshot('developer', records)
     assert validate_snapshot(snapshot) == snapshot
     works = [row['content'] for row in records if row['kind'] == 'picture_work']
-    assert len(works) == 3 and all(row['verification_scope'] == 'static_only' for row in works)
+    assert len(works) == 2 and all(row['verification_scope'] == 'static_only' for row in works)
     assert all(row['motion_verified'] is False and row['audio_verified'] is False for row in works)
     assert service.capture_wikiskill_records('other') == []
     assert before == (len(author.submissions), len(reviewer.submissions), len(renderer.calls))
@@ -494,8 +513,8 @@ def test_budget_prefers_reproduction_and_marks_transfer_unverified(system):
     completed = service.advance('developer', eid)
     assert completed['state'] == 'completed'
     assert len(completed['candidates']) == 1
-    assert completed['experiments'][0]['transfer_status'] == 'not_verified'
-    assert completed['experiments'][0]['stop_reason'] == 'budget_exhausted'
+    assert completed['experiments'][0]['transfer_status'] == 'awaiting_approval'
+    assert completed['experiments'][0]['stop_reason'] == 'reproduction_complete'
 
 
 def test_stop_preserves_already_completed_author_source_without_render(system):

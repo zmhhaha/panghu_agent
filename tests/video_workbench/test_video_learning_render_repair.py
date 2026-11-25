@@ -185,7 +185,8 @@ def test_technical_retry_can_reclassify_a_stopped_historical_failure_without_rer
     assert service.next_experiment('developer', project['id'], request)['latest_experiment_id'] == pending['id']
     assert finish(service, retry)['state'] == 'completed'
     assert len([doc for doc, _ in author.uploads if doc['work_kind'] == 'reproduction']) == 2
-    assert len(renderer.calls) == 3  # one original, one repaired, one transfer
+    assert len(renderer.calls) == 2  # one original, one repaired; no automatic transfer
+    assert all(doc['work_kind'] == 'reproduction' for doc, _ in author.uploads)
 
 
 def test_bound_host_capture_timeout_preserves_source_and_does_not_author_again(timeout_system, real_mp4):

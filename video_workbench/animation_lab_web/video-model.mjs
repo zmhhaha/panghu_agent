@@ -6,7 +6,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/;
 const STATES = {queued: '等待执行', running: '正在学习', creating: '正在绘制', rendering: '正在渲染完整片段', reviewing: '正在对照评审', planning: '正在分析目标', transfer_planning: '正在拟定换内容任务', transferring: '正在换内容验证', submission_unknown: '提交结果待核对', render_unknown: '渲染结果待核对', stopping: '正在停止', cancelling: '正在停止', completed: '本次实验已结束', stopped: '本次实验已停止', cancelled: '已停止', failed: '本次执行失败', idle: '尚未开始', reviewed: '已评审'};
 const REASONS = {goal_met: '已达到本次目标', objective_met: '已达到本次目标', learning_complete: '本次复现与换内容验证已结束',
-  reproduction_complete: '本次复现已结束', developer_stopped: '开发者已停止', agent_failed: '创作任务未完成', render_failed: '视频渲染未完成',
+  reproduction_complete: '本次复现已结束', awaiting_user_approval: '本次复现已结束，换内容验证等待你认可作品后单独发起', transfer_complete: '本次换内容验证已结束', developer_stopped: '开发者已停止', agent_failed: '创作任务未完成', render_failed: '视频渲染未完成',
   invalid_result: '创作结果不符合执行合同', invalid_input_or_result: '输入或结果未通过检查', budget_exhausted: '本次预算已用完',
   max_rounds: '已到本次探索轮数', max_seconds: '已到本次时间上限', deadline: '已到本次时间上限', deadline_exceeded: '已到本次时间上限',
   no_progress: '多种尝试后暂无明显进展', cancelled: '开发者已停止', stopped: '开发者已停止', failed: '执行未完成'};
@@ -45,9 +45,15 @@ export function buildVideoProject(fields, referenceIds, id) {
 }
 export function buildVideoExperiment(fields, id) {
   const mode = fields.mode ?? 'continue';
-  if (!['continue', 'fresh', 'retry'].includes(mode)) throw Error('请选择有效的实验方式');
+  if (!['continue', 'fresh', 'retry', 'transfer'].includes(mode)) throw Error('请选择有效的实验方式');
   // A technical retry retains the immutable original brief and knowledge pin.
   if (mode === 'retry') return {request_id: requestId(id), mode};
+  if (mode === 'transfer') {
+    if (fields.approve_candidate !== true) throw Error('请明确认可所选作品的效果，再开始换内容验证');
+    return {request_id: requestId(id), mode, base_candidate_id: videoId(fields.base_candidate_id),
+      approve_candidate: true, max_rounds: 1,
+      max_seconds: number(fields.max_minutes ?? 60, 1, 60, '验证时间上限应为 1 至 60 分钟') * 60};
+  }
   const body = {request_id: requestId(id), mode, ...videoBudget(fields)};
   const feedback = text(fields.feedback).trim();
   if (feedback.length > 8000) throw Error('本次意见不能超过 8000 字');

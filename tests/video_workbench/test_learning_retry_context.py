@@ -130,12 +130,17 @@ def test_retry_freezes_effective_multiround_source_pixels_and_review_context(tmp
         assert len(renderer.calls) == render_calls
     else:
         assert len(renderer.calls) == render_calls + 1
-    # Complete the recovered technical step, then let the normal transfer
-    # continue. Its method must still be selected from the effective lineage.
+    # Complete the recovered technical step, then explicitly approve its real
+    # output. Its independent transfer uses this effective lineage.
     result = finish(retry)
     assert result['state'] == 'completed', result
     retry_run = result['experiments'][-1]
-    assert retry_run['transfer_status'] == 'reviewed'
-    assert len(retry_run['candidates']) == 2
-    assert retry_run['candidates'][1]['work_kind'] == 'transfer'
+    assert retry_run['transfer_status'] == 'awaiting_approval'
+    assert len(retry_run['candidates']) == 1
     assert service.store.read('experiments', 'developer', retried['id'])['technical_retry_context']['consumed'] is True
+    from test_picture_learning_service import request_transfer
+    result = finish(request_transfer(service, result, retry_run['candidates'][0]['id']))
+    manual = result['experiments'][-1]
+    assert manual['transfer_status'] == 'reviewed' and len(manual['candidates']) == 1
+    assert manual['candidates'][0]['work_kind'] == 'transfer'
+    assert manual['frozen']['transfer_approval']['candidate_id'] == retry_run['candidates'][0]['id']

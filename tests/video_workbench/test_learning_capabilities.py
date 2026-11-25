@@ -20,6 +20,7 @@ from video_workbench.animation_wikiskill_production import LibrarySkillProductio
 from test_manim_method_integration import setup
 from test_picture_learning_service import Gateway as PictureGateway, Renderer as PictureRenderer
 from test_picture_learning_service import finish as finish_picture, start as start_picture
+from test_picture_learning_service import request_transfer
 from test_video_learning_service import Gateway as VideoGateway, Renderer as VideoRenderer, real_mp4
 from test_video_learning_service import finish as finish_video, start as start_video
 
@@ -116,8 +117,14 @@ def test_still_observation_precedes_resource_then_composition_review_and_new_tra
     assert recipe.submissions == executor.calls == 0
     result = finish_picture(service, project, limit=100)
     assert result['state'] == 'completed', result['experiments'][0].get('error')
+    assert len(renderer.calls) == recipe.submissions == executor.calls == 1
+    assert all(item['work_kind'] == 'reproduction' for item in result['candidates'])
+    assert result['experiments'][-1]['transfer_status'] == 'awaiting_approval'
+    approved = result['candidates'][0]['id']
+    result = finish_picture(service, request_transfer(service, result, approved), limit=100)
+    assert result['state'] == 'completed', result['experiments'][-1].get('error')
     assert len(renderer.calls) == 2 and recipe.submissions == executor.calls == 2
-    assert len(author.submissions) == 4 and len(reviewer.submissions) == 2
+    assert len(author.submissions) == 4 and len(reviewer.submissions) == 3
     first, first_compose, transfer, transfer_compose = [row[0] for row in author.uploads]
     assert first['observation']['frames'][0]['purpose'] == 'reference'
     assert 'generated_resources' not in first['constraints']
@@ -147,6 +154,10 @@ def test_manim_planning_keeps_strict_source_contract_in_frozen_reproduction_and_
     project, _ = start_picture(service, max_rounds=1,
         capability_selection=dict(creation=['manim'], motion=[]))
     completed = finish_picture(service, project, limit=100)
+    assert completed['state'] == 'completed'
+    assert len(renderer.calls) == recipe.submissions == executor.calls == 1
+    approved = completed['candidates'][0]['id']
+    completed = finish_picture(service, request_transfer(service, completed, approved), limit=100)
     assert completed['state'] == 'completed'
     for index, work_kind in ((0, 'reproduction'), (2, 'transfer')):
         document = author.uploads[index][0]
@@ -237,12 +248,17 @@ def test_failed_render_retry_adopts_resource_and_does_not_pay_for_new_recipe(pic
         mode='retry'))
     completed = finish_picture(service, retry, limit=100)
     assert completed['state'] == 'completed', completed['experiments'][-1].get('error')
-    # Only the changed-content transfer creates another recipe/composition.
-    assert recipe.submissions == executor.calls == 2
-    assert len(author.submissions) == created + 2
+    assert recipe.submissions == executor.calls == 1
+    assert len(author.submissions) == created
     reproduction = [item for item in completed['candidates'] if item['work_kind'] == 'reproduction']
     assert len(reproduction) == 2
     assert reproduction[0]['resource_descriptor'] == reproduction[1]['resource_descriptor']
+    # Only explicit approval starts another resource recipe/composition.
+    approved = reproduction[-1]['id']
+    completed = finish_picture(service, request_transfer(service, completed, approved), limit=100)
+    assert completed['state'] == 'completed'
+    assert recipe.submissions == executor.calls == 2
+    assert len(author.submissions) == created + 2
 
 
 def test_video_service_creates_short_local_resource_and_independent_transfer(tmp_path, real_mp4):
@@ -255,6 +271,11 @@ def test_video_service_creates_short_local_resource_and_independent_transfer(tmp
         capability_selection=dict(creation=['manim'], motion=[]))
     result = finish_video(service, project, limit=100)
     assert result['state'] == 'completed', result['experiments'][0].get('error')
+    assert len(renderer.calls) == recipe.submissions == executor.calls == 1
+    assert all(item['work_kind'] == 'reproduction' for item in result['candidates'])
+    approved = result['candidates'][0]['id']
+    result = finish_video(service, request_transfer(service, result, approved), limit=100)
+    assert result['state'] == 'completed', result['experiments'][-1].get('error')
     assert len(renderer.calls) == 2 and recipe.submissions == executor.calls == 2
     assert len(author.submissions) == 4
     reproduced, transferred = result['candidates']

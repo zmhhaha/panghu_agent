@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {buildPictureProject, buildPictureExperiment, pictureAssetUrl, pictureDefaultCandidate,
   pictureCandidates, pictureIsActive, validateReferenceFile, pictureCandidateRole} from '../../video_workbench/animation_lab_web/picture-model.mjs';
-import {PictureLibraryController, picturePendingStorage, referenceBody, renderPictureDetail, renderPictureCard} from '../../video_workbench/animation_lab_web/picture-library.mjs';
+import {PictureLibraryController, picturePendingStorage, referenceBody, renderPictureDetail, renderPictureCard, mountPictureLibrary} from '../../video_workbench/animation_lab_web/picture-library.mjs';
 
 const root = new URL('https://video-service.panghuer.top/dev/animations/');
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -56,6 +56,9 @@ class Element {
   replaceChildren(...items) { this._text = ''; this.children = items; }
   setAttribute(name, value) { this.attributes[name] = value; }
   addEventListener(name, handler) { this.handlers[name] = handler; }
+  querySelectorAll(tag) { return all(this).filter(node => node !== this && node.tagName === tag.toUpperCase()); }
+  querySelector(tag) { return this.querySelectorAll(tag)[0] ?? null; }
+  focus() {}
 }
 const doc = {createElement: tag => new Element(tag), createDocumentFragment: () => new Element('fragment')};
 const all = node => [node, ...node.children.flatMap(all)];
@@ -172,7 +175,7 @@ test('detail compares real reference and result, provides source and receipt, an
   assert.match(images[0].src, /references\/ref-1\/media$/); assert.match(images[1].src, /artifacts\/one-png$/);
   assert.ok(all(detail).some(row => row.tagName === 'A' && row.textContent === '下载绘制源码' && row.href.endsWith('one-source')));
   assert.ok(all(detail).some(row => row.tagName === 'A' && row.textContent === '下载渲染回执' && row.href.endsWith('one-receipt')));
-  assert.match(detail.textContent, /连续运动与声音尚未验证/); assert.match(detail.textContent, /换内容验证尚无产物/);
+  assert.match(detail.textContent, /连续运动与声音尚未验证/); assert.match(detail.textContent, /尚未发起换内容验证/);
   const active = renderPictureDetail(doc, {...p, experiments: [{id: 'exp', state: 'running'}]}, {root});
   const labels = buttons(active).map(row => row.textContent);
   assert.ok(labels.includes('停止本次实验')); assert.equal(labels.includes('继续优化'), false);
@@ -236,7 +239,7 @@ test('navigation exposes the independent image and video libraries with the docu
   for (const path of ['/catalog', '/references', '/projects', '/projects/{project_id}/experiments', '/projects/{project_id}/stop', '/projects/{project_id}/adopt']) assert.ok(contract.paths[path]);
   assert.equal(contract.components.schemas.ProjectStart.properties.use_wikiskill.default, true);
   assert.deepEqual(contract.components.schemas.ExperimentStart.allOf[0].then.not.anyOf.map(row => row.required[0]),
-    ['feedback', 'base_candidate_id', 'use_wikiskill', 'max_rounds', 'max_seconds', 'capability_selection', 'allow_collaboration', 'allow_probes']);
+    ['feedback', 'base_candidate_id', 'use_wikiskill', 'max_rounds', 'max_seconds', 'capability_selection', 'allow_collaboration', 'allow_probes', 'approve_candidate']);
 });
 
 test('internal rendered studies appear in experiment evidence without entering ordinary picture versions or cards', () => {
@@ -468,4 +471,102 @@ test('an upload response arriving after account change cannot advance into a pai
   owner = 'owner-old'; await h.controller.refresh();
   assert.equal(h.controller.state.pending.path, 'api/picture-lab/references');
   assert.equal(h.requests.filter(row => row.request.method).length, 1);
+});
+
+
+test('manual picture validation requires explicit approval and keeps a separate one-round budget', () => {
+  const input = {mode:'transfer',base_candidate_id:'chosen',approve_candidate:true,
+    feedback:'old feedback',use_wikiskill:true,allow_probes:true,max_rounds:8};
+  assert.deepEqual(buildPictureExperiment(input,uuid),{request_id:uuid,mode:'transfer',
+    base_candidate_id:'chosen',approve_candidate:true,max_rounds:1,max_seconds:3600});
+  assert.equal(buildPictureExperiment({...input,max_minutes:5},uuid).max_seconds,300);
+  for (const approve_candidate of [undefined,false,'true'])
+    assert.throws(()=>buildPictureExperiment({...input,approve_candidate},uuid),/认可/);
+  assert.throws(()=>buildPictureExperiment({...input,base_candidate_id:undefined},uuid),/编号/);
+  assert.equal('approve_candidate' in buildPictureExperiment({mode:'fresh'},uuid),false);
+});
+
+test('manual picture validation accepts rendered unscored work and rejects unavailable or transfer work before POST', async () => {
+  const work = candidate('chosen',{status:'rendered',method:{technique:'local form'}});
+  const p = project({candidates:[work],best_candidate_id:work.id});
+  const view=renderPictureDetail(doc,p,{root});
+  assert.ok(buttons(view).some(row=>row.textContent==='认可并验证换内容'));
+  const h=harness((path,r)=>r.method?p:path.endsWith('catalog')?catalog([p]):p);
+  await h.controller.refresh();await h.controller.open(p.id);
+  await assert.rejects(h.controller.experiment({mode:'transfer',base_candidate_id:work.id}),/认可/);
+  for(const change of [{status:'authored'},{method:null},{method:{}},{work_kind:'transfer'},{picture_url:null}]) {
+    Object.assign(work,{status:'rendered',method:{technique:'local form'},work_kind:'reproduction',
+      picture_url:'/api/picture-lab/projects/picture-project-1/artifacts/chosen-png'},change);
+    assert.equal(await h.controller.experiment({mode:'transfer',base_candidate_id:work.id,approve_candidate:true}),false);
+  }
+  assert.ok(h.requests.every(row=>!row.request.method));
+  Object.assign(work,{status:'rendered',method:{technique:'local form'},work_kind:'reproduction',
+    picture_url:'/api/picture-lab/projects/picture-project-1/artifacts/chosen-png'});
+  assert.equal(await h.controller.experiment({mode:'transfer',base_candidate_id:work.id,approve_candidate:true}),true);
+  const post=h.requests.find(row=>row.request.method);
+  assert.equal(post.path,'api/picture-lab/projects/picture-project-1/experiments');
+  assert.equal(JSON.parse(post.request.body).base_candidate_id,work.id);
+  assert.equal(h.requests.some(row=>row.path.endsWith('/adopt')),false);
+});
+
+function pictureFormDocument() {
+  const html=readFileSync(new URL('../../video_workbench/animation_lab_web/picture-library.html',import.meta.url),'utf8');
+  const attributes=raw=>Object.fromEntries([...raw.matchAll(/([\w:-]+)(?:="([^"]*)")?/g)].map(([,key,value])=>[key,value??'']));
+  const nodes=new Map([...html.matchAll(/<([a-z][\w-]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)].map(([,tag,raw,id])=>{
+    const node=new Element(tag),attrs=attributes(raw);
+    Object.assign(node,attrs,{id,attributes:attrs,defaultValue:attrs.value??'',defaultChecked:'checked'in attrs,
+      checked:'checked'in attrs,hidden:'hidden'in attrs,disabled:'disabled'in attrs});
+    node.value=node.defaultValue;return[id,node];
+  }));
+  for(const [,raw,body] of html.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
+    const node=nodes.get(attributes(raw).id),options=[...body.matchAll(/<option\b([^>]*)>/g)].map(([,value])=>attributes(value));
+    node.defaultValue=(options.find(value=>'selected'in value)??options[0])?.value??'';node.value=node.defaultValue;
+  }
+  const form=nodes.get('picture-form'),body=html.match(/<form id="picture-form">([\s\S]*?)<\/form>/)[1];
+  form.elements=[...body.matchAll(/\bid="([^"]+)"/g)].map(([,id])=>nodes.get(id))
+    .filter(node=>['INPUT','SELECT','TEXTAREA','BUTTON'].includes(node.tagName));
+  form.reset=()=>{for(const node of form.elements){node.value=node.defaultValue;node.checked=node.defaultChecked;}};
+  return{getElementById:id=>nodes.get(id)??null,createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment')};
+}
+
+test('picture approval form waits for submission and pins the chosen version across polling', async t => {
+  const formDoc=pictureFormDocument(),get=id=>formDoc.getElementById(id),sent=[];
+  const first=candidate('chosen',{status:'rendered',method:{technique:'chosen'}}),later=candidate('later',{status:'reviewed',method:{technique:'later'}});
+  const p=project({candidates:[first,later],best_candidate_id:first.id});
+  const fetcher=async(url,request={})=>{
+    if(request.method)sent.push({path:url.pathname,body:JSON.parse(request.body)});
+    return{ok:true,status:200,json:async()=>url.pathname.endsWith('/catalog')?catalog([p]):p};
+  };
+  const NativeFormData=globalThis.FormData;
+  globalThis.FormData=class{constructor(form){this.entries=form.elements.filter(node=>node.name&&!node.disabled
+    &&(node.type!=='checkbox'||node.checked)).map(node=>[node.name,node.value]);}[Symbol.iterator](){return this.entries[Symbol.iterator]();}};
+  t.after(()=>{globalThis.FormData=NativeFormData;});
+  const app=mountPictureLibrary(formDoc,{root,fetcher,storage:memoryStorage(),uuid:()=>uuid,schedule:()=>1,unschedule:()=>{}});
+  await app.ready;
+  await buttons(get('picture-cards')).find(row=>row.textContent===p.title).handlers.click();
+  await buttons(get('picture-detail')).find(row=>row.textContent==='认可并验证换内容').handlers.click();
+  assert.equal(sent.length,0);assert.equal(get('picture-minutes').value,'60');
+  assert.equal(get('picture-learning-options').hidden,true);assert.equal(get('picture-wikiskill-field').hidden,true);
+  assert.equal(get('picture-submit').textContent,'认可此版本并开始验证');
+  p.best_candidate_id=later.id;p.adopted_candidate_id=later.id;await app.controller.refresh();
+  get('picture-minutes').value='2';await get('picture-form').handlers.submit({preventDefault(){}});
+  assert.equal(sent.length,1);
+  assert.deepEqual(sent[0].body,{request_id:uuid,mode:'transfer',base_candidate_id:first.id,approve_candidate:true,max_rounds:1,max_seconds:120});
+  assert.equal(sent[0].path.endsWith('/experiments'),true);
+  app.destroy();
+});
+
+test('lost approved picture validation replays the original candidate and approval without adoption', async () => {
+  const storage=memoryStorage(),work=candidate('chosen',{status:'rendered',method:{technique:'form'}});
+  const p=project({candidates:[work],experiments:[{id:'old',state:'completed',request_id:'00000000-0000-4000-8000-000000000002'}]});
+  const first=harness((path,r)=>{if(r.method)throw Error('lost');return path.endsWith('catalog')?catalog([p]):p;},{storage});
+  await first.controller.refresh();await first.controller.open(p.id);
+  await first.controller.experiment({mode:'transfer',base_candidate_id:work.id,approve_candidate:true,max_minutes:2});
+  const original=JSON.parse(first.requests.find(row=>row.request.method).request.body);
+  p.best_candidate_id='different';
+  const next=harness((path,r)=>r.method?p:path.endsWith('catalog')?catalog([p]):p,{storage});
+  await next.controller.refresh();assert.ok(next.controller.state.pending);
+  assert.equal(await next.controller.replayPending(),true);
+  assert.deepEqual(JSON.parse(next.requests.find(row=>row.request.method).request.body),original);
+  assert.ok(next.requests.every(row=>!row.path.endsWith('/adopt')));
 });

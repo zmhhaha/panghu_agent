@@ -30,7 +30,7 @@
         <p id="picture-availability" class="muted" role="status"></p>
         <div class="gallery-tools"><label class="search-label" for="picture-search">查找学习项目<input id="picture-search" type="search" placeholder="名称或学习目标" autocomplete="off"></label></div>
         <div id="picture-cards" class="gallery-grid" aria-live="polite"></div>
-        <div id="picture-empty" class="empty-state" hidden><span aria-hidden="true">▧</span><h2>从一张想学会的图开始</h2><p>可以追求整体画面相似，也可以指定重点技法。每次实验先复现，再在预算允许时换内容验证一次。</p><button id="picture-empty-new" class="button primary" type="button">提交参考图</button></div>
+        <div id="picture-empty" class="empty-state" hidden><span aria-hidden="true">▧</span><h2>从一张想学会的图开始</h2><p>可以追求整体画面相似，也可以指定重点技法。默认只复现和优化；认可所选作品后，再单独验证换内容。</p><button id="picture-empty-new" class="button primary" type="button">提交参考图</button></div>
       </section>
       <section id="picture-detail" hidden aria-label="学习项目详情"></section>
       <section id="picture-animation-panel" class="panel experiment-form" hidden aria-labelledby="picture-animation-title">
@@ -63,6 +63,11 @@
             <div class="form-row picture-dimensions"><label for="picture-width">输出宽度（像素）<input id="picture-width" name="width" type="number" min="320" max="1920" step="1" value="1280" required></label><label for="picture-height">输出高度（像素）<input id="picture-height" name="height" type="number" min="180" max="1080" step="1" value="720" required></label></div>
             <label for="picture-criteria">可观察的标准（可选，每行一项）<textarea id="picture-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：山体由皴擦形成体积，而不是重复的带状墨块。留空时由 Agent 根据目标拟定。"></textarea></label>
           </div>
+          <section id="picture-transfer-fields" class="panel" hidden>
+            <h3>认可所选作品，再单独验证换内容</h3>
+            <p id="picture-transfer-source" class="small muted"></p>
+            <p>点击“认可此版本并开始验证”，表示你认可该作品的效果，并使用它已形成的方法进行一轮独立的换内容验证。</p>
+          </section>
           <label id="picture-feedback-label" for="picture-feedback" hidden>用于下一次实验的意见<textarea id="picture-feedback" name="feedback" rows="4" maxlength="8000" placeholder="描述当前画面具体哪里不理想，以及本次希望尝试的方向。"></textarea></label>
           <details id="picture-learning-options" class="form-details"><summary>创作能力与学习方式</summary>
             <fieldset><legend>画面创作（可多选）</legend>
@@ -77,9 +82,9 @@
             <label class="checkbox-label"><input id="picture-allow-collaboration" type="checkbox" checked><span>允许按需分工创作</span></label>
             <p class="small muted">Agent 只在有助于目标时安排，最多 2 个内部小样、2–3 个部件，按依赖顺序执行。创作、渲染、评审与整合共用本次预算；关闭后直接创作完整作品。</p>
           </details>
-          <label class="checkbox-label" for="picture-use-wikiskill"><input id="picture-use-wikiskill" name="use_wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>
-          <p id="picture-skill-help" class="small muted">本次固定所用版本。关闭后仍提供绘制工具与渲染规范，不注入已发布的技法；本次形成的方法可用于换内容验证。</p>
-          <details id="picture-budget-fields" class="form-details"><summary>本次预算</summary><div class="form-row"><label for="picture-rounds">最多探索轮数<input id="picture-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="picture-minutes">时间上限（分钟）<input id="picture-minutes" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><p class="small muted">预算覆盖创作、渲染、评审和换内容验证。预算不足时优先保存复现进展；之后可继续发起实验。</p></details>
+          <label id="picture-wikiskill-field" class="checkbox-label" for="picture-use-wikiskill"><input id="picture-use-wikiskill" name="use_wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>
+          <p id="picture-skill-help" class="small muted">本次固定所用版本。关闭后仍提供绘制工具与渲染规范，不注入已发布的技法；效果满意后，可选定认可的作品单独验证换内容。</p>
+          <details id="picture-budget-fields" class="form-details"><summary>本次预算</summary><div class="form-row"><label id="picture-rounds-label" for="picture-rounds">最多探索轮数<input id="picture-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="picture-minutes">时间上限（分钟）<input id="picture-minutes" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><p id="picture-budget-help" class="small muted">预算只用于本次复现、创作和评审。效果满意后，可以再单独发起换内容验证。</p></details>
           <div class="form-footer"><p class="small muted">运行中只能查看或停止。新意见在下一次实验生效；不会自动发布知识。</p><button id="picture-submit" class="button primary" type="submit">开始图片学习</button></div>
         </form>
       </section>

@@ -6,7 +6,7 @@ import pytest
 
 from agent_service.contracts import ServiceError, digest
 from test_learning_completed_author_retry import failed_composition, restart, retry
-from test_picture_learning_service import finish
+from test_picture_learning_service import finish, request_transfer
 from test_video_learning_service import real_mp4
 
 
@@ -14,6 +14,9 @@ def failed_transfer(tmp_path, *, kind='picture', raw=None):
     service, author, reviewer, renderer, project, compose_prior, _ = failed_composition(
         tmp_path, kind=kind, raw=raw)
     project = retry(service, project)
+    completed = finish(service, project, limit=80)
+    assert completed['experiments'][-1]['transfer_status'] == 'awaiting_approval'
+    project = request_transfer(service, completed, completed['best_candidate_id'])
     validate = service._validate_learning_source
 
     def reject_transfer(run, source, **kwargs):
@@ -26,8 +29,10 @@ def failed_transfer(tmp_path, *, kind='picture', raw=None):
     service._validate_learning_source = validate
     prior = service.store.read('experiments', 'developer', failed['latest_experiment_id'])
     assert prior['state'] == 'failed' and prior['stage'] == 'author' and prior['stop_proven']
-    assert prior['work_kind'] == 'transfer' and prior['completed_author_retry']['consumed']
-    assert len(prior['candidates']) == 1 and prior['candidates'][0]['status'] == 'reviewed'
+    assert prior['work_kind'] == 'transfer' and 'completed_author_retry' not in prior
+    assert prior['candidates'] == []
+    approved = service._approved_transfer_candidate(prior)
+    assert approved['status'] == 'reviewed' and prior['inherited_candidate_ids'] == [approved['id']]
     operation = service.store.read('operations', 'developer', prior['operation_ids'][-1])
     assert operation['status'] == 'completed' and operation['input']['work_kind'] == 'transfer'
     assert 'learning_strategy_task' not in operation['input']['constraints']
@@ -47,11 +52,11 @@ def test_compose_recovery_then_transfer_recovery_preserves_paid_sources_and_revi
     pending = service.store.read('experiments', 'developer', eid)
     assert pending['completed_author_retry']['work_kind'] == 'transfer'
     assert pending['completed_author_retry']['operation']['id'] == operation['id']
-    assert pending['completed_author_retry']['operation'] != prior['completed_author_retry']['operation']
+    assert pending['completed_author_retry']['operation']['id'] not in compose_prior['operation_ids']
     assert pending['frozen'] == prior['frozen'] and pending['budget'] == prior['budget']
     assert pending['transfer_task'] == prior['transfer_task']
     assert pending['transfer_method'] == prior['transfer_method']
-    assert pending['inherited_candidate_ids'] == [prior['candidates'][0]['id']]
+    assert pending['inherited_candidate_ids'] == prior['inherited_candidate_ids']
     assert not pending['candidates'] and not pending['operation_ids']
     service = restart(service, author, reviewer, renderer)
     service.advance('developer', eid)
@@ -61,12 +66,12 @@ def test_compose_recovery_then_transfer_recovery_preserves_paid_sources_and_revi
     assert current['candidates'][0]['source'] == operation['result']['source']
     assert current['candidates'][0]['reused_author']['input_sha256'] == operation['input_sha256']
     assert len(author.submissions) == 5 and len(renderer.calls) == 1
-    assert len(reviewer.submissions) == 1
+    assert len(reviewer.submissions) == 2  # Reproduction review and approved planning.
     completed = finish(restart(service, author, reviewer, renderer), retried, limit=80)
     assert completed['state'] == 'completed', completed['experiments'][-1].get('error')
     assert completed['experiments'][-1]['transfer_status'] == 'reviewed'
     assert len(completed['candidates']) == 2 and len(renderer.calls) == 2
-    assert len(author.submissions) == 5 and len(reviewer.submissions) == 2
+    assert len(author.submissions) == 5 and len(reviewer.submissions) == 3
     assert service.store.read('experiments', 'developer', compose_prior['id']) == compose_prior
     assert service.store.read('experiments', 'developer', prior['id']) == prior
     assert all(service.store.read('operations', 'developer', identity) == row
@@ -98,13 +103,16 @@ def test_transfer_checkpoint_changes_cannot_trigger_an_author_or_render(tmp_path
     elif field == 'job':
         operation['job_id'] = 'different-paid-job'
     elif field == 'reproduction':
-        prior['candidates'][0]['method']['technique'] += ' Changed lineage.'
-        service.store.put('experiments', prior)
+        approved = service._approved_transfer_candidate(prior)
+        origin = service.store.read('experiments', 'developer', prior['frozen']['transfer_approval']['source_experiment_id'])
+        selected = next(row for row in origin['candidates'] if row['id'] == approved['id'])
+        selected['method']['technique'] += ' Changed lineage.'
+        service.store.put('experiments', origin)
     elif field == 'review':
-        operation = service.store.read('operations', 'developer', prior['candidates'][0]['review_operation_id'])
+        operation = service.store.read('operations', 'developer', service._approved_transfer_candidate(prior)['review_operation_id'])
         operation['result']['review']['summary'] += ' Changed review.'
     elif field == 'render':
-        operation = service.store.read('operations', 'developer', prior['candidates'][0]['render_operation_id'])
+        operation = service.store.read('operations', 'developer', service._approved_transfer_candidate(prior)['render_operation_id'])
         operation['result']['sha256'] = '0' * 64
     service.store.put('experiments', current)
     service.store.put('operations', operation)
@@ -197,7 +205,7 @@ def test_arbitrary_completed_phases_are_not_transfer_recovery_checkpoints(tmp_pa
     elif change == 'resource':
         prior['resource_plan'] = {'kind': 'manim'}
     elif change == 'probe':
-        prior['learning_strategy']['phase'] = 'probe_author'
+        prior['learning_strategy'] = {'phase':'probe_author'}
     else:
         prior['candidates'].append(dict(work_kind='transfer'))
     run = service._new_experiment('developer', prior['project_id'], uuid4().hex,

@@ -14,7 +14,7 @@ from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.profiles import video_reference_learning as protocol
 from video_workbench.video_learning_service import VideoLearningService
 from video_workbench.video_learning_media import VideoLearningMedia
-from test_picture_learning_service import Gateway as PictureGateway, source
+from test_picture_learning_service import Gateway as PictureGateway, source, request_transfer
 
 
 @pytest.fixture(scope='module')
@@ -55,7 +55,7 @@ class Gateway(PictureGateway):
         else:
             result['review'] = dict(score=85, summary='Compared measured reference and output frames.',
                 issues=[], stop_recommended=True, motion='unverified', audio='unverified')
-            if document['work_kind'] == 'reproduction':
+            if document['work_kind'] == 'reproduction' or document['mode'] == 'transfer_plan':
                 result['transfer_task'] = dict(goal='Change object count and spatial organization.',
                     criteria=['Keep identities traceable through the new trajectories.'])
         protocol.validate_result(result, input_sha256, document)
@@ -154,10 +154,13 @@ def test_reproduction_and_transfer_preserve_mp4_source_and_actual_visual_inputs(
     project, _ = start(service, real_mp4)
     result = finish(service, project)
     assert result['state'] == 'completed', result
+    assert len(result['candidates']) == 1
+    assert result['experiments'][0]['transfer_status'] == 'awaiting_approval'
+    result = finish(service, request_transfer(service, result))
     assert result['verification_scope'] == 'sampled_frames_only'
     assert len(result['candidates']) == 2
     assert [row['work_kind'] for row in result['candidates']] == ['reproduction', 'transfer']
-    assert result['experiments'][0]['transfer_status'] == 'reviewed'
+    assert result['experiments'][-1]['transfer_status'] == 'reviewed'
     assert result['audio_verified'] is result['continuous_motion_verified'] is False
     assert result['adopted_candidate_id'] is None
     assert all(row['media_url'].startswith('/api/video-lab/') for row in result['candidates'])
@@ -194,6 +197,7 @@ def test_video_transfer_keeps_runtime_api_without_original_goal_or_knowledge(
     original_goal = 'Learn the visible motion; this goal contains no library API documentation.'
     project, _ = start(service, real_mp4, goal=original_goal, use_wikiskill=use_wikiskill)
     completed = finish(service, project)
+    completed = finish(service, request_transfer(service, completed))
     assert completed['state'] == 'completed'
     documents = [document for document, _ in author.uploads + reviewer.uploads]
     transfer = next(document for document, _ in author.uploads if document['work_kind'] == 'transfer')
@@ -202,8 +206,9 @@ def test_video_transfer_keeps_runtime_api_without_original_goal_or_knowledge(
     for document in documents:
         assert document['constraints']['drawing_library_api'] == runtime_guidance()
         assert document['constraints']['drawing_libraries'] == {'ink-landscape': library}
-        assert document['knowledge_binding']['use_wikiskill'] is use_wikiskill
-        assert (document['knowledge_snapshot'] is not None) is use_wikiskill
+        expected_knowledge = use_wikiskill and document['work_kind'] != 'transfer'
+        assert document['knowledge_binding']['use_wikiskill'] is expected_knowledge
+        assert (document['knowledge_snapshot'] is not None) is expected_knowledge
     assert bool(knowledge_reads) is use_wikiskill
 
 
@@ -328,7 +333,7 @@ def test_manual_capture_keeps_unverified_motion_audio_and_never_publishes(system
     calls = len(author.submissions) + len(reviewer.submissions)
     records = service.capture_wikiskill_records('developer')
     works = [row['content'] for row in records if row['kind'] == 'video_learning_work']
-    assert len(works) == 2 and all(row['audio_verified'] is False for row in works)
+    assert len(works) == 1 and all(row['audio_verified'] is False for row in works)
     assert all(row['continuous_motion_verified'] is False for row in works)
     assert calls == len(author.submissions) + len(reviewer.submissions)
     assert service.get('developer', project['id'])['published'] is False

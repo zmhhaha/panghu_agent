@@ -64,8 +64,15 @@ const ERROR_MESSAGES = {
   picture_learning_baseline_not_rendered: '这份作品尚未生成图片，请技术重试或从零重做。',
   picture_learning_candidate_not_rendered: '这份作品尚未生成图片，暂时不能采用为默认作品。',
   picture_learning_retry_input_frozen: '技术重试沿用原始需求和预算；需要更改时，请继续优化或从零重做。',
+  picture_learning_transfer_approval_required: '请先选择并明确认可一份已出图的复现作品，再单独开始换内容验证。',
+  picture_learning_transfer_approval_changed: '所选作品或方法发生变化，请重新选择并认可要验证的版本。',
+  picture_learning_transfer_candidate_required: '请选择同项目的复现作品，再开始换内容验证。',
+  picture_learning_transfer_candidate_not_rendered: '这份作品尚未实际出图，请先完成复现。',
+  picture_learning_transfer_method_required: '这份作品尚未形成可验证的方法，请先继续学习。',
+  picture_learning_transfer_rounds_invalid: '换内容验证每次只进行一轮，请单独设置本次时间预算。',
+  picture_learning_transfer_retry_requires_approval: '这次历史换内容验证没有用户认可记录，请选中认可的复现作品后单独发起验证。',
 };
-const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验'};
+const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验', transfer: '换内容验证'};
 function errorMessage(error) {
   return remoteReferenceErrorMessage(error) ?? ERROR_MESSAGES[error?.code] ?? (error?.status === 403 ? '登录或页面授权已失效，请重新登录后刷新。'
     : error?.status === 413 ? '提交内容过大，请缩小参考图片后重试。' : text(error?.message) || '请求未完成，请刷新核对。');
@@ -308,6 +315,12 @@ export class PictureLibraryController {
   async experiment(fields) {
     const detail = this.state.detail;
     if (!detail?.id || !this.enabled() || this.locked() || pictureIsActive(detail)) return false;
+    if (fields.mode === 'transfer') {
+      const approved = pictureCandidates(detail).find(row => row.id === fields.base_candidate_id);
+      if ((fields.approved_project_id && fields.approved_project_id !== detail.id) || !pictureCanTransfer(approved, detail, this.root)) {
+        this.setMessage('请选择同项目中已实际出图并形成方法的复现作品。'); return false;
+      }
+    }
     const base = pictureDefaultCandidate(detail, fields.base_candidate_id);
     if ((fields.mode ?? 'continue') === 'continue'
       && (!pictureImageUrl(base, detail, this.root) || (base?.role ?? base?.work_kind) === 'transfer')) {
@@ -365,6 +378,11 @@ export function pictureImageUrl(candidate, project, root) {
   return pictureAssetUrl(candidateArtifact(candidate, 'picture', project?.id) ?? candidateArtifact(candidate, 'image', project?.id)
     ?? candidate?.media_url, root);
 }
+export function pictureCanTransfer(candidate, project, root) {
+  return Boolean(candidate && ['rendered', 'reviewed'].includes(candidate.status)
+    && (candidate.role ?? candidate.work_kind) !== 'transfer' && pictureImageUrl(candidate, project, root)
+    && candidate.method && typeof candidate.method === 'object' && !Array.isArray(candidate.method) && Object.keys(candidate.method).length > 0);
+}
 function referenceUrl(reference, root) {
   if (isRemoteReference(reference)) return pictureAssetUrl(reference.frame_url, root);
   return pictureAssetUrl(reference?.media_url ?? reference?.image_url ?? reference?.url
@@ -418,13 +436,15 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
   else {
     if (candidate && selectedPictureUrl && (candidate.role ?? candidate.work_kind) !== 'transfer') toolbar.append(button(doc, '继续优化', () => onExperiment('continue'), {className: 'button primary', disabled: locked}));
     toolbar.append(button(doc, '从零重做', () => onExperiment('fresh'), {disabled: locked}));
-    if (pictureProjectState(project) === 'failed') toolbar.append(button(doc, '技术重试', () => onExperiment('retry'), {disabled: locked}));
+    if (pictureCanTransfer(candidate, project, root)) toolbar.append(button(doc, '认可并验证换内容', () => onExperiment('transfer', candidate.id), {disabled: locked}));
+    const unapprovedTransfer = !current?.frozen?.transfer_approval && (current?.work_kind === 'transfer' || current?.stage === 'transfer_plan');
+    if (pictureProjectState(project) === 'failed' && !unapprovedTransfer) toolbar.append(button(doc, '技术重试', () => onExperiment('retry'), {disabled: locked}));
     if (candidate && selectedPictureUrl && onAnimate) toolbar.append(button(doc, '用此版本创作动画', () => onAnimate(candidate.id), {disabled: locked}));
   }
   const status = el(doc, 'div', 'picture-status'); status.append(el(doc, 'strong', '', pictureState(pictureProjectState(project))));
   const reason = pictureStopReason(current?.stop_reason ?? project.stop_reason); if (reason) status.append(el(doc, 'p', 'small muted', reason));
   status.append(el(doc, 'p', 'small muted', active ? '本次需求、参考和知识版本已经冻结。运行中只查看或停止，新的意见用于下一次实验。'
-    : '内部最佳与默认作品分别保存。采用一幅图片不会发布知识，也不代表运动已经验证。'));
+    : '默认只复现和优化。你认可选定作品的效果后，可单独发起换内容验证；内部评分不代替你的认可。'));
   if (typeof current?.frozen?.use_wikiskill === 'boolean') status.append(el(doc, 'p', 'small muted',
     current.frozen.use_wikiskill === false ? '本次未加载已发布 WikiSkill。'
       : current.frozen.library_binding?.release_id ? '本次固定 WikiSkill 版本：' + current.frozen.library_binding.release_id
@@ -464,8 +484,11 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
   const evidence = el(doc, 'div', 'picture-evidence-grid'); evidence.append(reviewPanel(doc, candidate?.review ?? candidate?.assessment));
   const scope = el(doc, 'section', 'panel'); scope.append(el(doc, 'h3', '', '本次验证范围'));
   const transfer = candidates.filter(row => (row.role ?? row.work_kind) === 'transfer');
+  const transferRequested = current?.mode === 'transfer' || current?.work_kind === 'transfer' || ['planning', 'running', 'reviewed'].includes(current?.transfer_status);
   scope.append(el(doc, 'p', 'muted', '图片学习验证造型、笔触、材质、光影等静态效果；连续运动与声音尚未验证。'),
-    el(doc, 'p', '', transfer.length ? '已有换内容验证作品，请切换作品查看实际结果与评审。' : '换内容验证尚无产物；复现进展不能替代迁移通过。'));
+    el(doc, 'p', '', transfer.length ? '已有换内容验证作品，请切换作品查看实际结果与评审。' : transferRequested ? '本次换内容验证已发起，实际产物和评审尚未完成。' : '尚未发起换内容验证。先打磨复现效果，认可选定作品后再单独验证；复现进展不代表迁移通过。'));
+  if (current?.transfer_status === 'not_requested') scope.append(el(doc, 'p', 'small muted', '当前实验未发起换内容验证。'));
+  if (!active && current?.transfer_status === 'awaiting_approval') scope.append(el(doc, 'p', 'small muted', '本次复现已结束，换内容验证等待你认可作品后单独发起。'));
   if ((candidate?.role ?? candidate?.work_kind) === 'transfer') {
     const experiment = rows(project.experiments).find(row => rows(row.candidates).some(item => item.id === candidate.id));
     if (experiment?.transfer_task) scope.append(jsonSection(doc, '本次换内容验证的任务', experiment.transfer_task, true));
@@ -524,7 +547,7 @@ function IDENTIFIER_FOR_LINK(value) { return typeof value === 'string' && /^[A-Z
 export function mountPictureLibrary(doc, {root = new URL('./', globalThis.location?.href), fetcher = globalThis.fetch,
   storage = browserStorage(), uuid, schedule, unschedule, URLObject = globalThis.URL} = {}) {
   const $ = id => doc.getElementById(id), app = $('picture-library-app'); if (!app) return null;
-  let formMode = null, shown = 'home', selectedId = null, animationCandidateId = null, previewUrl = null, detailSignature = '', referencesSignature = '', controller;
+  let formMode = null, shown = 'home', selectedId = null, transferCandidateId = null, transferProjectId = null, animationCandidateId = null, previewUrl = null, detailSignature = '', referencesSignature = '', controller;
   const request = async (path, options = {}) => {
     const headers = {Accept: 'application/json'};
     if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
@@ -571,9 +594,10 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     $('picture-availability').textContent = state.catalog?.availability?.enabled === false ? text(state.catalog.availability.reason) || '图片学习执行器尚未启用。' : '';
     $('picture-submit').disabled = !controller.enabled() || controller.locked();
     for (const element of $('picture-form').elements) element.disabled = state.busy || Boolean(state.pending)
-      || formMode === 'retry' && element.id !== 'picture-submit';
+      || formMode === 'retry' && element.id !== 'picture-submit'
+      || formMode === 'transfer' && element.id === 'picture-rounds';
     $('picture-submit').disabled = !controller.enabled() || controller.locked();
-    updateLearningControls(doc, 'picture', state.catalog, {locked: state.busy || Boolean(state.pending), retry: formMode === 'retry'});
+    updateLearningControls(doc, 'picture', state.catalog, {locked: state.busy || Boolean(state.pending), retry: ['retry', 'transfer'].includes(formMode)});
     const references = state.catalog?.owner_key === state.owner_key ? rows(state.catalog?.references) : [];
     const referenceSignature = JSON.stringify([state.owner_key, references.map(row => [row.id, row.file_name, row.source_url])]);
     if (referenceSignature !== referencesSignature) {
@@ -595,22 +619,33 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
         detailSignature = signature;
         $('picture-detail').replaceChildren(renderPictureDetail(doc, state.detail, {root, selection: selectedId, locked: controller.locked(),
           onSelect: id => { selectedId = id; detailSignature = ''; render(state); }, onBack: () => show('home'),
-          onStop: () => void controller.stop(), onExperiment: mode => openForm(mode), onAdopt: id => void controller.adopt(id),
+          onStop: () => void controller.stop(), onExperiment: (mode, candidateId) => openForm(mode, candidateId), onAdopt: id => void controller.adopt(id),
           onAnimate: $('picture-animation-panel') ? id => { animationCandidateId = id; $('picture-animation-form').reset(); show('animation'); $('picture-animation-goal').focus(); } : null,
           onInspect: experimentId => request(pictureRequestPath(state.detail.id, 'experiments/' + encodeURIComponent(pictureId(experimentId)) + '/input'))}));
       }
     }
   };
-  const openForm = (mode = null) => {
+  const openForm = (mode = null, candidateId = null) => {
     if (controller.locked()) return;
+    const approved = mode === 'transfer' ? pictureCandidates(controller.state.detail).find(row => row.id === candidateId) : null;
+    if (mode === 'transfer' && !pictureCanTransfer(approved, controller.state.detail, root)) return;
+    transferCandidateId = approved?.id ?? null; transferProjectId = approved ? controller.state.detail.id : null;
     formMode = mode; clearPreview(); $('picture-form').reset(); $('picture-reference-preview').replaceChildren(); $('picture-reference-preview').hidden = true;
     $('picture-saved-reference').value = '';
-    $('picture-new-fields').hidden = Boolean(mode); $('picture-feedback-label').hidden = !mode || mode === 'retry';
+    $('picture-new-fields').hidden = Boolean(mode); $('picture-feedback-label').hidden = !mode || ['retry', 'transfer'].includes(mode);
+    $('picture-transfer-fields').hidden = mode !== 'transfer';
+    $('picture-transfer-source').textContent = mode === 'transfer' ? '所选复现作品：版本 ' + (pictureCandidates(controller.state.detail).findIndex(row => row.id === transferCandidateId) + 1) : '';
+    $('picture-learning-options').hidden = mode === 'transfer'; $('picture-wikiskill-field').hidden = mode === 'transfer';
+    $('picture-rounds-label').hidden = mode === 'transfer';
+    if (mode === 'transfer') { $('picture-rounds').value = '1'; $('picture-minutes').value = '60'; }
+    $('picture-budget-help').textContent = mode === 'transfer' ? '本次单独进行一轮换内容验证，预算覆盖拟定新任务、创作、渲染和评审。'
+      : '预算只用于本次复现、创作和评审。效果满意后，可以再单独发起换内容验证。';
     $('picture-budget-fields').hidden = mode === 'retry';
     $('picture-form-title').textContent = mode ? MODE_NAMES[mode] : '新建图片学习';
-    $('picture-submit').textContent = mode ? '开始' + MODE_NAMES[mode] : '开始图片学习';
+    $('picture-submit').textContent = mode === 'transfer' ? '认可此版本并开始验证' : mode ? '开始' + MODE_NAMES[mode] : '开始图片学习';
     $('picture-form-note').hidden = !mode;
     $('picture-form-note').textContent = mode === 'fresh' ? '保留同一参考和学习目标，从零创作。旧源码、布局和专用方法不会作为起点；可在下方填写精简的问题。'
+      : mode === 'transfer' ? '本次将独立验证你选定作品的方法能否用于不同内容。确认认可该作品的效果，再设置预算开始；原作品和原实验保持。'
       : mode === 'retry' ? '保留原来的目标、参考、标准、预算和确切知识版本，重试失败环节。需要改变要求或预算时，请发起继续优化或从零重做。'
         : '保留同一参考和学习目标，在已有作品上继续改善。下方意见会冻结进下一次实验，不修改历史需求。';
     for (const id of ['picture-name', 'picture-goal', 'picture-width', 'picture-height']) $(id).required = !mode;
@@ -618,8 +653,8 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     $('picture-feedback').required = mode === 'continue';
     $('picture-use-wikiskill').checked = mode === 'retry' ? latestPictureExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
     restoreLearningControls(doc, 'picture', mode ? latestPictureExperiment(controller.state.detail)?.frozen : {});
-    $('picture-skill-help').hidden = mode === 'retry';
-    show('form'); render(controller.state); (mode === 'retry' ? $('picture-submit') : mode ? $('picture-feedback') : $('picture-name')).focus();
+    $('picture-skill-help').hidden = ['retry', 'transfer'].includes(mode);
+    show('form'); render(controller.state); (['transfer', 'retry'].includes(mode) ? $('picture-submit') : mode ? $('picture-feedback') : $('picture-name')).focus();
   };
   controller = new PictureLibraryController({request, root, storage, uuid, schedule, unschedule, onChange: render});
   $('picture-refresh').addEventListener('click', () => void controller.refresh());
@@ -628,7 +663,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
   $('picture-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); detailSignature = ''; render(controller.state); });
   $('picture-search').addEventListener('input', renderCards);
   $('picture-learning-options')?.addEventListener('change', () => updateLearningControls(doc, 'picture', controller.state.catalog,
-    {locked: controller.state.busy || Boolean(controller.state.pending), retry: formMode === 'retry'}));
+    {locked: controller.state.busy || Boolean(controller.state.pending), retry: ['retry', 'transfer'].includes(formMode)}));
   $('picture-reference').addEventListener('change', () => {
     $('picture-reference-source').value = 'upload'; $('picture-saved-reference').value = ''; syncReferenceSource();
     clearPreview(); const host = $('picture-reference-preview'); host.replaceChildren(); host.hidden = true;
@@ -648,9 +683,13 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
   });
   $('picture-form').addEventListener('submit', async event => {
     event.preventDefault(); if (controller.locked()) return;
-    const fields = Object.fromEntries(new FormData($('picture-form'))); fields.use_wikiskill = $('picture-use-wikiskill').checked;
-    Object.assign(fields, readLearningControls(doc, 'picture'));
-    if (formMode === 'continue') fields.base_candidate_id = pictureDefaultCandidate(controller.state.detail, selectedId)?.id;
+    const fields = Object.fromEntries(new FormData($('picture-form')));
+    if (formMode === 'transfer') Object.assign(fields, {base_candidate_id: transferCandidateId, approved_project_id: transferProjectId,
+      approve_candidate: true});
+    else {
+      fields.use_wikiskill = $('picture-use-wikiskill').checked; Object.assign(fields, readLearningControls(doc, 'picture'));
+      if (formMode === 'continue') fields.base_candidate_id = pictureDefaultCandidate(controller.state.detail, selectedId)?.id;
+    }
     try {
       const success = formMode ? await controller.experiment({...fields, mode: formMode}) : await controller.start(fields, $('picture-reference').files?.[0]);
       if (success && controller.state.detail) { clearPreview(); show('detail'); selectedId = null; detailSignature = ''; render(controller.state); void controller.refresh(); }

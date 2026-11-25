@@ -91,7 +91,7 @@ export function renderLearningProgress(doc, experiment) {
     for (const row of components) list.append(element(doc, 'li', '部件：' + row.id + ' · ' + (STATES[row.status] ?? row.status)));
     if (probes.length || components.length) panel.append(list);
   }
-  panel.append(element(doc, 'p', '小样仅用于检验局部技法，不计为效果库作品；完整作品仍需实际渲染、评审与换内容验证。', 'small muted'));
+  panel.append(element(doc, 'p', '小样仅用于检验局部技法，不计为效果库作品；完整作品需要实际渲染和评审，换内容验证由你认可作品后单独发起。', 'small muted'));
   return panel;
 }
 

@@ -212,7 +212,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             feedback='', use_wikiskill=enabled, library_binding=binding, knowledge_snapshot=snapshot,
             base_candidate_id=None, base_source=None, base_observation=None, learned_method=None,
             input_boundary='frozen_for_entire_experiment',
-            runtime_capabilities=self._runtime_capabilities())
+            runtime_capabilities=self._runtime_capabilities(), transfer_policy='manual')
         self._freeze_learning_options(body, frozen)
         frozen.update(self._extra_frozen(owner, body, references,
             deadline_at=now + budget['max_seconds']))
@@ -240,7 +240,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             frozen=frozen, frozen_sha256=digest(frozen), budget=budget,
             state='queued', stage='author', work_kind='reproduction', round=1,
             candidates=[], active_candidate_id=None, operation_ids=[], active_operation_id=None,
-            best_candidate_id=None, transfer_task=None, transfer_status='pending',
+            best_candidate_id=None, transfer_task=None, transfer_status='not_requested',
+            transfer_policy='manual',
             stop_requested=False, stop_proven=False, stop_reason=None, error=None,
             created_at=now, updated_at=now, deadline_at=now + budget['max_seconds'])
         if frozen.get('scene_space_learning') is not None:
@@ -267,12 +268,92 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                 'picture_learning_retry_context_missing', 409)
         return [available[identity] for identity in identities] + run['candidates']
 
+    @staticmethod
+    def _manual_transfer_method(method):
+        """Keep principles, not a reproduction's source, layout or subtask plan."""
+        from .scene_space_learning import transferable_scene_method, METHOD_SCHEMA
+        value = transferable_scene_method(method)
+        for key in ('source', 'base_source', 'references', 'reference_sources', 'reference_ids',
+                    'world', 'plan', 'layout', 'resource_plan', 'learning_strategy',
+                    'observed_facts', 'evidence_frame_ids'):
+            value.pop(key, None)
+        if (type(value.get('scene_space')) is dict
+                and value['scene_space'].get('schema') != METHOD_SCHEMA):
+            value.pop('scene_space')
+        return value
+
+    def _approved_transfer_candidate(self, run):
+        approval = run['frozen'].get('transfer_approval')
+        require(type(approval) is dict and approval.get('approve_candidate') is True
+                and approval.get('owner') == run['owner']
+                and approval.get('candidate_id') == run.get('best_candidate_id')
+                and approval.get('candidate_id') == run['frozen'].get('base_candidate_id'),
+                'picture_learning_transfer_approval_required', 409)
+        candidate = next((item for item in self._context_candidates(run)
+                          if item['id'] == approval.get('candidate_id')), None)
+        require(candidate is not None and candidate['work_kind'] == 'reproduction'
+                and self._has_picture(candidate)
+                and candidate.get('source_sha256') == approval.get('source_sha256')
+                and (candidate.get('media_sha256') or candidate.get('picture_sha256'))
+                    == approval.get('media_sha256')
+                and digest(candidate) == approval.get('candidate_sha256')
+                and digest(candidate.get('method')) == approval.get('method_sha256')
+                and digest(run.get('transfer_method')) == approval.get('transfer_method_sha256'),
+                'picture_learning_transfer_approval_changed', 409)
+        return candidate
+
+    def _new_manual_transfer(self, owner, project_id, eid, body, now):
+        require(set(body) <= {'request_id', 'mode', 'base_candidate_id', 'approve_candidate',
+                            'max_rounds', 'max_seconds'}, 'picture_learning_transfer_request_invalid')
+        require(body.get('approve_candidate') is True,
+                'picture_learning_transfer_approval_required', 409)
+        require(type(body.get('base_candidate_id')) is str,
+                'picture_learning_transfer_candidate_required', 409)
+        identifier(body['base_candidate_id'])
+        source_run, candidate = next(((origin, item)
+            for origin in self.store.list('experiments', owner, project_id=project_id)
+            for item in origin['candidates'] if item['id'] == body['base_candidate_id']), (None, None))
+        require(candidate is not None and candidate['work_kind'] == 'reproduction',
+                'picture_learning_transfer_candidate_required', 409)
+        require(candidate.get('status') in {'rendered', 'reviewed'} and self._has_picture(candidate),
+                'picture_learning_transfer_candidate_not_rendered', 409)
+        require(type(candidate.get('method')) is dict and bool(candidate['method']),
+                'picture_learning_transfer_method_required', 409)
+        self.protocol.validate_source(candidate['source'])
+        require(candidate['source_sha256'] == candidate['source']['source_sha256'],
+                'picture_learning_transfer_approval_changed', 409)
+        budget = self._budget(body, dict(max_rounds=1, max_seconds=3600))
+        require(budget['max_rounds'] == 1, 'picture_learning_transfer_rounds_invalid')
+        method = self._manual_transfer_method(candidate['method'])
+        require(bool(method), 'picture_learning_transfer_method_required', 409)
+        approval = dict(approve_candidate=True, candidate_id=candidate['id'],
+            source_experiment_id=source_run['id'], source_sha256=candidate['source_sha256'],
+            media_sha256=candidate.get('media_sha256') or candidate['picture_sha256'],
+            candidate_sha256=digest(candidate), method_sha256=digest(candidate['method']),
+            transfer_method_sha256=digest(method), owner=owner, approved_at=now,
+            request_id=body['request_id'])
+        frozen = deepcopy(source_run['frozen'])
+        frozen.update(feedback='', use_wikiskill=False, knowledge_snapshot=None,
+            base_source=None, base_observation=None, base_candidate_id=candidate['id'],
+            learned_method=None, transfer_policy='manual', transfer_approval=approval,
+            runtime_capabilities=self._runtime_capabilities())
+        frozen['library_binding'], frozen['knowledge_snapshot'] = self._freeze_knowledge(owner, eid, False)
+        self._freeze_learning_options(dict(allow_probes=False, allow_collaboration=False),
+            frozen, prior=source_run['frozen'])
+        run = self._new_experiment(owner, project_id, eid, body['request_id'], 'transfer', frozen, budget, now)
+        run.update(work_kind='transfer', stage='transfer_plan', transfer_status='planning',
+            transfer_method=method, inherited_candidate_ids=[candidate['id']],
+            best_candidate_id=candidate['id'], active_candidate_id=candidate['id'])
+        return run
+
     def next_experiment(self, owner, project_id, body):
         require(type(body) is dict and {'request_id', 'mode'} <= set(body)
                 <= {'request_id', 'mode', 'feedback', 'use_wikiskill', 'max_rounds', 'max_seconds',
-                    'base_candidate_id', 'allow_collaboration', 'allow_probes', 'capability_selection'})
+                    'base_candidate_id', 'allow_collaboration', 'allow_probes', 'capability_selection',
+                    'approve_candidate'})
         identifier(body['request_id'])
-        require(type(body['mode']) is str and body['mode'] in {'continue', 'fresh', 'retry'})
+        require(type(body['mode']) is str and body['mode'] in {'continue', 'fresh', 'retry', 'transfer'})
+        require(body['mode'] == 'transfer' or 'approve_candidate' not in body)
         kind = 'experiment:' + identifier(project_id)
         existing = self.store.request(owner, kind, body['request_id'], body)
         if existing:
@@ -281,15 +362,22 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         prior = self.store.read('experiments', owner, project['latest_experiment_id'])
         require(prior['state'] in TERMINAL, 'picture_learning_experiment_active', 409)
         mode, now, eid = body['mode'], self.clock(), new_id()
+        if mode == 'transfer':
+            require(prior.get('stop_proven') is True, 'picture_learning_stop_unproven', 409)
         retry = mode == 'retry'
         if retry:
             require(prior['state'] in {'failed', 'cancelled'}, 'picture_learning_retry_not_applicable', 409)
             require(set(body) <= {'request_id', 'mode'}, 'picture_learning_retry_input_frozen', 409)
             # An uncertain operation is not proven stopped; retry cannot duplicate it.
             require(prior['stop_proven'], 'picture_learning_stop_unproven', 409)
+            require((prior['work_kind'] != 'transfer' and prior['stage'] != 'transfer_plan')
+                    or type(prior['frozen'].get('transfer_approval')) is dict,
+                    'picture_learning_transfer_retry_requires_approval', 409)
             frozen, budget = deepcopy(prior['frozen']), deepcopy(prior['budget'])
-        else:
+        elif mode != 'transfer':
             frozen = deepcopy(prior['frozen'])
+            frozen['transfer_policy'] = 'manual'
+            frozen.pop('transfer_approval', None)
             frozen['feedback'] = _text(body.get('feedback', ''), 8000, empty=True)
             frozen['use_wikiskill'] = body.get('use_wikiskill', True)
             require(type(frozen['use_wikiskill']) is bool)
@@ -309,7 +397,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                     learned_method=deepcopy(candidate.get('method')))
             budget = self._budget(body, prior['budget'])
             self._refresh_remote_frozen(frozen, deadline_at=now + budget['max_seconds'])
-        run = self._new_experiment(owner, project_id, eid, body['request_id'], mode, frozen, budget, now)
+        run = (self._new_manual_transfer(owner, project_id, eid, body, now) if mode == 'transfer'
+            else self._new_experiment(owner, project_id, eid, body['request_id'], mode, frozen, budget, now))
         if mode == 'continue' and candidate.get('resource_descriptor'):
             run['resource_baseline_descriptor'] = deepcopy(candidate['resource_descriptor'])
             run['resource_prior_review'] = deepcopy(candidate.get('review'))
@@ -330,6 +419,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                         or prior['stage'] not in {'render', 'review', 'transfer_plan'})
                     and item.get('review') is not None]))
             run['best_candidate_id'] = prior['best_candidate_id']
+            if prior['work_kind'] == 'transfer' and prior['stage'] == 'transfer_plan':
+                run.update(stage='transfer_plan', active_candidate_id=prior['active_candidate_id'])
             original_operation = next((self.store.read('operations', owner, identity)
                 for identity in reversed(prior['operation_ids'])
                 if self.store.read('operations', owner, identity)['stage'] == prior['stage']
@@ -398,7 +489,16 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         internal = self._learning_candidate(run)
         if internal is not None:
             return internal
-        return next(item for item in run['candidates'] if item['id'] == run['active_candidate_id'])
+        candidate = next((item for item in run['candidates']
+                          if item['id'] == run['active_candidate_id']), None)
+        if candidate is not None:
+            return candidate
+        # An explicit planner reads the selected historical output by identity;
+        # it does not republish that work as a new candidate of this experiment.
+        if (run['stage'] == 'transfer_plan'
+                and run['active_candidate_id'] in run.get('inherited_candidate_ids', [])):
+            return self._approved_transfer_candidate(run)
+        raise ServiceError('picture_learning_candidate_missing', 409)
 
     def _frames(self, run, mode):
         context_candidates = self._context_candidates(run)
@@ -458,8 +558,14 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         base = None if transfer else (best['source'] if best else candidate['source']
                                      if candidate else frozen['base_source'])
         method = run.get('transfer_method') if transfer else frozen.get('learned_method')
-        goal = run['transfer_task']['goal'] if transfer else frozen['goal']
-        criteria = run['transfer_task']['criteria'] if transfer else frozen['criteria']
+        approved_transfer = transfer and type(frozen.get('transfer_approval')) is dict
+        planning = approved_transfer and mode == 'transfer_plan'
+        goal = ('Design one changed-content validation of the selected user-approved work using '
+                'its supplied self-contained method. Change geometry, layout or content meaningfully; '
+                'do not reproduce the supplied work or claim the proposed test has run.' if planning
+                else run['transfer_task']['goal'] if transfer else frozen['goal'])
+        criteria = (['The proposed new content tests the approved technique under a substantive structural change.']
+                    if planning else run['transfer_task']['criteria'] if transfer else frozen['criteria'])
         capabilities = frozen['runtime_capabilities']
         constraints = dict(width=frozen['width'], height=frozen['height'],
                            allowed_engines=capabilities.get('allowed_engines', ['html-svg', 'canvas']))
@@ -473,13 +579,25 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         # is injected by the host in place of the creator's own implementation.
         if capabilities.get('runtime_identity') is not None:
             constraints['runtime_identity'] = capabilities['runtime_identity']
+        constraints['transfer_policy'] = dict(mode='manual', automatic_transfer=False,
+            approved=approved_transfer, approved_candidate_id=(frozen.get('transfer_approval') or {}).get('candidate_id'),
+            instructions=(
+                ['This changed-content validation was explicitly requested for the selected user-approved work.',
+                 'For transfer_plan use only the approved output and supplied method to propose one new task. Do not create source.',
+                 'For create use only the proposed new task and self-contained method; the original reference/source/layout are not available.']
+                if approved_transfer else
+                ['This experiment only learns and improves the reference reproduction.',
+                 'In review return transfer_task=null. Do not plan, create, render or review changed-content work.',
+                 'Scores, stopping recommendations and task proposals do not represent user approval. The user must select a rendered work and explicitly start validation later.']))
         assets = deepcopy(capabilities.get('assets', {}))
         document = dict(schema=self.protocol.INPUT_SCHEMA, mode=mode, project_id=run['project_id'],
             experiment_id=run['id'], work_kind=run['work_kind'], goal=goal,
             criteria=deepcopy(criteria), constraints=constraints,
             observation=dict(frames=self._frames(run, mode)), base_source=deepcopy(base),
-            feedback=frozen['feedback'], knowledge_snapshot=deepcopy(frozen['knowledge_snapshot']),
-            prior_review=deepcopy(candidate['review'] if candidate else None), learned_method=deepcopy(method),
+            feedback='' if approved_transfer else frozen['feedback'],
+            knowledge_snapshot=None if approved_transfer else deepcopy(frozen['knowledge_snapshot']),
+            prior_review=None if approved_transfer else deepcopy(candidate['review'] if candidate else None),
+            learned_method=deepcopy(method),
             knowledge_binding=deepcopy(frozen['library_binding']), assets=assets, frozen_at=run['created_at'],
             selection=dict(base_candidate_id=best['id'] if best else frozen.get('base_candidate_id'),
                            previous_review_candidate_id=candidate['id'] if candidate else None))
@@ -644,12 +762,10 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             else:
                 run['reproduction_stop_reason'] = ('no_progress' if no_progress else
                     'review_recommends_stop' if review['stop_recommended'] else 'round_budget_reached')
-                if result.get('transfer_task'):
-                    self._begin_transfer(run, result['transfer_task'])
-                elif run['deadline_at'] - self.clock() >= 90:
-                    run['stage'] = 'transfer_plan'
-                else:
-                    self._finish(run, 'budget_exhausted')
+                # Only a separate user-approved experiment can pay for a
+                # changed-content plan or work. Reviewer proposals never opt in.
+                run['transfer_status'] = 'awaiting_approval'
+                self._finish(run, 'reproduction_complete')
         else:
             self._begin_transfer(run, result['transfer_task'])
 
@@ -708,6 +824,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             self.store.put('projects', project, db=db)
 
     def _begin_transfer(self, run, task):
+        self._approved_transfer_candidate(run)
         if task is None:
             run['transfer_status'] = 'no_task'
             return self._finish(run, 'reproduction_complete')
@@ -717,7 +834,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             return self._finish(run, 'budget_exhausted' if run['deadline_at'] - self.clock() < 90
                                 else 'method_not_available_for_transfer')
         run.update(work_kind='transfer', stage='author', transfer_status='running',
-                   transfer_method=deepcopy(best['method']))
+                   transfer_method=self._manual_transfer_method(best['method']))
         self._next_learning_resource_cycle(run, transfer=True)
 
     def _render(self, run, operation):
@@ -861,6 +978,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                     self._stop_or_expire(run)
                 else:
                     run.update(state='running', error=None)
+                    if run['work_kind'] == 'transfer' or run['stage'] == 'transfer_plan':
+                        self._approved_transfer_candidate(run)
                     retry = run.get('resource_retry_pending')
                     if retry:
                         previous = self.store.read('experiments', owner, retry)

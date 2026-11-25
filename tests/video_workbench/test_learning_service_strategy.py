@@ -6,7 +6,7 @@ import pytest
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from video_workbench import learning_strategy as strategy
 from video_workbench.picture_learning_service import PictureLearningService
-from test_picture_learning_service import Gateway, Renderer, start, finish
+from test_picture_learning_service import Gateway, Renderer, start, finish, request_transfer
 from test_learning_strategy import plan
 
 
@@ -46,14 +46,16 @@ def test_actual_service_runs_probe_review_dependencies_and_complete_transfer(tmp
     project, _ = start(service, max_rounds=1)
     frozen = service.inspect('developer', project['id'], project['latest_experiment_id'])['frozen']
     result = finish(service, project, limit=80)
-    assert result['state'] == 'completed' and result['experiments'][-1]['transfer_status'] == 'reviewed'
-    assert len(result['candidates']) == 2  # Internal study is not a library work.
+    assert result['state'] == 'completed' and result['experiments'][-1]['transfer_status'] == 'awaiting_approval'
     public = result['experiments'][-1]
+    result = finish(service, request_transfer(service, result), limit=80)
+    assert result['experiments'][-1]['transfer_status'] == 'reviewed'
+    assert len(result['candidates']) == 2  # Internal study is not a library work.
     assert public['learning_progress']['complete']
     assert len(public['internal_attempts']) == 1
     study = public['internal_attempts'][0]
     assert study['status'] == 'reviewed' and study['review_operation_id']
-    assert len(renderer.calls) == 3 and len(reviewer.submissions) == 3
+    assert len(renderer.calls) == 3 and len(reviewer.submissions) == 4  # Explicit planning is separate.
     phases = [doc['constraints'].get('learning_strategy_task', {}).get('phase') for doc, _ in author.uploads]
     assert phases == ['plan', 'probe_author', 'component', 'component', 'compose', None]
     composition = author.uploads[4][0]
@@ -140,7 +142,8 @@ def test_stopped_between_components_retry_creates_the_next_task_without_replayin
     assert result['state'] == 'completed', result['experiments'][-1].get('error')
     tasks = [doc['constraints'].get('learning_strategy_task', {}) for doc, _ in author.uploads]
     assert [(task.get('phase'), task.get('task_id')) for task in tasks] == [
-        ('plan', None), ('component', 'material'), ('component', 'space'), ('compose', None), (None, None)]
+        ('plan', None), ('component', 'material'), ('component', 'space'), ('compose', None)]
+    assert all(document['work_kind'] == 'reproduction' for document, _ in author.uploads)
     original = service.store.read('experiments', 'developer', project['latest_experiment_id'])
     assert original['state'] == 'cancelled' and len(original['learning_strategy']['components']) == 1
 
@@ -158,7 +161,8 @@ def test_stopped_after_plan_retry_runs_the_pending_probe_without_new_planning(tm
     result = finish(service, retried, limit=80)
     assert result['state'] == 'completed', result['experiments'][-1].get('error')
     phases = [doc['constraints'].get('learning_strategy_task', {}).get('phase') for doc, _ in author.uploads]
-    assert phases == ['plan', 'probe_author', 'compose', None]
+    assert phases == ['plan', 'probe_author', 'compose']
+    assert all(document['work_kind'] == 'reproduction' for document, _ in author.uploads)
 
 
 def test_new_creator_inputs_freeze_complete_source_package_guidance(tmp_path):
@@ -238,7 +242,8 @@ def test_new_guidance_does_not_rewrite_failed_component_retry_input(tmp_path, mo
                document['constraints'].get('learning_strategy_task', {}).get('task_id'))
               for document, _ in author.uploads]
     assert phases == [('plan', None), ('component', 'material'), ('component', 'space'),
-                      ('component', 'space'), ('compose', None), (None, None)]
-    composition = author.uploads[-2][0]['constraints']['learning_strategy_task']
+                      ('component', 'space'), ('compose', None)]
+    assert all(document['work_kind'] == 'reproduction' for document, _ in author.uploads)
+    composition = author.uploads[-1][0]['constraints']['learning_strategy_task']
     assert all(line in composition['instructions'] for line in current_guidance())
     assert service.store.read('experiments', 'developer', prior['id']) == prior

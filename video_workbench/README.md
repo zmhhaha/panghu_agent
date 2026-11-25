@@ -1,5 +1,7 @@
 # 动态视频工作台
 
+2026-11-25：图片、视频学习默认只复现与优化，用户认可具体已生成作品后才显式发起换内容验证，见[流程与API](docs/user-approved-learning-transfer.md)。
+
 2026-11-24主线合并纳入视频学习及场景空间/共享几何实现；源码、历史运行记录和未完成
 范围见[合并验证](docs/mainline-scene-merge-20261124.md)。本页后续旧日期的设计补充保留
 当时语境，不覆盖新的[当前架构检查点](docs/current-architecture.md)。
