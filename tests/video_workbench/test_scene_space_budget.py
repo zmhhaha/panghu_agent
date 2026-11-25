@@ -8,7 +8,7 @@ import pytest
 from agent_service.contracts import ServiceError, digest
 from video_workbench.scene_space_budget import (
     MAX_EVENTS, bind_revision, create_usage, prepare_retry, record_usage,
-    require_export_budget, usage_status, validate_usage,
+    require_export_budget, usage_status, validate_usage, validate_reservation,
 )
 from video_workbench.scene_space_plan import freeze_plan, revise_plan
 
@@ -147,3 +147,23 @@ def test_revision_binding_rejects_unrecorded_spending(frozen):
     revised=revise_plan(frozen,replacement,reason='Tracked correction required')
     with pytest.raises(ServiceError,match='unrecorded_spending'):
         bind_revision(ledger,frozen,revised['frozen'],reason='Tracked correction required')
+
+
+@pytest.mark.parametrize('phase,calls,tokens',[
+    ('generation',1,0),('review',1,None),('repair',0,0),('collaboration',0,10),
+    ('retry',1,0),('preview',0,10),('generation',False,10),('review',1,float('inf')),
+])
+def test_model_reservations_need_finite_positive_calls_and_tokens(phase,calls,tokens):
+    with pytest.raises(ServiceError):
+        validate_reservation(id='model',phase=phase,model_calls=calls,model_tokens=tokens)
+
+
+def test_reservation_is_distinct_from_actual_model_usage(frozen):
+    hold=validate_reservation(id='author',phase='generation',model_calls=8,model_tokens=262144)
+    assert hold==dict(id='author',phase='generation',model_calls=8,model_tokens=262144,render_seconds=0)
+    ledger=create_usage(frozen,lineage_id='task-1')
+    assert usage_status(ledger)['used']['model_calls']==0
+    # An actual overrun must remain chargeable even if the allowance was smaller.
+    actual=record_usage(ledger,id='author',phase='generation',outcome='failed',
+        model_calls=hold['model_calls']+1,model_tokens=ledger['limits']['model_tokens']+1)
+    assert usage_status(actual)['status']=='over_budget'

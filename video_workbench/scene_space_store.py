@@ -17,7 +17,7 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 from .picture_learning_store import identifier, owner_id, _plain
 from .scene_space_budget import (
     bind_revision, create_usage, prepare_retry, record_usage, require_export_budget,
-    usage_status, validate_usage, _event,
+    usage_status, validate_usage, validate_reservation, MODEL_PHASES,
 )
 from .scene_space_plan import freeze_plan, revise_plan, technical_retry
 
@@ -28,6 +28,11 @@ def _require(ok,code,status=409):
 
 def _json(value):
     return canonical_bytes(value).decode('utf-8')
+
+
+def _active_model(reservations):
+    return any(row['status']=='active' and (row['phase'] in MODEL_PHASES
+        or row['model_calls']>0 or row['model_tokens']>0) for row in reservations)
 
 
 class SceneSpaceStore:
@@ -82,6 +87,8 @@ class SceneSpaceStore:
     def _view(record):
         value=deepcopy(record)
         value['usage_status']=usage_status(value['usage'])
+        if _active_model(value['reservations']):
+            value['usage_status']['can_start_export']=False
         return value
 
     def freeze(self,owner,task_id,plan):
@@ -116,22 +123,25 @@ class SceneSpaceStore:
 
     def reserve(self,owner,task_id,operation_id,*,phase,model_calls=0,model_tokens=0,render_seconds=0):
         identifier(operation_id)
-        # Use the same numeric/type rules as actual usage without recording an
-        # estimate as measured spending. Reservations must always be known.
-        _require(model_tokens is not None and render_seconds is not None,
-            'scene_space_reservation_measurement_invalid',422)
+        hold=validate_reservation(id=operation_id,phase=phase,model_calls=model_calls,
+            model_tokens=model_tokens,render_seconds=render_seconds)
         with self._db() as db:
             record=self._load(db,owner,task_id)
-            _event(dict(id=operation_id,phase=phase,outcome='completed',
-                model_calls=model_calls,model_tokens=model_tokens,render_seconds=render_seconds))
-            reservation=dict(id=operation_id,phase=phase,model_calls=model_calls,
-                model_tokens=model_tokens,render_seconds=render_seconds,status='active')
+            reservation=dict(hold,status='active')
             for previous in record['reservations']:
                 if previous['id']==operation_id:
                     _require({k:v for k,v in previous.items() if k!='status'}
                         =={k:v for k,v in reservation.items() if k!='status'},
                         'scene_space_reservation_conflict')
+                    _require(previous['status']=='active','scene_space_operation_already_settled')
                     return self._view(record)
+            # Keep both directions atomic: an export cannot race a model hold,
+            # and model work cannot start while an admitted export is running.
+            if phase=='export':
+                _require(not _active_model(record['reservations']),'scene_space_operations_still_active')
+            elif phase in MODEL_PHASES or model_calls or model_tokens:
+                _require(not any(row['status']=='active' and row['phase']=='export'
+                    for row in record['reservations']),'scene_space_operations_still_active')
             status=usage_status(record['usage'])
             diagnostic_preview=(phase=='preview' and model_calls==0 and model_tokens==0
                 and status['status']=='usage_unknown' and status['used']['render_seconds'] is not None)
@@ -169,6 +179,7 @@ class SceneSpaceStore:
         with self._db() as db:
             record=self._load(db,owner,task_id)
             status=require_export_budget(record['usage'],reserve_seconds=reserve_seconds)
+            _require(not _active_model(record['reservations']),'scene_space_operations_still_active')
             held=sum(r['render_seconds'] for r in record['reservations'] if r['status']=='active')
             _require(held+reserve_seconds<=status['remaining']['render_seconds'],
                 'scene_space_budget_reservation_exceeded')

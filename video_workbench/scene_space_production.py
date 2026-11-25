@@ -22,7 +22,8 @@ from agent_service.profiles import video_picture_learning as picture
 from .picture_learning_gateway import PictureAuthorGateway,PictureReviewGateway
 from .scene_space_learning import scene_method_guidance, validate_scene_method
 from .scene_space_plan import default_budget, validate_plan
-from .scene_space_preview import preview_frames
+from .scene_space_preview import preview_frames, production_preview_plan
+from .scene_space_budget import validate_reservation
 
 SCHEMA = 'video.scene-space-production.v1'
 CONFIG_SCHEMA = 'video.scene-space-production-configuration.v1'
@@ -31,6 +32,7 @@ ACTIVE = frozenset({'queued','starting','submitting','running','reconciling','ca
 MAX_JOURNAL_BYTES = 16 * 1024 * 1024
 MIN_RENDER_WINDOW_SECONDS = 30
 MAX_PREVIEW_RENDER_SECONDS = 60
+MAX_PREVIEW_MEDIA_BYTES = 128 * 1024 * 1024
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}\Z')
 
@@ -229,8 +231,10 @@ class SceneSpaceProductionAdapter:
             author_profile=self.author.profile,author_revision=self.author.profile_revision,
             review_profile=self.reviewer.profile,review_revision=self.reviewer.profile_revision,
             render_capability=deepcopy(caps),max_seconds=300,fps=24,audio_modes=['silent'],
-            budget=deepcopy(self.budget),preview_min_score=80,max_preview_frames=3,max_pre_export_repairs=0,
-            visual_gate_scope='actual_sampled_static_previews_not_whole_video_or_user_acceptance')
+            budget=deepcopy(self.budget),preview_min_score=80,max_preview_frames=3,max_pre_export_repairs=1,
+            pre_export_gate_revision=2,max_preview_clip_frames=48,
+            model_job_reserve_calls=8,model_job_reserve_tokens=262144,
+            visual_gate_scope='actual_static_and_clip_samples_not_continuous_playback_or_user_acceptance')
         value['configuration_sha256']=digest(value)
         return value
 
@@ -269,13 +273,16 @@ class SceneSpaceProductionAdapter:
             author_submit_attempted=False,author_job_id=None,author_result=None,author_usage=None,
             author_usage_evidence=None,
             source=None,source_sha256=None,plan_sha256=None,render_request=None,
-            previews=[],review=None,
+            previews=[],clips=[],review=None,repair=None,attempts=[],attempt=0,gate=None,
             render_request_key='scene-render-'+run['id'],render_id=None,render_result=None,
             render_submit_attempted=False,created_at=self.clock(),deadline_at=self.clock()+3600)
         return self._write(row,insert=True)
 
     @staticmethod
     def _project(run,row):
+        reviews=[(a['review']['score'],a['attempt']) for a in row.get('attempts',[]) if a.get('review')]
+        if row.get('review') and row['review'].get('result'):
+            reviews.append((row['review']['result']['review']['score'],row.get('attempt',0)))
         run['scene_space']=dict(status=row['status'],stop_proven=row['stop_proven'],
             author_operation_id=row['author_operation_id'],author_job_id=row['author_job_id'],
             plan_sha256=row['plan_sha256'],source_sha256=row['source_sha256'],
@@ -284,7 +291,24 @@ class SceneSpaceProductionAdapter:
                 url='/api/production-runs/'+run['id']+'/scene-previews/'+p['render_id']
                     if p['render_id'] and p['status']=='completed' else None) for p in row['previews']],
             visual_review=deepcopy(row['review']['result']['review']) if row.get('review') and row['review'].get('result') else None,
-            visual_evidence_scope='sampled_static_previews_only')
+            preview_clips=[dict(start_frame=p['start_frame'],end_frame=p['end_frame'],
+                render_id=p['render_id'],status=p['status'],
+                url='/api/production-runs/'+run['id']+'/scene-previews/'+p['render_id']
+                    if p['render_id'] and p['status']=='completed' else None) for p in row.get('clips',[])],
+            preview_attempt=row.get('attempt',0),repair_limit=row['configuration'].get('max_pre_export_repairs',0),
+            retained_attempts=[dict(attempt=a['attempt'],source_sha256=a['source_sha256'],
+                review_score=(a.get('review') or {}).get('score'),
+                previews=[dict(frame=p['frame'],url='/api/production-runs/'+run['id']+
+                    '/scene-previews/'+p['render_id']) for p in a['previews'] if p['status']=='completed'])
+                for a in row.get('attempts',[])],
+            layout_gate=deepcopy((row.get('gate') or {}).get('layout_report')),
+            best_preview_attempt=max(reviews,key=lambda item:(item[0],-item[1]))[1] if reviews else None,
+            best_preview_scope='highest_sample_review_score_not_user_acceptance',
+            initial_author_usage=deepcopy(row.get('author_usage')),
+            visual_evidence_scope='sampled_static_previews_only',
+            temporal_preview_scope='bounded_clips_rendered_static_samples_reviewed'
+                if row.get('clips') and all(p['status']=='completed' for p in row['clips']) else 'not_completed',
+            continuous_playback_reviewed=False,audio_reviewed=False)
         run['phase']='scene_space_'+row['status']
         if row['plan_sha256']:
             for item in run['items']:
@@ -303,8 +327,22 @@ class SceneSpaceProductionAdapter:
         operation=row['author_operation_id'];document=row['author_document']
         if not row['author_submit_attempted']:
             if not admit:return row
-            _require(self.freeze_configuration(row['owner'],row['project_id'])==row['configuration'],
+            current=self.freeze_configuration(row['owner'],row['project_id'])
+            _require(all(current[key]==row['configuration'][key] for key in (
+                'author_profile','author_revision','review_profile','review_revision','render_capability')),
                 'scene_space_production_configuration_changed',409)
+            if row.get('author_model_reservation') is None:
+                budget=row['configuration']['budget']['model']
+                calls=row['configuration'].get('model_job_reserve_calls',1)
+                remaining=None if budget['used_tokens'] is None else budget['limit_tokens']-budget['used_tokens']
+                _require(budget['limit_calls']-budget['used_calls']>=calls and remaining is not None and remaining>0,
+                    'scene_space_model_budget_unavailable',409)
+                row['author_model_reservation']=dict(model_calls=calls,
+                    model_tokens=min(remaining,row['configuration'].get('model_job_reserve_tokens',262144)),
+                    scope='admission_hold_not_upstream_total_token_cap')
+                validate_reservation(id=operation,phase='generation',
+                    **{k:v for k,v in row['author_model_reservation'].items() if k!='scope'})
+                self._write(row)
             if row['author_input_refs'] is None:
                 row['author_input_refs']=self.author.upload(document,{picture.INPUT_NAME:canonical_bytes(document)})
                 self._write(row)
@@ -359,6 +397,14 @@ class SceneSpaceProductionAdapter:
     def _preview(self,row,*,admit):
         saved=self.space_store.get(row['owner'],row['run_id']);plan=saved['frozen']['plan']
         if not row['previews']:
+            if row['configuration'].get('pre_export_gate_revision',1)>=2:
+                row['gate']=production_preview_plan(saved['frozen'],
+                    max_static_frames=row['configuration']['max_preview_frames'],
+                    max_clip_frames=row['configuration']['max_preview_clip_frames'])
+                row['clips']=[dict(window,frame=window['start_frame'],
+                    key='scene-clip-'+row['run_id']+'-'+str(row.get('attempt',0))+'-'+str(index),
+                    request=None,attempted=False,render_id=None,result=None,status='pending',samples=[])
+                    for index,window in enumerate(row['gate']['clips'])]
             samples=preview_frames(plan)
             candidates=[(key['zoom'],min(key['frame'],shot['end_frame']-1))
                 for shot in plan['shots'] for key in shot['camera']['keyframes']]
@@ -368,6 +414,7 @@ class SceneSpaceProductionAdapter:
             for shot in plan['shots']:
                 if shot['world_id'] not in seen:
                     required.add(shot['start_frame']);seen.add(shot['world_id'])
+            if row.get('gate'):required=set(row['gate']['static_frames'])
             if len(required)>row['configuration']['max_preview_frames']:
                 error=ServiceError('scene_space_preview_coverage_budget_exceeded',409)
                 error.details=dict(required_frames=sorted(required),world_ids=sorted(seen),
@@ -375,13 +422,14 @@ class SceneSpaceProductionAdapter:
                     retained_plan_sha256=row['plan_sha256'],retained_source_sha256=row['source_sha256'])
                 raise error
             selected=sorted(required)
-            row['previews']=[dict(frame=frame,key='scene-preview-'+row['run_id']+'-'+str(frame),
+            row['previews']=[dict(frame=frame,key='scene-preview-'+row['run_id']+'-'+str(frame)
+                +('-r'+str(row['attempt']) if row.get('attempt') else ''),
                 request=None,attempted=False,render_id=None,result=None,status='pending',artifact_sha256=None)
                 for frame in selected]
             self._write(row)
         preview=next((item for item in row['previews'] if item['status']!='completed'),None)
         if preview is None:
-            row['status']='review';return self._write(row)
+            row['status']='clip_preview' if row.get('clips') else 'review';return self._write(row)
         if preview['request'] is None:
             if not admit:return row
             window=self._render_window(row,preview=True)
@@ -443,14 +491,106 @@ class SceneSpaceProductionAdapter:
         else:path.write_bytes(raw)
         preview.update(status='completed',artifact_sha256=sha,result=deepcopy(result))
         row['error']=None
-        if all(item['status']=='completed' for item in row['previews']):row['status']='review'
+        if all(item['status']=='completed' for item in row['previews']):
+            row['status']='clip_preview' if row.get('clips') else 'review'
+        return self._write(row)
+
+    def _store_sample(self,raw,mime):
+        """Keep verified review pixels locally, independent of later attempts."""
+        _require(type(raw) is bytes and len(raw)<=4*1024*1024 and mime in {'image/png','image/jpeg'},
+            'scene_space_preview_image_invalid',409)
+        from PIL import Image
+        try:
+            with Image.open(io.BytesIO(raw)) as image:
+                _require(image.size==(1280,720) and image.format==('PNG' if mime=='image/png' else 'JPEG'),
+                    'scene_space_preview_dimensions_changed',409)
+                image.load();output=io.BytesIO();image.convert('RGB').save(output,format='PNG')
+                data=output.getvalue()
+        except (OSError,ValueError,Image.DecompressionBombError):
+            raise ServiceError('scene_space_preview_image_invalid',409) from None
+        sha=hashlib.sha256(data).hexdigest();directory=self.root/'artifacts';directory.mkdir(exist_ok=True)
+        path=directory/(sha+'.png')
+        _require(not path.is_symlink() and not directory.is_symlink(),'scene_space_production_path_invalid')
+        if path.exists():_require(path.read_bytes()==data,'scene_space_preview_media_changed',409)
+        else:path.write_bytes(data)
+        return sha
+
+    def _clip_preview(self,row,*,admit):
+        saved=self.space_store.get(row['owner'],row['run_id'])
+        clip=next((item for item in row['clips'] if item['status']!='completed'),None)
+        if clip is None:
+            row['status']='review';return self._write(row)
+        if not clip['attempted'] and clip['render_id'] is None:
+            _require(saved['usage_status']['status']=='within_budget','scene_space_budget_unavailable',409)
+        if clip['request'] is None:
+            if not admit:return row
+            window=self._render_window(row,preview=True)
+            document=deepcopy(row['author_document'])
+            document['constraints']['duration_seconds']=(clip['end_frame']-clip['start_frame'])/24
+            clip['reserved_render_seconds']=window['seconds']
+            clip['request']=dict(source=deepcopy(row['source']),document=document,scene_space=saved['frozen'],
+                frame_range={key:clip[key] for key in ('start_frame','end_frame')},deadline_at=window['deadline_at'])
+            self._write(row)
+        if clip['render_id'] is None:
+            child=self.renderer.lookup(row['owner'],clip['key'])
+            if child is None:
+                if clip['attempted']:
+                    row['error']='scene_space_preview_submission_unconfirmed';return self._write(row)
+                if not admit:return row
+                _require(clip['request']['deadline_at']-self.clock()>=MIN_RENDER_WINDOW_SECONDS,
+                    'scene_space_render_budget_insufficient',409)
+                self.space_store.reserve(row['owner'],row['run_id'],clip['key'],phase='preview',
+                    render_seconds=clip['reserved_render_seconds'])
+                clip['attempted']=True;self._write(row)
+                try:child=self.renderer.start(row['owner'],clip['request'],clip['key'])
+                except ServiceError as error:
+                    if error.status<500:
+                        self.space_store.record_usage(row['owner'],row['run_id'],id=clip['key'],phase='preview',
+                            outcome='failed',model_calls=0,model_tokens=0,render_seconds=0)
+                        row.update(status='failed',stop_proven=True,error=error.code)
+                        return self._write(row)
+                    row['error']='scene_space_preview_submission_uncertain';return self._write(row)
+                except Exception:
+                    row['error']='scene_space_preview_submission_uncertain';return self._write(row)
+            clip['render_id']=child['id'];self._write(row)
+        child=self.renderer.get(row['owner'],clip['render_id'])
+        if child['status'] in ACTIVE:return row
+        if child.get('stop_proven') is not True:
+            row['error']='scene_space_preview_stop_unproven';return self._write(row)
+        self.space_store.record_usage(row['owner'],row['run_id'],id=clip['key'],phase='preview',
+            outcome='completed' if child['status']=='completed' else 'failed',model_calls=0,model_tokens=0,
+            render_seconds=(child.get('usage') or {}).get('render_seconds'))
+        _require(child['status']=='completed','scene_space_preview_failed',409)
+        result=child.get('result')
+        _require(type(result) is dict and result.get('plan_sha256')==row['plan_sha256']
+            and result.get('source_sha256')==row['source_sha256'] and result.get('fps')==24
+            and result.get('frame_count')==clip['end_frame']-clip['start_frame'],
+            'scene_space_preview_binding_changed',409)
+        raw,mime=self.renderer.video(row['owner'],clip['render_id'])
+        _require(type(raw) is bytes and 1<=len(raw)<=MAX_PREVIEW_MEDIA_BYTES and mime=='video/mp4'
+            and len(raw)==result.get('bytes') and hashlib.sha256(raw).hexdigest()==result['sha256'],
+            'scene_space_preview_media_changed',409)
+        samples=self.renderer.frames(row['owner'],clip['render_id'],max_frames=3)
+        count=clip['end_frame']-clip['start_frame']
+        _require(type(samples) is list and min(2,count)<=len(samples)<=3,'scene_space_preview_samples_missing',409)
+        selected=[samples[0],samples[-1]] if count>1 else [samples[0]]
+        expected_times=[0,(count-1)/24] if count>1 else [0]
+        _require([sample['timestamp_seconds'] for sample in selected]==expected_times,
+            'scene_space_preview_sample_clock_changed',409)
+        clip['samples']=[dict(frame=clip['start_frame']+round(sample['timestamp_seconds']*24),
+            artifact_sha256=self._store_sample(sample['raw'],sample['mime'])) for sample in selected]
+        clip.update(status='completed',result=deepcopy(result));row['error']=None
+        if all(item['status']=='completed' for item in row['clips']):row['status']='review'
         return self._write(row)
 
     def _review_files(self,row):
         document=deepcopy(row['author_document']);document['mode']='review'
         frames=[];files={}
         from PIL import Image
-        for item in row['previews']:
+        samples=[dict(item,identity='preview-'+str(item['frame'])) for item in row['previews']]
+        samples.extend(dict(sample,identity='clip-'+str(index)+'-'+str(sample['frame']))
+            for index,clip in enumerate(row.get('clips',[])) for sample in clip.get('samples',[]))
+        for item in samples:
             raw=(self.root/'artifacts'/(item['artifact_sha256']+'.png')).read_bytes()
             _require(hashlib.sha256(raw).hexdigest()==item['artifact_sha256'],'scene_space_preview_media_changed',409)
             suffix='png'
@@ -459,12 +599,14 @@ class SceneSpaceProductionAdapter:
                     converted=io.BytesIO();image.convert('RGB').save(converted,format='JPEG',quality=88)
                     raw=converted.getvalue();suffix='jpg'
             _require(len(raw)<=2*1024*1024,'scene_space_preview_observation_too_large',413)
-            name='preview-'+str(item['frame'])+'.'+suffix
+            name=item['identity']+'.'+suffix
             frames.append(dict(file_name=name,sha256=hashlib.sha256(raw).hexdigest(),purpose='output',
-                frame_id='preview-'+str(item['frame'])))
+                frame_id=item['identity']))
             files[name]=raw
         document['observation']=dict(frames=frames)
         document['constraints']['scene_space_static_review']=dict(frames=[item['frame'] for item in row['previews']],
+            clip_samples=[dict(start_frame=c['start_frame'],end_frame=c['end_frame'],
+                frames=[s['frame'] for s in c.get('samples',[])]) for c in row.get('clips',[])],
             scope='actual_static_samples_only',instructions=[
                 'Judge these actual rendered samples against the full goal, style, object scale, composition, depth and occlusion.',
                 'Report defects and uncertainty. Do not claim continuous playback, motion, sound or whole-video observation.',
@@ -476,7 +618,8 @@ class SceneSpaceProductionAdapter:
     def _review(self,row,*,admit):
         if row['review'] is None:
             document,_=self._review_files(row)
-            row['review']=dict(id='scene-review-'+row['run_id'],document=document,input_sha256=digest(document),
+            row['review']=dict(id='scene-review-'+row['run_id']
+                +('-r'+str(row['attempt']) if row.get('attempt') else ''),document=document,input_sha256=digest(document),
                 input_refs=None,attempted=False,job_id=None,result=None,usage=None)
             self._write(row)
         review=row['review'];document=review['document']
@@ -488,7 +631,7 @@ class SceneSpaceProductionAdapter:
                 _require(rebuilt==document,'scene_space_review_input_changed',409)
                 review['input_refs']=self.reviewer.upload(document,files);self._write(row)
             call=self.reviewer.prepare_submission(review['id'],document,row['deadline_at'],review['input_refs'])
-            self.space_store.reserve(row['owner'],row['run_id'],review['id'],phase='review',model_calls=1)
+            self._reserve_model(row,review['id'],phase='review')
             review['attempted']=True;self._write(row)
             try:job=call()
             except Exception:
@@ -514,9 +657,92 @@ class SceneSpaceProductionAdapter:
         observed={item.get('sha256') for item in receipt.get('images',[]) if item.get('model_request_completed') is True}
         _require(expected<=observed,'scene_space_review_frame_transport_incomplete',409)
         review['result']=result;review['frame_receipt']=receipt;self._write(row)
-        _require(result['review']['score']>=row['configuration']['preview_min_score']
-            and not result['review']['issues'],'scene_space_preview_quality_not_met',409)
+        passed=(result['review']['score']>=row['configuration']['preview_min_score'] and not result['review']['issues'])
+        if not passed and row.get('attempt',0)<row['configuration'].get('max_pre_export_repairs',0) \
+                and not result['review']['stop_recommended']:
+            row['status']='repair';row['error']=None
+            return self._write(row)
+        _require(passed,'scene_space_preview_quality_not_met',409)
         row['status']='planned';row['error']=None
+        return self._write(row)
+
+    def _reserve_model(self,row,operation,*,phase):
+        status=self.space_store.get(row['owner'],row['run_id'])['usage_status']
+        remaining=status['remaining']['model_tokens']
+        _require(status['status']=='within_budget' and remaining is not None and remaining>0,
+            'scene_space_model_budget_unavailable',409)
+        self.space_store.reserve(row['owner'],row['run_id'],operation,phase=phase,
+            model_calls=row['configuration'].get('model_job_reserve_calls',1),
+            model_tokens=min(remaining,row['configuration'].get('model_job_reserve_tokens',262144)))
+
+    def _repair(self,row,*,admit):
+        """One same-plan source correction; never a changed-content experiment.
+
+        The admitted still author receives actual output pixels and the exact
+        source in a production-only constraint. Historical transfer inputs keep
+        base_source=None: this is not a learning transfer or inherited reference.
+        """
+        if row.get('repair') is None:
+            document,files=self._review_files(row);document['mode']='create'
+            plan=self.space_store.get(row['owner'],row['run_id'])['frozen']['plan']
+            document['constraints']['scene_space_same_content_repair']=dict(
+                schema='video.scene-space-source-repair.v1',plan_sha256=row['plan_sha256'],
+                source_sha256=row['source_sha256'],source=deepcopy(row['source']),plan=deepcopy(plan),
+                review=deepcopy(row['review']['result']['review']),
+                instructions=[
+                    'Repair only the reported painting defects in this exact production candidate. Preserve the full original goal, style, worlds, object identities, layout, timing, cameras and local animation.',
+                    'Return complete editable source and the unchanged method.scene_space plan. Do not create new content, a transfer experiment, a second world or a new camera plan.',
+                    'The supplied output images are sampled static evidence only. Do not claim motion, audio, artistic acceptance or user approval.'])
+            document['prior_review']=deepcopy(row['review']['result']['review'])
+            document['feedback']='Correct only the defects in constraints.scene_space_same_content_repair.review.'
+            document=picture.validate_input(document)
+            row['repair']=dict(id='scene-repair-'+row['run_id']+'-'+str(row.get('attempt',0)+1),
+                document=document,input_sha256=digest(document),input_refs=None,attempted=False,
+                job_id=None,result=None,usage=None,usage_evidence=None)
+            self._write(row)
+        repair=row['repair'];document=repair['document']
+        if not repair['attempted']:
+            if not admit:return row
+            if repair['input_refs'] is None:
+                _,files=self._review_files(row);files[picture.INPUT_NAME]=canonical_bytes(document)
+                repair['input_refs']=self.author.upload(document,files);self._write(row)
+            call=self.author.prepare_submission(repair['id'],document,row['deadline_at'],repair['input_refs'])
+            self._reserve_model(row,repair['id'],phase='repair')
+            repair['attempted']=True;self._write(row)
+            try:job=call()
+            except Exception:
+                row['error']='scene_space_repair_submission_uncertain';return self._write(row)
+            repair['job_id']=job['job_id'];return self._write(row)
+        try:job=self.author.poll(repair['job_id']) if repair['job_id'] else self.author.lookup(repair['id'])
+        except ServiceError as error:
+            if error.status==404:
+                row['error']='scene_space_repair_submission_unconfirmed';return self._write(row)
+            raise
+        repair['job_id']=job['job_id']
+        if job['state'] in ACTIVE:return self._write(row)
+        if job.get('stop_proven') is not True:
+            row['error']='scene_space_repair_stop_unproven';return self._write(row)
+        repair['usage']=_measured_usage(job);repair['usage_evidence']=deepcopy(job.get('usage'))
+        self._write(row)
+        self.space_store.record_usage(row['owner'],row['run_id'],id=repair['id'],phase='repair',
+            outcome='completed' if job['state']=='completed' else 'failed',**repair['usage'],render_seconds=0)
+        _require(job['state']=='completed','scene_space_repair_failed',409)
+        result=self.author.collect(job['job_id'],repair['input_sha256'],document)
+        picture.validate_result(result,repair['input_sha256'],document)
+        spatial=validate_scene_method((result.get('method') or {}).get('scene_space'),
+            source_scope='scene_data_only',source_refs=[],frame_ids=[])
+        _require(spatial['plan']==document['constraints']['scene_space_same_content_repair']['plan'],
+            'scene_space_repair_plan_changed',409)
+        source=picture.validate_source(result['source'],constraints=document['constraints'])
+        _require(source['files']!=row['source']['files'],'scene_space_repair_unchanged',409)
+        row.setdefault('attempts',[]).append(dict(attempt=row.get('attempt',0),source=deepcopy(row['source']),
+            source_sha256=row['source_sha256'],plan_sha256=row['plan_sha256'],
+            previews=deepcopy(row['previews']),clips=deepcopy(row.get('clips',[])),
+            review=deepcopy(row['review']['result']['review']),review_evidence=deepcopy(row['review']),
+            gate=deepcopy(row.get('gate'))))
+        repair['result']=deepcopy(result)
+        row.update(source=source,source_sha256=source['source_sha256'],attempt=row.get('attempt',0)+1,
+            previews=[],clips=[],review=None,gate=None,status='preview',error=None)
         return self._write(row)
 
     def _render(self,row,*,admit):
@@ -610,7 +836,9 @@ class SceneSpaceProductionAdapter:
         self._project(run,row);persist(run)
         if row['status']=='author':row=self._author(row,admit=admit)
         elif row['status']=='preview':row=self._preview(row,admit=admit)
+        elif row['status']=='clip_preview':row=self._clip_preview(row,admit=admit)
         elif row['status']=='review':row=self._review(row,admit=admit)
+        elif row['status']=='repair':row=self._repair(row,admit=admit)
         elif row['status'] in {'planned','rendering'}:row=self._render(row,admit=admit)
         self._project(run,row);persist(run)
         return deepcopy(run['scene_space'])
@@ -622,6 +850,19 @@ class SceneSpaceProductionAdapter:
             if error.status==404:return True
             raise
         if row['status'] in {'completed','failed','cancelled'}:return row['stop_proven']
+        # A crash after a durable hold but before the dispatch intent leaves a
+        # known zero-cost, undispatched reservation. Release it on cancellation;
+        # attempted/uncertain operations must instead reconcile their original ID.
+        operations=[(p['key'],p['attempted']) for p in row['previews']+row.get('clips',[])]
+        operations.append((row['render_request_key'],row['render_submit_attempted']))
+        operations.extend((p['id'],p['attempted']) for p in (row.get('review'),row.get('repair')) if p)
+        if row['plan_sha256']:
+            record=self.space_store.get(row['owner'],row['run_id'])
+            undispatched={key for key,attempted in operations if not attempted}
+            for reservation in record['reservations']:
+                if reservation['id'] in undispatched and reservation['status']=='active':
+                    self.space_store.record_usage(row['owner'],row['run_id'],id=reservation['id'],
+                        phase=reservation['phase'],outcome='cancelled',model_calls=0,model_tokens=0,render_seconds=0)
         if row['render_submit_attempted'] and row['render_id'] is None:
             try:child=self.renderer.lookup(row['owner'],row['render_request_key'])
             except ServiceError:return False
@@ -631,7 +872,19 @@ class SceneSpaceProductionAdapter:
             child=self.renderer.cancel(row['owner'],row['render_id'])
             if child.get('stop_proven') is not True:return False
             self._settle_cancelled_render(row,child,row['render_request_key'],'export')
-        elif row.get('review') and row['review']['attempted']:
+        elif row.get('repair') and row['repair']['attempted'] and row['repair'].get('result') is None:
+            repair=row['repair']
+            try:job=self.author.poll(repair['job_id']) if repair['job_id'] else self.author.lookup(repair['id'])
+            except ServiceError:return False
+            if job['state'] in ACTIVE:
+                self.author.cancel(job['job_id']);return False
+            if job.get('stop_proven') is not True:return False
+            record=self.space_store.get(row['owner'],row['run_id'])
+            if not any(event['id']==repair['id'] for event in record['usage']['events']):
+                self.space_store.record_usage(row['owner'],row['run_id'],id=repair['id'],phase='repair',
+                    outcome='completed' if job['state']=='completed' else 'cancelled',
+                    **_measured_usage(job),render_seconds=0)
+        elif row.get('review') and row['review']['attempted'] and row['review'].get('result') is None:
             review=row['review']
             try:job=self.reviewer.poll(review['job_id']) if review['job_id'] else self.reviewer.lookup(review['id'])
             except ServiceError:return False
@@ -643,8 +896,9 @@ class SceneSpaceProductionAdapter:
                 self.space_store.record_usage(row['owner'],row['run_id'],id=review['id'],phase='review',
                     outcome='completed' if job['state']=='completed' else 'cancelled',
                     **_measured_usage(job),render_seconds=0)
-        elif any(item['attempted'] and item['status']!='completed' for item in row['previews']):
-            for item in row['previews']:
+        elif any(item['attempted'] and item['status']!='completed'
+                for item in row['previews']+row.get('clips',[])):
+            for item in row['previews']+row.get('clips',[]):
                 if item['attempted'] and item['render_id'] is None:
                     try:child=self.renderer.lookup(row['owner'],item['key'])
                     except ServiceError:return False
@@ -699,11 +953,15 @@ class SceneSpaceProductionAdapter:
 
     def preview(self,owner,run_id,render_id):
         row=self._read(owner,run_id)
-        item=next((item for item in row['previews'] if item['render_id']==render_id),None)
+        candidates=row['previews']+row.get('clips',[])
+        for attempt in row.get('attempts',[]):candidates+=attempt['previews']+attempt.get('clips',[])
+        item=next((item for item in candidates if item['render_id']==render_id),None)
         _require(item is not None,'not_found',404)
         _require(item['status']=='completed','scene_space_preview_unavailable',409)
         raw,mime=self.renderer.video(owner,render_id)
-        _require(mime=='image/png' and hashlib.sha256(raw).hexdigest()==item['artifact_sha256'],
+        clip='start_frame' in item
+        _require(mime==('video/mp4' if clip else 'image/png')
+            and hashlib.sha256(raw).hexdigest()==(item['result']['sha256'] if clip else item['artifact_sha256']),
             'scene_space_preview_media_changed',409)
         return raw,mime
 

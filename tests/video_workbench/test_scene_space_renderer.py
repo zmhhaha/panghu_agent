@@ -107,6 +107,44 @@ def test_binding_bounds_resolution_before_any_painter_runs(plan):
     assert render['evidence_scope']=='render_inputs_not_visual_acceptance'
 
 
+def test_native_browser_renders_planned_short_windows_on_the_original_absolute_clock(renderer,plan,tmp_path):
+    """Real bounded capture/encoding; no model or artwork acceptance claim."""
+    required=['SCENE_SPACE_BROWSER','SCENE_SPACE_PLAYWRIGHT_PACKAGE','SCENE_SPACE_HYPERFRAMES_DIST']
+    if not all(os.environ.get(name) for name in required):
+        pytest.skip('Native browser acceptance dependencies not configured')
+    node=shutil.which('node');ffmpeg=shutil.which('ffmpeg');ffprobe=shutil.which('ffprobe')
+    if not all((node,ffmpeg,ffprobe)):pytest.skip('Native Node/FFmpeg required')
+    from video_workbench.scene_space_preview import production_preview_plan
+    windows=production_preview_plan(plan)['clips'];cases=[]
+    for index,window in enumerate(windows):
+        frame_range={key:window[key] for key in ('start_frame','end_frame')}
+        document=dict(constraints=dict(width=1280,height=720,
+            duration_seconds=(window['end_frame']-window['start_frame'])/24),assets={})
+        binding=renderer.validate_request('clip-'+str(index),source(),document,
+            scene_space=plan,frame_range=frame_range)
+        path=tmp_path/('clip-'+str(index)+'.json');path.write_bytes(canonical_bytes(binding))
+        cases.append(dict(name='clip-'+str(index),binding=str(path),output=str(tmp_path/('clip-'+str(index))),assets={}))
+    config=dict(playwright_package=os.environ[required[1]],browser=os.environ[required[0]],
+        hyperframes_dist=os.environ[required[2]],host=str(HOST),scene_runtime=str(RUNTIME),
+        engine_runtime=str(ROOT/'video_workbench/motion_renderer/engine_runtime.mjs'),
+        project_runtime=str(ROOT/'video_workbench/motion_renderer/hyperframes_project.mjs'),
+        ffmpeg=ffmpeg,ffprobe=ffprobe,cases=cases,output=str(tmp_path/'native-summary.json'))
+    config_path=tmp_path/'probe-config.json';config_path.write_bytes(canonical_bytes(config))
+    subprocess.run([node,str(Path(__file__).with_name('scene_space_browser_probe.mjs')),str(config_path)],
+        check=True,timeout=120)
+    summary=json.loads((tmp_path/'native-summary.json').read_text(encoding='utf-8'))
+    assert any(window['start_frame']>0 for window in windows)
+    for window,result in zip(windows,summary['results']):
+        count=window['end_frame']-window['start_frame']
+        assert result['captured_frames']==count<=48
+        assert all(result['checks'][key] for key in ('repeat_passed','reverse_passed','reload_passed'))
+        stream=next(s for s in result['media_probe']['streams'] if s['codec_type']=='video')
+        assert int(stream['nb_read_frames'])==count and stream['avg_frame_rate']=='24/1'
+        samples=result['sample_frames']
+        assert samples[0]['frame']==window['start_frame'] and samples[-1]['frame']==window['end_frame']-1
+        assert [sample['time_seconds'] for sample in samples][::len(samples)-1]==[0,(count-1)/24]
+
+
 def test_intervals_share_the_same_full_plan_raster_resolution(plan):
     first=prepare_scene_render(plan,source_sha256=source()['source_sha256'],frame_range=dict(start_frame=0,end_frame=48))
     last=prepare_scene_render(plan,source_sha256=source()['source_sha256'],frame_range=dict(start_frame=48,end_frame=96))

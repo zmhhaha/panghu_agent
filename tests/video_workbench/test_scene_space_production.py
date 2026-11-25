@@ -51,6 +51,9 @@ class WorldAuthor(Gateway):
                 'scene.css':'canvas{display:block}',
                 'scene.js':'window.__sceneSpaceArtwork={paintObject(ctx,obj,world){ctx.fillRect(0,0,20,20)}};'})
         source['source_sha256']=source_sha256(source)
+        if document['constraints'].get('scene_space_same_content_repair'):
+            source['files']['scene.js']+='\n// Same-content source correction.'
+            source['source_sha256']=source_sha256(source)
         spatial=dict(schema='video.scene-space-method.v1',world=world,plan=plan,
             source=dict(scope='scene_data_only',references=[],frame_ids=[],motion_observed=self.invalid_motion,
                 audio_observed=False,whole_video_watched=False),hypotheses=[],principles=['Reuse stable world objects.'],
@@ -88,17 +91,19 @@ class SceneRenderer:
         self.submissions.append(deepcopy(request))
         frozen=request['scene_space']
         raw=self.raw
-        if 'frame_range' in request:
+        static='duration_seconds' not in request['document']['constraints']
+        if static:
             from PIL import Image
             output=io.BytesIO();Image.new('RGB',(1280,720),(240,235,220)).save(output,format='PNG')
             raw=output.getvalue()
         result=dict(sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw),fps=24,
-            frame_count=1 if 'frame_range' in request else frozen['plan']['duration_frames'],plan_sha256=frozen['plan_sha256'],
+            frame_count=(request['frame_range']['end_frame']-request['frame_range']['start_frame']
+                if 'frame_range' in request else frozen['plan']['duration_frames']),plan_sha256=frozen['plan_sha256'],
             source_sha256=request['source']['source_sha256'],snapshot_sha256=digest(request))
         job=dict(id='render-'+str(len(self.jobs)),status='completed',stop_proven=True,result=result,
             usage=dict(render_seconds=3),error=None)
         self.jobs[(owner,key)]=job
-        self.artifacts[job['id']]=(raw,'image/png' if 'frame_range' in request else 'video/mp4')
+        self.artifacts[job['id']]=(raw,'image/png' if static else 'video/mp4')
         if self.lose_submit:raise ServiceError('lost_response',503)
         return deepcopy(job)
 
@@ -109,6 +114,13 @@ class SceneRenderer:
         raise ServiceError('not_found',404)
     def cancel(self,owner,identity):return self.get(owner,identity)
     def video(self,owner,identity):self.get(owner,identity);return self.artifacts[identity]
+    def frames(self,owner,identity,max_frames=3):
+        row=self.get(owner,identity)
+        from PIL import Image
+        output=io.BytesIO();Image.new('RGB',(1280,720),(240,235,220)).save(output,format='JPEG')
+        count=row['result']['frame_count']
+        return [dict(timestamp_seconds=frame/24,mime='image/jpeg',raw=output.getvalue())
+            for frame in sorted({0,count//2,count-1})][:max_frames]
 
 
 class WorldReview(Gateway):
@@ -131,9 +143,26 @@ def scene_env(legacy_env,tmp_path):
     env.spaces=SceneSpaceStore(tmp_path/'spaces')
     env.adapter=SceneSpaceProductionAdapter(tmp_path/'scene-production',space_store=env.spaces,
         author=env.author,reviewer=env.reviewer,renderer=env.renderer,enabled=True)
+    env.current_scene_configuration=env.adapter.freeze_configuration
+    def legacy_configuration(owner,project_id):
+        value=env.current_scene_configuration(owner,project_id)
+        for key in ('pre_export_gate_revision','max_preview_clip_frames','model_job_reserve_calls','model_job_reserve_tokens'):
+            value.pop(key,None)
+        value.update(max_pre_export_repairs=0,
+            visual_gate_scope='actual_sampled_static_previews_not_whole_video_or_user_acceptance')
+        value.pop('configuration_sha256');value['configuration_sha256']=digest(value)
+        return value
+    # These original regressions exercise recovery of the frozen v1 policy.
+    env.adapter.freeze_configuration=legacy_configuration
     env.sequence=ProductionSequenceStore(tmp_path/'sequences.sqlite3')
     env.runs=ProductionRunStore(env.store,env.joint,env.motion,env.production,
         scene_space_adapter=env.adapter,sequence_store=env.sequence)
+    return env
+
+
+@pytest.fixture
+def gated_scene_env(scene_env):
+    env=scene_env;env.adapter.freeze_configuration=env.current_scene_configuration
     return env
 
 
@@ -144,7 +173,12 @@ def begin(env,key='scene-space-production-test'):
 
 
 def finish(env):
-    for _ in range(24):env.runs.tick()
+    for _ in range(64):
+        env.runs.tick()
+        with env.store.transaction() as db:
+            runs=[json.loads(row[0]) for row in db.execute('SELECT document FROM production_runs')]
+        if runs and all(run['status'] in {'completed','failed','cancelled'} and not run.get('draining') for run in runs):
+            break
 
 
 def test_formal_run_authors_one_world_once_for_all_automatic_shots_and_registers_source(scene_env):
@@ -406,6 +440,115 @@ def test_every_rendered_world_receives_a_preview_within_the_fixed_sampling_budge
     frames={item['frame'] for item in public['scene_space']['previews']}
     assert all(any(shot['start_frame'] in frames for shot in plan['shots'] if shot['world_id']==world['id'])
         for world in plan['worlds'])
+
+
+def test_new_gate_reviews_real_short_clip_samples_before_whole_export(gated_scene_env):
+    env=gated_scene_env;run=begin(env);finish(env)
+    public=env.runs.get(OWNER,run['id']);row=env.adapter._read(OWNER,run['id'])
+    assert public['status']=='completed'
+    assert len(env.renderer.submissions)==5 and len(row['previews'])==2 and len(row['clips'])==2
+    assert all(2<=c['end_frame']-c['start_frame']<=48 and len(c['samples'])==2 for c in row['clips'])
+    assert len(env.reviewer.uploads[0][0]['observation']['frames'])==6
+    assert public['scene_space']['continuous_playback_reviewed'] is False
+    assert public['scene_space']['layout_gate']['visibility_scope']=='bounds_only'
+    assert public['scene_space']['temporal_preview_scope']=='bounded_clips_rendered_static_samples_reviewed'
+    for clip in row['clips']:
+        raw,mime=env.adapter.preview(OWNER,run['id'],clip['render_id'])
+        assert mime=='video/mp4' and hashlib.sha256(raw).hexdigest()==clip['result']['sha256']
+    assert env.spaces.get(OWNER,run['id'])['usage_status']['used']['render_seconds']==15
+
+
+def test_one_bounded_source_repair_preserves_plan_goal_knowledge_and_original_previews(gated_scene_env):
+    env=gated_scene_env;env.reviewer.scores=[65,90]
+    run=begin(env);finish(env)
+    public=env.runs.get(OWNER,run['id']);row=env.adapter._read(OWNER,run['id'])
+    assert public['status']=='completed' and row['attempt']==1
+    assert len(env.author.submissions)==len(env.reviewer.submissions)==2
+    assert len(env.renderer.submissions)==9
+    original=row['attempts'][0];repair=row['repair']['document']
+    assert original['source_sha256']!=row['source_sha256'] and original['plan_sha256']==row['plan_sha256']
+    assert repair['goal']==row['author_document']['goal']
+    assert repair['knowledge_snapshot']==row['author_document']['knowledge_snapshot']
+    assert repair['base_source'] is None and not any(f['purpose']=='reference' for f in repair['observation']['frames'])
+    assert repair['constraints']['scene_space_same_content_repair']['source']==original['source']
+    assert public['scene_space']['best_preview_attempt']==1
+    old_preview=original['previews'][0]
+    assert env.adapter.preview(OWNER,run['id'],old_preview['render_id'])[1]=='image/png'
+    with pytest.raises(ServiceError,match='not_found'):
+        env.adapter.preview('another-owner',run['id'],old_preview['render_id'])
+    usage=env.spaces.get(OWNER,run['id'])['usage_status']['used']
+    assert usage['model_calls']==4 and usage['model_tokens']==3600 and usage['render_seconds']==27
+
+
+def test_repair_stops_after_one_attempt_and_retains_the_better_previous_preview(gated_scene_env):
+    env=gated_scene_env;env.reviewer.scores=[65,60]
+    run=begin(env);finish(env)
+    public=env.runs.get(OWNER,run['id'])
+    assert public['status']=='failed' and public['error']=='scene_space_preview_quality_not_met'
+    assert len(env.author.submissions)==2 and len(env.reviewer.submissions)==2
+    assert len(env.renderer.submissions)==8 and all('frame_range' in r for r in env.renderer.submissions)
+    assert public['scene_space']['best_preview_attempt']==0
+    assert len(public['scene_space']['retained_attempts'][0]['previews'])==2
+
+
+def test_failed_repair_is_charged_once_and_drain_does_not_rewrite_failure_as_cancelled(gated_scene_env):
+    env=gated_scene_env;env.reviewer.scores=[65]
+    prepare=env.author.prepare_submission
+    def fail_repair(operation,document,*args):
+        submit=prepare(operation,document,*args)
+        def call():
+            job=submit()
+            if 'scene_space_same_content_repair' in document['constraints']:
+                env.author._job(job['job_id']).update(state='failed',stop_proven=True)
+            return job
+        return call
+    env.author.prepare_submission=fail_repair
+    run=begin(env);finish(env)
+    public=env.runs.get(OWNER,run['id']);record=env.spaces.get(OWNER,run['id'])
+    assert public['status']=='failed' and public['error']=='scene_space_repair_failed' and not public['draining']
+    events=[event for event in record['usage']['events'] if event['phase']=='repair']
+    assert len(events)==1 and events[0]['outcome']=='failed' and events[0]['model_tokens']==1000
+    assert not any(r['status']=='active' for r in record['reservations'])
+
+
+def test_clip_unknown_cost_retains_stopped_clip_samples_and_blocks_later_work(gated_scene_env):
+    env=gated_scene_env;original=env.renderer.start
+    def missing_usage(owner,request,key):
+        child=original(owner,request,key)
+        if key.startswith('scene-clip-'):env.renderer.jobs[(owner,key)]['usage']['render_seconds']=None
+        return child
+    env.renderer.start=missing_usage
+    run=begin(env);finish(env)
+    public=env.runs.get(OWNER,run['id']);row=env.adapter._read(OWNER,run['id'])
+    assert public['status']=='failed' and not env.reviewer.submissions
+    assert len(env.renderer.submissions)==3 and row['clips'][0]['status']=='completed'
+    assert len(row['clips'][0]['samples'])==2
+    assert env.spaces.get(OWNER,run['id'])['usage_status']['status']=='usage_unknown'
+
+
+def test_lost_repair_response_is_reconciled_after_restart_without_second_paid_job(gated_scene_env,tmp_path):
+    env=gated_scene_env;env.reviewer.scores=[65,90];run=begin(env)
+    for _ in range(20):
+        env.runs.tick()
+        if env.adapter._read(OWNER,run['id'])['status']=='repair':break
+    env.author.lose_submit=True;env.runs.tick()
+    assert len(env.author.submissions)==2
+    recovered=SceneSpaceProductionAdapter(tmp_path/'scene-production',space_store=env.spaces,
+        author=env.author,reviewer=env.reviewer,renderer=env.renderer,enabled=True)
+    env.adapter=recovered
+    env.runs=ProductionRunStore(env.store,env.joint,env.motion,env.production,
+        scene_space_adapter=recovered,sequence_store=env.sequence)
+    finish(env)
+    assert env.runs.get(OWNER,run['id'])['status']=='completed'
+    assert len(env.author.submissions)==2 and any(key.startswith('scene-repair-') for key in env.author.lookups)
+
+
+def test_first_author_admission_requires_its_real_request_allowance(gated_scene_env):
+    env=gated_scene_env;env.adapter.budget=default_budget(model_calls=7)
+    run=begin(env);finish(env)
+    public=env.runs.get(OWNER,run['id'])
+    assert public['status']=='failed' and public['error']=='scene_space_model_budget_unavailable'
+    assert not env.author.submissions and not env.renderer.submissions
 
 
 def test_uncovered_worlds_cannot_silently_pass_when_preview_budget_is_three(scene_env):

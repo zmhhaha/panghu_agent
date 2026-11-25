@@ -53,8 +53,8 @@ def test_concurrent_reservations_cannot_double_spend(tmp_path,plan):
     row=store.get('owner','film');operation=row['reservations'][0]
     store.record_usage('owner','film',id=operation['id'],phase='generation',outcome='failed',
         model_calls=1,model_tokens=9,render_seconds=0)
-    replay=store.reserve('owner','film',operation['id'],phase='generation',model_calls=1,model_tokens=10)
-    assert replay['reservations'][0]['status']=='settled'
+    with pytest.raises(ServiceError,match='operation_already_settled'):
+        SceneSpaceStore(tmp_path).reserve('owner','film',operation['id'],phase='generation',model_calls=1,model_tokens=10)
 
 
 def test_overrun_is_preserved_and_blocks_later_export(tmp_path,plan):
@@ -100,3 +100,87 @@ def test_unknown_model_tokens_allow_a_bounded_diagnostic_but_not_final_export(tm
     with pytest.raises(ServiceError,match='export_budget_unavailable'):store.require_export('owner','film')
     with pytest.raises(ServiceError,match='budget_unavailable'):
         store.reserve('owner','film','review',phase='review',model_calls=1,model_tokens=1)
+
+
+def test_concurrent_model_token_holds_cannot_spend_the_same_remaining_allowance(tmp_path,plan):
+    plan['budget']['model']['limit_calls']=10
+    plan['budget']['model']['limit_tokens']=100
+    store=SceneSpaceStore(tmp_path);store.freeze('owner','film',plan)
+    def reserve(number):
+        try:
+            store.reserve('owner','film','review-'+str(number),phase='review',model_calls=1,model_tokens=60)
+            return True
+        except ServiceError as error:
+            assert error.code=='scene_space_budget_reservation_exceeded'
+            return False
+    with ThreadPoolExecutor(max_workers=4) as pool:results=list(pool.map(reserve,range(4)))
+    assert sum(results)==1
+    current=SceneSpaceStore(tmp_path).get('owner','film')
+    # These are holds, not fabricated actual usage.
+    assert current['usage_status']['used']['model_calls']==0
+    assert current['usage_status']['used']['model_tokens']==0
+    assert not current['usage_status']['can_start_export']
+
+
+def test_inflight_model_blocks_export_even_with_ample_render_budget(tmp_path,plan):
+    store=SceneSpaceStore(tmp_path);store.freeze('owner','film',plan)
+    first=store.reserve('owner','film','review',phase='review',model_calls=1,model_tokens=100)
+    assert store.reserve('owner','film','review',phase='review',model_calls=1,model_tokens=100)==first
+    with pytest.raises(ServiceError,match='still_active'):
+        store.require_export('owner','film',reserve_seconds=1)
+    with pytest.raises(ServiceError,match='still_active'):
+        store.reserve('owner','film','export',phase='export',render_seconds=1)
+    store.record_usage('owner','film',id='review',phase='review',outcome='failed',model_calls=1,model_tokens=75)
+    assert store.require_export('owner','film',reserve_seconds=1)['can_start_export']
+
+
+def test_export_reservation_blocks_new_model_admission_atomically(tmp_path,plan):
+    store=SceneSpaceStore(tmp_path);store.freeze('owner','film',plan)
+    store.reserve('owner','film','export',phase='export',render_seconds=1)
+    with pytest.raises(ServiceError,match='still_active'):
+        store.reserve('owner','film','repair',phase='repair',model_calls=1,model_tokens=100)
+
+
+def test_model_export_race_can_admit_only_one_kind_of_work(tmp_path,plan):
+    store=SceneSpaceStore(tmp_path);store.freeze('owner','film',plan)
+    def reserve(phase):
+        try:
+            store.reserve('owner','film',phase,phase=phase,
+                **({'model_calls':1,'model_tokens':100} if phase=='review' else {'render_seconds':1}))
+            return True
+        except ServiceError as error:
+            assert error.code=='scene_space_operations_still_active'
+            return False
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(reserve,['export','review']))
+    assert sum(results)==1
+
+
+def test_unknown_settlement_does_not_spend_estimate_as_actual_or_unlock_export(tmp_path,plan):
+    store=SceneSpaceStore(tmp_path);store.freeze('owner','film',plan)
+    store.reserve('owner','film','review',phase='review',model_calls=1,model_tokens=100)
+    row=store.record_usage('owner','film',id='review',phase='review',outcome='failed',model_calls=1)
+    assert row['reservations'][0]['status']=='settled'
+    assert row['usage_status']['used']['model_tokens'] is None
+    assert row['usage_status']['used']['known_tokens_lower_bound']==0
+    reopened=SceneSpaceStore(tmp_path)
+    with pytest.raises(ServiceError,match='export_budget_unavailable'):reopened.require_export('owner','film')
+    with pytest.raises(ServiceError,match='budget_unavailable'):
+        reopened.reserve('owner','film','repair',phase='repair',model_calls=1,model_tokens=100)
+    with pytest.raises(ServiceError,match='operation_already_settled'):
+        reopened.reserve('owner','film','review',phase='review',model_calls=1,model_tokens=100)
+
+
+def test_failed_review_and_repair_costs_survive_revision_and_limit_new_admission(tmp_path,plan):
+    plan['budget']['model']['limit_tokens']=100
+    store=SceneSpaceStore(tmp_path);first=store.freeze('owner','film',plan)
+    for key,phase in [('failed-review','review'),('failed-repair','repair')]:
+        store.reserve('owner','film',key,phase=phase,model_calls=1,model_tokens=40)
+        store.record_usage('owner','film',id=key,phase=phase,outcome='failed',model_calls=1,model_tokens=40)
+    replacement=deepcopy(plan);replacement['revision']+=1;replacement['budget']['revisions']['used']+=1
+    replacement['viewport']['width']-=1
+    revised=store.revise('owner','film',replacement,reason='Keep failed work charged',
+        expected_plan_sha256=first['frozen']['plan_sha256'])
+    assert revised['usage_status']['used']['model_calls']==2
+    assert revised['usage_status']['used']['model_tokens']==80
+    with pytest.raises(ServiceError,match='reservation_exceeded'):
+        SceneSpaceStore(tmp_path).reserve('owner','film','next',phase='review',model_calls=1,model_tokens=21)

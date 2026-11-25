@@ -1,0 +1,68 @@
+{
+  "schema": "video.scene-space-pre-export-gates-validation.v1",
+  "date": "2026-11-25",
+  "branch": "codex/scene-production-gates-20261125",
+  "base_commit": "989d0407c9d1491ac09fe9151542a300edcebfbd",
+  "validation": {
+    "scene_data_budget_store_http_renderer": {
+      "passed": 208,
+      "skipped": 4,
+      "log": "scene-regression.log"
+    },
+    "production_orchestration": {
+      "distinct_scenarios_passed": 28,
+      "scope": "24 passed in r2; r3 passed all 7 new scenarios, superseding four stale fixed-count assertions; cumulative, not a single final 28-case run",
+      "logs": [
+        "production-tests-r2.log",
+        "production-tests-r3.log"
+      ]
+    },
+    "crash_recovery": {
+      "distinct_scenarios_passed": 9,
+      "scope": "delegated test run: five hold/cancel cases passed; four corrected assertion cases passed on targeted rerun"
+    },
+    "native_short_preview": {
+      "passed": 1,
+      "actual_clips": 2,
+      "frames_per_clip": 48,
+      "fps": 24,
+      "model_requests": 0,
+      "log": "native-clip-tests-r2.log",
+      "scope": "real Chrome capture and FFmpeg encode, repeat/reverse/reload; not container admission or artistic acceptance"
+    },
+    "scene_learning_compatibility": {
+      "passed": 29,
+      "scope": "delegated focused compatibility run"
+    },
+    "production_ui": {
+      "passed": 21,
+      "log": "ui-tests.log"
+    }
+  },
+  "log_sha256": {
+    "scene-regression.log": "9aaf07860d7ad2a7e5735068bebf89e9f50692f953b5ff9fecdae3641b150f5c",
+    "production-tests-r2.log": "690fd73e8f9c052be8ef4175d46c209c715ceafa903d701da40fb03db65ca3bd",
+    "production-tests-r3.log": "b99e4b57a816cb5618a5b3de7be1e7cd9db2d52e36a6a1eaa0f4787910a970fc",
+    "native-clip-tests-r2.log": "f23053e3b41673239fa9793a3b61baba85ac4067733c43da8b638ff6df7e1a3f",
+    "ui-tests.log": "ad07c7f5d4ea6468ce335a2fb4d42a2c838f8886aa3eadb18c4226d2473288ce"
+  },
+  "remaining_native_skips": 3,
+  "evidence_scope": [
+    "declared geometry and bounds",
+    "bounded native preview rendering",
+    "actual image transport custody",
+    "synthetic stopped-job state machine and cost accounting"
+  ],
+  "not_verified": [
+    "formal production rollout",
+    "actual model source repair quality",
+    "continuous model video observation",
+    "audio quality",
+    "user artistic acceptance",
+    "hard per-job total input+output token cap"
+  ],
+  "scene_space_default_enabled": false,
+  "openspec_tasks_closed": [],
+  "wikiskill_published": false,
+  "paused_ink_film_restarted": false
+}
