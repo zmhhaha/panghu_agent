@@ -32,6 +32,34 @@ from .artifacts import freeze_files, frozen_manifest, unique_paths
 from .staging import ExecutionContext, stage_inputs
 from .transport import MAX_WORKER_WIRE_BYTES
 from .diagnostics import log_execution_failure
+from .worker_events import OUTPUT_FAILURE_STAGES, JSON_FAILURE_REASONS
+
+
+_SCHEMA_OUTPUT_CODES = frozenset({'reference_learning_protocol_invalid','reference_learning_result_binding_mismatch',
+    'reference_learning_input_binding_mismatch','reference_learning_source_changed','invalid_video_source',
+    'worker_output_invalid'})
+
+
+def _output_failure_diagnostic(stage, error):
+    """Fixed labels and numeric locations only; no exception/source strings."""
+    details = getattr(error, 'details', None)
+    details = details if type(details) is dict else {}
+    code = getattr(error, 'code', None)
+    diagnostic = dict(stage=stage if type(stage) is str and stage in OUTPUT_FAILURE_STAGES else 'unknown',
+        classification='handoff_failure')
+    if code == 'invalid_video_json' or isinstance(error, json.JSONDecodeError):
+        diagnostic['classification'] = 'invalid_json'
+        reason = details.get('reason')
+        diagnostic['reason'] = reason if type(reason) is str and reason in JSON_FAILURE_REASONS else 'strict_json'
+    elif type(code) is str and code in _SCHEMA_OUTPUT_CODES:
+        diagnostic['classification'] = 'invalid_output_contract'
+    elif isinstance(error, OSError):
+        diagnostic['classification'] = 'output_io_failure'
+    for key in ('line','column','offset'):
+        value = details.get(key, getattr(error, {'line':'lineno','column':'colno','offset':'pos'}[key], None))
+        if type(value) is int and 0 <= value <= 2**31-1:
+            diagnostic[key] = value
+    return diagnostic
 
 
 def _native_deadline(timestamp: float) -> datetime:
@@ -299,9 +327,30 @@ class WorkerHost:
         with self._guard:
             changed = deepcopy(self._state)
             events = changed['events']
-            if len(events) < 500:
+            if len(events) < 495:  # Reserve five fixed diagnostic events for a failed handoff.
                 events.append({'seq': len(events) + 1, 'type': 'engine.progress', 'payload': {'event': kind}})
                 self._commit(changed)
+
+    def _record_output_failure(self, stage, error):
+        diagnostic = _output_failure_diagnostic(stage, error)
+        with self._guard:
+            changed = deepcopy(self._state)
+            changed['output_failure'] = diagnostic
+            events = changed['events']
+            # These use the existing public event/phase/code/count vocabulary.
+            # Keep the signed WorkerResult and historical result identities intact.
+            payloads = [dict(event='output_validation_failed', phase=diagnostic['stage'],
+                code=diagnostic['classification'])]
+            if 'reason' in diagnostic:
+                payloads.append(dict(event='output_validation_reason', phase=diagnostic['stage'],
+                    code=diagnostic['reason']))
+            payloads.extend(dict(event='output_validation_location', phase=diagnostic['stage'],
+                code='json_'+key, count=diagnostic[key]) for key in ('line','column','offset') if key in diagnostic)
+            for payload in payloads:
+                if len(events) >= 500:
+                    break
+                events.append(dict(seq=len(events)+1, type='engine.progress', payload=payload))
+            self._commit(changed)
 
     def _execute(self, envelope):
         finished = threading.Event()
@@ -394,6 +443,10 @@ class WorkerHost:
             result = result.model_copy(update={'stop_receipt': receipt})
         except Exception as error:
             log_execution_failure('worker_host', stage, error)
+            try:
+                self._record_output_failure(stage, error)
+            except Exception:
+                pass  # Diagnostic persistence never changes stop/cleanup policy.
             # Output failure after proven stop is a failed handoff, not an
             # unresolved writer. It must not permanently consume the queue slot.
             if (not unmount_failed and type(native) is NativeOutcome
@@ -404,7 +457,7 @@ class WorkerHost:
                         context_released = True
                     from .diagnostics import SAFE_OUTPUT_CODES
                     code = getattr(error, 'code', None)
-                    result = WorkerResult(state='failed', error_code=(
+                    result = WorkerResult(state='failed', usage=native.usage, error_code=(
                         code if type(code) is str and code in SAFE_OUTPUT_CODES else 'worker_output_invalid'))
                     result = result.model_copy(update={'stop_receipt': sign_receipt(envelope, result,
                         self.receipt_key, native.resource_ids, self.clock())})

@@ -7,11 +7,11 @@ that cursor instead of appending the same engine events a second time.
 from __future__ import annotations
 
 from .contracts import ExecutionEnvelope, ServiceError
+from .worker_events import valid_worker_payload
 
 
 MAX_PAGE_EVENTS = 100
 MAX_WORKER_EVENTS = 500
-WORKER_EVENT_KINDS = frozenset({'pi_event', 'runtime_finished', 'engine_started', 'engine_progress'})
 
 
 def _invalid():
@@ -37,13 +37,11 @@ def _checked_page(page, envelope: ExecutionEnvelope, after: int, limit: int):
         if (type(item) is not dict or set(item) != {'seq', 'type', 'payload'}
                 or type(item['seq']) is not int or item['seq'] != sequence
                 or item['type'] != 'engine.progress'
-                or type(item['payload']) is not dict or set(item['payload']) != {'event'}
-                or type(item['payload']['event']) is not str
-                or item['payload']['event'] not in WORKER_EVENT_KINDS):
+                or not valid_worker_payload(item['payload'])):
             raise _invalid()
         # Construct new data rather than forwarding an untrusted nested object.
         checked.append({'seq': sequence, 'type': 'engine.progress',
-                        'payload': {'event': item['payload']['event']}})
+                        'payload': dict(item['payload'])})
     return checked, next_cursor, page['has_more']
 
 

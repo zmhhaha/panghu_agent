@@ -32,6 +32,20 @@ MAX_VISION = 2 * 1024 * 1024
 REMOTE_ACTIVE = frozenset({'queued', 'starting', 'running', 'cancelling'})
 
 
+def _safe_error_details(error):
+    """Expose only bounded classifier/location fields, never native error text."""
+    raw=getattr(error,'details',None)
+    if type(raw) is not dict:return {}
+    details={}
+    for key in ('phase','path','rule','reason'):
+        value=raw.get(key)
+        if type(value) is str and re.fullmatch(r'[A-Za-z0-9_./:-]{1,240}',value):details[key]=value
+    for key in ('line','column','offset'):
+        value=raw.get(key)
+        if type(value) is int and 0<=value<=2**31-1:details[key]=value
+    return dict(details=details) if details else {}
+
+
 def _text(value, maximum, *, empty=False):
     require(type(value) is str and (empty or bool(value.strip())) and len(value) <= maximum
             and not any((ord(c) < 32 and c not in '\n\r\t') or 0xD800 <= ord(c) <= 0xDFFF
@@ -703,6 +717,9 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             operation.update(status='failed', error='picture_learning_agent_' + job['state'])
             self._finish_operation(run, operation)
             run['error'] = dict(code=operation['error'])
+            cause=job.get('error_code')
+            if type(cause) is str and re.fullmatch(r'[a-z][a-z0-9_]{0,119}',cause):
+                run['error']['cause']=cause
             self._finish(run, 'agent_failed', 'failed')
             return
         try:
@@ -720,7 +737,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                 raise
             operation.update(status='failed', error=error.code)
             self._finish_operation(run, operation)
-            run['error'] = dict(code=error.code)
+            run['error'] = dict(code=error.code, **_safe_error_details(error))
             self._finish(run, 'invalid_result', 'failed')
             return
         operation.update(status='completed', result=result, observation_receipt=receipt)
@@ -1000,7 +1017,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                             self._agent(run, operation)
                     self._save(run)
             except ServiceError as error:
-                run['error'] = dict(code=error.code)
+                run['error'] = dict(code=error.code, **_safe_error_details(error))
                 active = (self.store.read('operations', owner, run['active_operation_id'])
                           if run['active_operation_id'] else None)
                 if active and active['status'] not in {'reserved', 'completed', 'failed', 'cancelled'}:

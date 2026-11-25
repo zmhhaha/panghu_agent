@@ -181,10 +181,55 @@ export function synthesizeSoundEvents(events,duration,sampleRate=48000){
  return wav;
 }
 
+export const METHOD_STAGE_TIMEOUTS=Object.freeze({
+ navigation:180000,project_ready:180000,seek:120000,screenshot:120000,
+ browser_launch:60000,browser_setup:60000,engine_check:60000,layout:60000,coverage:60000,media:180000,
+});
+
+// The adapter supplies the remaining execution deadline, excluding its cleanup
+// reserve. Convert it once to a monotonic budget; no frame resets that budget.
+export function createMethodRenderBudget({deadlineAtMs=Date.now()+3600000,
+ wallNow=Date.now,now=()=>performance.now(),onDiagnostic=()=>{}}={}){
+ if(!finite(deadlineAtMs)||typeof onDiagnostic!=='function')throw Error('method_deadline_invalid');
+ const started=now(),deadline=started+Math.min(3600000,deadlineAtMs-wallNow());
+ let stageStarted=started;
+ const state={schema:'video.method-render-diagnostics.v1',stage:'input',substage:null,
+  frame:null,page_errors:[],crashed:false,blocked:[],history:[]};
+ const snapshot=()=>({...state,page_errors:[...state.page_errors],blocked:[...state.blocked],
+  history:state.history.map(row=>({...row})),elapsed_ms:Math.max(0,Math.round(now()-started)),
+  stage_elapsed_ms:Math.max(0,Math.round(now()-stageStarted)),remaining_ms:Math.max(0,Math.floor(deadline-now()))});
+ const publish=()=>onDiagnostic(snapshot());
+ const timeout=cap=>{
+  if(!Number.isInteger(cap)||cap<1||cap>180000)throw Error('method_stage_timeout_invalid');
+  const remaining=Math.floor(deadline-now());
+  if(remaining<=0)throw Error('method_render_deadline_exceeded');
+  return Math.min(cap,remaining);
+ };
+ const substage=value=>{state.substage=value;publish();};
+ const run=async(stage,cap,operation)=>{
+  state.stage=stage;state.substage=null;stageStarted=now();publish();
+  let timer;
+  try{
+   const milliseconds=timeout(cap);
+   const result=await Promise.race([Promise.resolve().then(()=>operation(milliseconds)),new Promise((_,reject)=>{
+    timer=setTimeout(()=>reject(Error(deadline-now()<=1?'method_render_deadline_exceeded':'method_'+stage+'_timeout')),milliseconds);
+   })]);
+   state.history.push({stage,status:'completed',elapsed_ms:Math.max(0,Math.round(now()-stageStarted))});
+   return result;
+  }catch(error){
+   state.history.push({stage,status:'failed',elapsed_ms:Math.max(0,Math.round(now()-stageStarted))});
+   throw error;
+  }finally{clearTimeout(timer);state.history=state.history.slice(-32);publish();}
+ };
+ return {state,snapshot,publish,timeout,run,substage};
+}
+
 // Only trusted callers supply the browser and measured engine-runtime module.
 // Scene code receives neither, and never chooses file paths or observations.
 export async function captureMethodFrames({chromium,request,resources,root,engineRuntime=null,
- executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}){
+ executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist',
+ budget=createMethodRenderBudget()}){
+ const stage=(name,operation)=>budget.run(name,METHOD_STAGE_TIMEOUTS[name],operation);
  const drawingLibraries=validateDrawingLibraries(request,resources);
  const resourceAware=request.schema==='video.animation-method-render-request.v5';
  const authoringAware=request.schema==='video.animation-method-render-request.v4'||(resourceAware&&!!request.authoring_libraries);
@@ -220,14 +265,15 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
  await new Promise((done,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',done);});
  try{
   const origin='http://127.0.0.1:'+server.address().port;
-  browser=await chromium.launch({headless:true,executablePath,
+  browser=await stage('browser_launch',timeout=>chromium.launch({headless:true,executablePath,timeout,
    args:extended?engineRuntime.browserLaunchArgs(engine):
-    ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-background-networking']});
-  const context=await browser.newContext({viewport:{width:c.width,height:c.height},
-   deviceScaleFactor:1,serviceWorkers:'block',acceptDownloads:false});
-  if(extended)await engineRuntime.installEngineGuard(context,engine);
-  const blocked=[],errors=[],scripts=new Set(),loadedPNG=new Set();
-  await context.route('**/*',async route=>{
+    ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-background-networking']}));
+  const context=await stage('browser_setup',()=>browser.newContext({viewport:{width:c.width,height:c.height},
+   deviceScaleFactor:1,serviceWorkers:'block',acceptDownloads:false}));
+  if(extended)await stage('browser_setup',()=>engineRuntime.installEngineGuard(context,engine));
+  const blocked=budget.state.blocked,errors=budget.state.page_errors,scripts=new Set(),loadedPNG=new Set();
+  const assertScene=()=>{if(errors.length||blocked.length)throw Error('method_scene_failed_or_blocked');};
+  await stage('browser_setup',()=>context.route('**/*',async route=>{
    const url=new URL(route.request().url());
    if(url.origin===origin&&resources.has(url.pathname)&&!url.search&&route.request().method()==='GET'){
     if(route.request().resourceType()==='script')scripts.add(url.pathname);
@@ -235,38 +281,40 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     await route.continue();
    }
    else{if(blocked.length<32)blocked.push(url.protocol+'//'+url.hostname);await route.abort();}
-  });
-  if(context.routeWebSocket)await context.routeWebSocket('**/*',socket=>{
+  }));
+  if(context.routeWebSocket)await stage('browser_setup',()=>context.routeWebSocket('**/*',socket=>{
    if(blocked.length<32)blocked.push('websocket');socket.close();
-  });
-  const page=await context.newPage();page.setDefaultTimeout(10000);
-  const security=await context.newCDPSession(page);
-  await security.send('Log.enable');
+  }));
+  const page=await stage('browser_setup',()=>context.newPage());page.setDefaultTimeout(180000);
+  const security=await stage('browser_setup',()=>context.newCDPSession(page));
+  await stage('browser_setup',()=>security.send('Log.enable'));
   let drawingFunctions = [];
   if (drawingLibraries) {
-   await security.send('Debugger.enable'); await security.send('Profiler.enable');
-   await security.send('Profiler.startPreciseCoverage', {callCount:true,detailed:true});
+    await stage('browser_setup',async()=>{
+     await security.send('Debugger.enable'); await security.send('Profiler.enable');
+     await security.send('Profiler.startPreciseCoverage', {callCount:true,detailed:true});
+    });
   }
   security.on('Log.entryAdded',({entry})=>{
    if(entry.source==='security'&&entry.level==='error'&&errors.length<32)
     errors.push('method_security_policy_violation');
   });
   page.on('pageerror',error=>{if(errors.length<32)errors.push(String(error).slice(0,1000));});
-  page.on('crash',()=>{if(errors.length<32)errors.push('method_page_crashed');});
+  page.on('crash',()=>{budget.state.crashed=true;if(errors.length<32)errors.push('method_page_crashed');});
   page.on('popup',popup=>{if(errors.length<32)errors.push('method_popup_forbidden');popup.close();});
   page.on('dialog',dialog=>dialog.dismiss());
-  const ready=async()=>{
+  const ready=()=>stage('project_ready',async timeout=>{
    if(projectAware){
     await projectRuntime.installHyperFramesProject(page,{project,runtimePath:coreRuntime.runtimePath,
-     legacyBridge:request.legacy_bridge});return;
+     legacyBridge:request.legacy_bridge,timeoutMs:timeout,onStage:budget.substage});return;
    }
    await page.evaluate(async()=>{
     await document.fonts.ready;await window.__animationExperiment?.ready;
     if(typeof window.__animationExperiment?.seek!=='function')throw Error('method_seek_missing');
    });
-  };
-  await page.goto(origin+'/'+(projectAware?project.entry:'scene.html'),{waitUntil:'networkidle',timeout:20000});
-  await ready();
+  });
+  await stage('navigation',timeout=>page.goto(origin+'/'+(projectAware?project.entry:'scene.html'),{waitUntil:'networkidle',timeout}));
+  await ready();assertScene();
   if(resourceAware&&Object.keys(MANIM_HELPERS).some(name=>!scripts.has('/assets/'+name)))
    throw Error('method_generated_resource_helper_not_loaded');
   if(engine==='three'&&!scripts.has('/assets/three.module.min.js'))throw Error('method_three_module_not_loaded');
@@ -276,8 +324,10 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   if(extended){
    checkRuntime=async()=>{engineObservation=await engineRuntime.verifyPageEngine(page,engine);};
   }else{
-   const cdp=await context.newCDPSession(page),tree=await cdp.send('Page.getFrameTree');
-   const world=await cdp.send('Page.createIsolatedWorld',{frameId:tree.frameTree.frame.id,worldName:'trusted-method-runtime'});
+   const cdp=await stage('browser_setup',()=>context.newCDPSession(page));
+   const tree=await stage('browser_setup',()=>cdp.send('Page.getFrameTree'));
+   const world=await stage('browser_setup',()=>cdp.send('Page.createIsolatedWorld',{
+    frameId:tree.frameTree.frame.id,worldName:'trusted-method-runtime'}));
    checkRuntime=async()=>{
     const result=await cdp.send('Runtime.evaluate',{contextId:world.executionContextId,returnByValue:true,
      expression:"document.querySelectorAll('canvas,audio,video,iframe,object,embed').length"});
@@ -287,12 +337,15 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   mkdirSync(join(root,'frames'));
   const frames=[];let evidenceBytes=0;
   const capture=async(time,name,{seek=true}={})=>{
+   budget.state.frame={index:Math.round(time*24),timestamp_seconds:time,name};
    if(seek){
-    if(projectAware)await projectRuntime.seekHyperFramesProject(page,time);
-    else await page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time);
+    await stage('seek',async timeout=>{
+     if(projectAware)await projectRuntime.seekHyperFramesProject(page,time,{timeoutMs:timeout});
+     else await page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time);
+    });
    }
-   await checkRuntime();
-   if(projectAware)await page.evaluate(()=>{
+   assertScene();await stage('engine_check',checkRuntime);assertScene();
+   if(projectAware)await stage('layout',()=>page.evaluate(()=>{
     if(document.getAnimations().some(animation=>animation.playState==='running'))
      throw Error('method_autonomous_animation');
     // Rebuild SVG layout before painting just as the formal creative host
@@ -303,12 +356,13 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     root.style.setProperty('display','none','important');root.getBoundingClientRect();
     if(prior)root.style.setProperty('display',prior,priority);else root.style.removeProperty('display');
     root.getBoundingClientRect();
-   });
-   const bytes=await page.screenshot({type:'jpeg',quality:80,timeout:10000});
+   }));
+   assertScene();
+   const bytes=await stage('screenshot',timeout=>page.screenshot({type:'jpeg',quality:80,timeout}));
    evidenceBytes+=bytes.length;
    if(evidenceBytes>request.max_evidence_bytes||bytes.length>4*1024*1024)throw Error('method_evidence_budget_exceeded');
    writeFileSync(join(root,'frames',name),bytes);
-   if(errors.length||blocked.length)throw Error('method_scene_failed_or_blocked');
+   assertScene();
    return {name,timestamp_seconds:time,sha256:hash(bytes),bytes:bytes.length};
   };
   for(let i=0;i<count;i++)frames.push(await capture(i/24,'frame-'+String(i).padStart(6,'0')+'.jpg'));
@@ -330,15 +384,15 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
    await new Promise(done=>setTimeout(done,50));
    await probe(middle,'seek-middle-idle.jpg','idle',{seek:false});
    await probe(0,'seek-initial-repeat.jpg','repeat');
-   if (drawingLibraries) drawingFunctions = await collectDrawingExecution(security, origin, drawingFunctions);
-   await page.reload({waitUntil:'networkidle',timeout:20000});await ready();
+   if (drawingLibraries) drawingFunctions = await stage('coverage',()=>collectDrawingExecution(security, origin, drawingFunctions));
+   await stage('navigation',timeout=>page.reload({waitUntil:'networkidle',timeout}));await ready();assertScene();
    await probe(middle,'seek-middle-reload.jpg','reload');
    await probe(0,'seek-initial-reload.jpg','reload');
    seekChecks={schema:'video.animation-engine-seek-checks.v1',absolute_seek:true,
     non_monotonic_seek_verified:true,repeated_seek_verified:true,idle_frame_verified:true,
     fresh_load_verified:true,probes};
   }
-  if (drawingLibraries) drawingFunctions = await collectDrawingExecution(security, origin, drawingFunctions);
+  if (drawingLibraries) drawingFunctions = await stage('coverage',()=>collectDrawingExecution(security, origin, drawingFunctions));
   return {frames,frame_count:count,reverse_seek_verified:true,
    ...(drawingLibraries?{drawing_library_observation:{schema:'video.learning-drawing-library-observation.v1',
     scope:'loaded_scripts_not_api_calls_or_visual_application',drawing_libraries:drawingLibraries,
@@ -352,13 +406,20 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     authoring_libraries:authoringLibraries,loaded_scripts:[...scripts].sort(),
     used_libraries:scripts.has('/assets/anime_timeline.mjs')?['animejs']:[]}}:{}),
    ...(extended?{engine_observation:engineObservation,seek_checks:seekChecks}:{}),
-   ...(projectAware?{project_runtime:{...(await page.evaluate(()=>({...window.__trustedHyperFramesProject.state}))),
+   ...(projectAware?{project_runtime:{...(await stage('engine_check',()=>page.evaluate(()=>({...window.__trustedHyperFramesProject.state})))),
     schema:'video.hyperframes-project-runtime-proof.v1',
     project_id:project.project_id,project_sha256:request.project_sha256,
     version:coreRuntime.version,core_sha256:coreRuntime.core_sha256,
     seek_protocol:'hyperframes-core-renderSeek-exact',legacy_bridge:request.legacy_bridge} }:{} )};
+ }catch(error){
+  error.methodRenderDiagnostics=budget.snapshot();budget.publish();throw error;
  }finally{
-  if(browser)await browser.close().catch(()=>{});
+  if(browser){
+   let timer;
+   try{await Promise.race([browser.close().catch(()=>{}),new Promise(done=>{timer=setTimeout(done,2000);})]);}
+   finally{clearTimeout(timer);}
+  }
+  server.closeAllConnections();
   await new Promise(done=>server.close(done));
  }
 }
@@ -366,13 +427,18 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
 async function main(){
  const root='/work',input='/input';
  const receipt={schema:'video.animation-method-render-receipt.v1',status:'starting'};
+ let budget;
  const read=(path,max)=>{const st=lstatSync(path);if(!st.isFile()||st.isSymbolicLink()||st.size>max)throw Error('method_file_invalid');return readFileSync(path);};
- const run=(command,args)=>{
-  const result=spawnSync(command,args,{timeout:180000,maxBuffer:2*1024*1024,encoding:'utf8'});
+ const run=(command,args)=>budget.run('media',METHOD_STAGE_TIMEOUTS.media,timeout=>{
+  const result=spawnSync(command,args,{timeout,maxBuffer:2*1024*1024,encoding:'utf8'});
   if(result.error||result.status!==0)throw Error('method_media_command_failed');
   return result.stdout;
- };
+ });
  try{
+  const deadline=process.env.ANIMATION_METHOD_DEADLINE_AT_MS;
+  budget=createMethodRenderBudget({...(deadline===undefined?{}:{deadlineAtMs:Number(deadline)}),
+   onDiagnostic:value=>{receipt.diagnostics=value;writeFileSync(join(root,'render-progress.json'),JSON.stringify(value));}});
+  budget.timeout(1);
   const raw=read(join(input,'request.json'),256*1024),request=JSON.parse(raw),c=request.constraints;
   // The trusted adapter authenticates the exact UTF-8 request bytes through
   // this environment value. Do not reserialize parsed floats here: Python and
@@ -444,33 +510,34 @@ async function main(){
   }
   if(resourceAware)validateGeneratedResources(request,allowed);
   const {chromium}=createRequire('/opt/renderer/package.json')('playwright-core');
-  const captured=await captureMethodFrames({chromium,request,resources:allowed,root,engineRuntime});
+  const captured=await captureMethodFrames({chromium,request,resources:allowed,root,engineRuntime,budget});
   const video=request.sound_events.length?'video.mp4':'output.mp4';
-  run('ffmpeg',['-v','error','-nostdin','-y','-framerate','24','-i',join(root,'frames/frame-%06d.jpg'),
+  await run('ffmpeg',['-v','error','-nostdin','-y','-framerate','24','-i',join(root,'frames/frame-%06d.jpg'),
    '-frames:v',String(count),'-c:v','libx264','-preset','veryfast','-crf','23',
    '-pix_fmt','yuv420p','-movflags','+faststart',join(root,video)]);
   let audioSha=null;
   if(request.sound_events.length){
    const wav=synthesizeSoundEvents(request.sound_events,c.duration_seconds);
    writeFileSync(join(root,'sound-effects.wav'),wav);audioSha=hash(wav);
-   run('ffmpeg',['-v','error','-nostdin','-y','-i',join(root,video),'-i',join(root,'sound-effects.wav'),
+   await run('ffmpeg',['-v','error','-nostdin','-y','-i',join(root,video),'-i',join(root,'sound-effects.wav'),
     '-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','128k',
     '-t',String(c.duration_seconds),'-movflags','+faststart',join(root,'output.mp4')]);
    unlinkSync(join(root,video));
   }
   const bytes=read(join(root,'output.mp4'),request.max_media_bytes);
-  const probe=JSON.parse(run('ffprobe',['-v','error','-show_streams','-show_format','-of','json',join(root,'output.mp4')]));
+  const probe=JSON.parse(await run('ffprobe',['-v','error','-show_streams','-show_format','-of','json',join(root,'output.mp4')]));
   const videos=probe.streams.filter(s=>s.codec_type==='video'),audios=probe.streams.filter(s=>s.codec_type==='audio');
   if(videos.length!==1||audios.length!==(audioSha?1:0)||probe.streams.length!==(audioSha?2:1)
    ||videos[0].width!==c.width||videos[0].height!==c.height
    ||Math.abs(Number(probe.format.duration)-c.duration_seconds)>1/24+.001)throw Error('method_media_probe_invalid');
-  run('ffmpeg',['-v','error','-nostdin','-i',join(root,'output.mp4'),'-f','null','-']);
+  await run('ffmpeg',['-v','error','-nostdin','-i',join(root,'output.mp4'),'-f','null','-']);
   Object.assign(receipt,{status:'rendered',...captured,
    output_sha256:hash(bytes),output_bytes:bytes.length,duration_seconds:c.duration_seconds,
    audio_sha256:audioSha,sound_events_sha256:request.sound_events_sha256,
    reverse_seek_verified:true,decode_verified:true,probe,
    whole_video_watched:false,audio_observed:false,expressive_quality:'not_evaluated'});
- }catch(error){receipt.status='failed';receipt.error=String(error).slice(0,2000);process.exitCode=1;}
+ }catch(error){receipt.status='failed';receipt.error=String(error).slice(0,2000);
+  if(budget)receipt.diagnostics=budget.snapshot();process.exitCode=1;}
  finally{
   writeFileSync(join(root,'render-receipt.json'),JSON.stringify(receipt,null,2));
  }

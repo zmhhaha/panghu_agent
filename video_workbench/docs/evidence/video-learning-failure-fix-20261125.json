@@ -1,0 +1,46 @@
+{
+  "schema": "video.learning-failure-fix-validation.v1",
+  "date": "2026-11-25",
+  "base_commit": "989d0407c9d1491ac09fe9151542a300edcebfbd",
+  "branch": "codex/fix-video-learning-failures-20261125",
+  "checks": {
+    "runtime_python": {
+      "passed": 162,
+      "scope": "six delegated runtime/renderer/import/repair files"
+    },
+    "runtime_node": {
+      "passed": 22,
+      "scope": "bounded host stage deadlines and HyperFrames helper"
+    },
+    "author_and_worker_diagnostics": {
+      "passed": 118,
+      "skipped": 1,
+      "skip_reason": "Windows symlink permission"
+    },
+    "scene_learning_compatibility": {
+      "passed": 29
+    },
+    "recovery_and_video_service": {
+      "passed": 27,
+      "log": "recovery-tests-r2.log"
+    },
+    "final_recovery_and_http": {
+      "passed": 11,
+      "log": "final-recovery-tests.log"
+    }
+  },
+  "local_actual_source_checks": {
+    "source_and_js_syntax": "all five passed",
+    "inverse_and_neon": "one-frame software WebGL probes passed with original source; not original ARM container limits",
+    "pixel": "source bytes unchanged; strict corrected metadata; repeated/reverse seeks passed",
+    "ink": "operator-reconstructed JSON; actual loaded pinned library render and repeated/reverse seeks passed",
+    "halo": "global top identifier collision reproduced; minimal rename passed and pixel hashes match isolated-scope control"
+  },
+  "deployment_status": "pending",
+  "complete_server_recovery_status": "pending",
+  "worker_admission_status": "not_inherited_new_image_requires_separate_admission",
+  "old_history_mutated": false,
+  "learning_transfer_started": false,
+  "wikiskill_published": false,
+  "new_model_calls_for_source_repair": 0
+}

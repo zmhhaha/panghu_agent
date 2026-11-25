@@ -79,10 +79,10 @@ def _artifact(handler, value):
     handler._send(path.read_bytes(), raw=True, mime=mime)
 
 
-def _send_detail(handler, value):
+def _send_detail(handler, value, status=200):
     raw = json.dumps(value,ensure_ascii=False,allow_nan=False,separators=(',', ':')).encode('utf-8')
     _require(len(raw) <= MAX_DETAIL, 'video_learning_detail_too_large', 413)
-    handler._send(raw,raw=True,mime='application/json; charset=utf-8')
+    handler._send(raw,status,raw=True,mime='application/json; charset=utf-8')
 
 
 def route_private(handler, owner, method, path, body=None):
@@ -121,6 +121,8 @@ def route_private(handler, owner, method, path, body=None):
             handler._send(service.stop_analysis(owner, pieces[1], pieces[3]))
         elif pieces == ['projects']:
             handler._send(service.start(owner, body), 202)
+        elif len(pieces) == 3 and pieces[0] == 'projects' and pieces[2] == 'recover-source':
+            _send_detail(handler, service.recover_source(owner, pieces[1], body),202)
         elif len(pieces) == 3 and pieces[0] == 'projects' and pieces[2] in {'experiments','stop','adopt'}:
             if pieces[2] == 'experiments':
                 value = service.experiment(owner, pieces[1], body)

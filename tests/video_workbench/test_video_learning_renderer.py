@@ -21,7 +21,8 @@ def document():
 
 
 def source():
-    return dict(SOURCE,source_sha256=protocol.source_sha256(SOURCE))
+    value=deepcopy(SOURCE)
+    return dict(value,source_sha256=protocol.source_sha256(value))
 
 
 class VideoExecution(SyntheticExecution):

@@ -55,7 +55,8 @@ PUBLIC_RENDER_FAILURE_CODES = frozenset({
     'animation_method_render_deadline_insufficient', 'animation_method_render_exit_invalid',
     'animation_method_render_image_changed',
     'method_absolute_seek_mismatch', 'method_reverse_seek_mismatch',
-    'method_frame_capture_timeout', 'method_scene_prepare_failed',
+    'method_frame_capture_timeout', 'method_scene_prepare_failed', 'method_scene_prepare_timeout',
+    'method_render_deadline_exceeded',
 })
 
 
@@ -104,6 +105,22 @@ def _failed_receipt_observation(root, binding, outcome):
     if error in exact:
         return dict(code=exact[error], phase='seek_check', origin='legacy_host_report',
                     receipt_sha256=hashlib.sha256(raw).hexdigest())
+    diagnostics = receipt.get('diagnostics')
+    if type(diagnostics) is dict and diagnostics.get('schema') == 'video.method-render-diagnostics.v1':
+        stage = diagnostics.get('stage')
+        codes = {
+            ('Error: method_screenshot_timeout', 'screenshot'): ('method_frame_capture_timeout', 'capture'),
+            ('Error: method_project_ready_timeout', 'project_ready'): ('method_scene_prepare_timeout', 'prepare'),
+            ('Error: hyperframes_project_ready_timeout', 'project_ready'): ('method_scene_prepare_timeout', 'prepare'),
+            ('Error: method_navigation_timeout', 'navigation'): ('method_scene_prepare_timeout', 'prepare'),
+        }
+        observed = codes.get((error, stage)) if type(stage) is str else None
+        if observed is not None:
+            return dict(code=observed[0], phase=observed[1], origin='host_stage_report',
+                        receipt_sha256=hashlib.sha256(raw).hexdigest())
+        if error == 'Error: method_render_deadline_exceeded':
+            return dict(code='method_render_deadline_exceeded', phase='deadline', origin='host_stage_report',
+                        receipt_sha256=hashlib.sha256(raw).hexdigest())
     # Older hosts recorded only String(error). Match the complete known host
     # shape, never a substring in an authored stack/log, and report the symptom
     # only. A timeout does not establish hardware failure or excessive shader cost.
@@ -129,6 +146,13 @@ def _failure_diagnostic(root, binding, outcome, operation_id, proof):
     observed = _failed_receipt_observation(root, binding, outcome)
     code = observed['code'] if observed else public_render_failure_code(outcome.get('error'))
     categories = {
+        'method_scene_prepare_timeout': ('scene_prepare_timeout',
+            'The render host reached a finite scene preparation deadline.',
+            ['Preserve the source and inspect the recorded preparation substage and browser errors.',
+             'A readiness timeout does not establish a source defect or resource exhaustion.']),
+        'method_render_deadline_exceeded': ('render_deadline_exceeded',
+            'The render host exhausted the remaining total execution deadline.',
+            ['Preserve the original source and inspect recorded stage timings before choosing recovery.']),
         'method_frame_capture_timeout': ('frame_capture_timeout',
             'The render host reported a timeout while capturing a frame.',
             ['Preserve the original source and failure evidence; this timeout alone does not authorize source repair or visual simplification.',
@@ -157,7 +181,8 @@ def _failure_diagnostic(root, binding, outcome, operation_id, proof):
     return dict(schema='video.animation-render-failure.v1', category=category, code=code,
         phase=observed['phase'] if observed else 'unknown', summary=summary, guidance=guidance,
         source_repair_recommended=bool(observed and code in categories
-            and code != 'method_frame_capture_timeout' and stopped),
+            and code not in {'method_frame_capture_timeout', 'method_scene_prepare_timeout',
+                             'method_render_deadline_exceeded'} and stopped),
         operation_id=operation_id, source_sha256=binding['source_sha256'],
         input_sha256=binding['input_sha256'], evidence_sha256=proof,
         receipt_sha256=observed['receipt_sha256'] if observed else None,
@@ -218,9 +243,12 @@ def execute_method_render(directory):
     if plan.get('deadline_at') is not None:
         execution_seconds = min(execution_seconds, plan['deadline_at'] - time.time())
     deadline = began + max(0, execution_seconds)
-    run_deadline = deadline - 15
+    # Preserve the existing fifteen-second cleanup reserve plus a separate
+    # bounded final-state inspection before removing the container.
+    run_deadline = deadline - 18
     image_id = container_id = None
     created, error = False, None
+    command_exit_code, container_state = None, None
     cleanup = dict(status='not_created', container_id=None)
     try:
         _require(execution_seconds >= 30, 'animation_method_render_deadline_insufficient')
@@ -245,6 +273,7 @@ def execute_method_render(directory):
         runtime_mount = [argument for path in runtime_files for argument in
                          ('--mount', 'type=bind,source=' + str(path)
                           + ',target=/opt/renderer/' + path.name + ',readonly')]
+        host_deadline_ms = math.floor((time.time() + max(0, run_deadline - time.monotonic())) * 1000)
         arguments = ['container', 'create', '--name', name,
             '--label', docker._OWNER + '=' + token, '--label', docker._CAPTURE + '=' + request['identity'],
             '--pull=never', '--network=none', '--read-only', '--user=10001:10001',
@@ -253,6 +282,7 @@ def execute_method_render(directory):
             '--restart=no', '--log-driver=none', '--stop-timeout=3', '--init', '--workdir=/work',
             '--env', 'ANIMATION_METHOD_IMAGE_DIGEST=' + plan['image_digest'],
             '--env', 'ANIMATION_METHOD_REQUEST_SHA256=' + hashlib.sha256(request_raw).hexdigest(),
+            '--env', 'ANIMATION_METHOD_DEADLINE_AT_MS=' + str(host_deadline_ms),
             '--mount', 'type=bind,source=' + str(root / 'input') + ',target=/input,readonly',
             '--mount', 'type=bind,source=' + str(root / 'host.mjs')
                 + ',target=/opt/renderer/animation_method_host.mjs,readonly',
@@ -266,6 +296,8 @@ def execute_method_render(directory):
             'animation_method_render_container_identity_invalid')
         completed = docker._command(['container', 'start', '--attach', container_id],
             docker._remaining(run_deadline, plan['timeout_seconds']), log_path=root / 'render.log')
+        if type(completed.get('code')) is int:
+            command_exit_code = completed['code']
         _require(completed['code'] == 0, 'animation_method_render_container_failed')
         final = docker._container(container_id, run_deadline)
         _require(docker._owned(final, name=name, token=token, capture=request['identity'],
@@ -276,6 +308,21 @@ def execute_method_render(directory):
         error = str(exc) if isinstance(exc, (ServiceError, ValueError, TimeoutError)) else type(exc).__name__
     finally:
         if created:
+            # Keep only owner-verified exit fields. Never retain inspect's env,
+            # command, labels, ownership token or other container configuration.
+            try:
+                observed = docker._container(container_id or name, min(deadline, time.monotonic() + 3))
+                if observed is None:
+                    container_state = dict(status='absent')
+                elif docker._owned(observed, name=name, token=token, capture=request['identity'],
+                        image_id=image_id, container_id=container_id):
+                    container_state = dict(status='observed', **{key: observed[key]
+                        for key, kind in (('running', bool), ('exit_code', int), ('oom_killed', bool))
+                        if type(observed.get(key)) is kind})
+                else:
+                    container_state = dict(status='identity_mismatch')
+            except BaseException:
+                container_state = dict(status='unavailable')
             try:
                 cleanup = docker._cleanup(name=name, token=token, capture=request['identity'],
                     image_id=image_id, container_id=container_id, deadline=deadline)
@@ -289,6 +336,7 @@ def execute_method_render(directory):
         container_name=name, owner_token=token, cleanup=cleanup,
         status='failed' if error else 'rendered', error=error,
         execution_timeout_seconds=max(0, execution_seconds),
+        command_exit_code=command_exit_code, container_state=container_state,
         started_at=start['started_at'], ended_at=now(), automatic_retry=False)
     _write(root / 'render-outcome.json', canonical_bytes(outcome))
     return outcome

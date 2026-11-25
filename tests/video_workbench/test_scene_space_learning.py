@@ -164,3 +164,71 @@ def test_occlusion_requires_explicit_drawing_order_as_well_as_consistent_depth()
     assert validate_world(world)['objects'][1]['order']==1
     front['depth']['value']=-1
     with pytest.raises(ServiceError,match='scene_world_occlusion_depth_invalid'):validate_world(world)
+
+
+def test_bad_reference_digest_reports_exact_field_without_rewriting_or_echoing_value():
+    value=carrier(world=False)
+    secret='PRIVATE_SOURCE_TEXT_DO_NOT_ECHO'
+    value['source']['references'][0]['sha256']=secret
+    original=deepcopy(value)
+    with pytest.raises(ServiceError) as caught:validate_scene_method(value)
+    assert caught.value.code=='scene_space_method_invalid'
+    assert caught.value.details==dict(path='/method/scene_space/source/references/0/sha256',rule='sha256')
+    assert secret not in json.dumps(caught.value.details)
+    assert value==original
+
+
+def test_wrong_but_well_formed_digest_remains_rejected_with_a_precise_location():
+    value=carrier(world=False)
+    with pytest.raises(ServiceError) as caught:
+        validate_scene_method(value,source_refs=[dict(id='reference-1',sha256='b'*64)])
+    assert caught.value.code=='scene_space_method_source_changed'
+    assert caught.value.details==dict(path='/method/scene_space/source/references/0/sha256',rule='frozen_source_identity')
+
+
+def test_supplied_baseline_citation_must_also_be_in_the_methods_bound_source_closure():
+    value=carrier(world=False)
+    offered=[dict(id='reference-1',sha256='a'*64),dict(id='baseline-1',sha256='b'*64)]
+    value['stages'][0]['evidence_frame_ids']=['reference-1','baseline-1']
+    with pytest.raises(ServiceError) as caught:
+        validate_scene_method(value,source_refs=offered,frame_ids=['reference-1','baseline-1'])
+    assert caught.value.code=='scene_space_method_evidence_frame_changed'
+    assert caught.value.details==dict(path='/method/scene_space/stages/0/evidence_frame_ids/1',rule='source_closure')
+    # Explicitly declaring the actually supplied baseline is valid; the host
+    # never drops the citation or fabricates a digest to make it pass.
+    value['source']['references'].append(offered[1])
+    value['source']['frame_ids'].append('baseline-1')
+    assert validate_scene_method(value,source_refs=offered,frame_ids=['reference-1','baseline-1'])['stages'][0]['evidence_frame_ids']==['reference-1','baseline-1']
+
+
+def test_nested_world_bounds_failure_has_a_bounded_method_location():
+    value=carrier(world=False)
+    value['world']=scene_method_guidance('static_image')['structural_example']['world']
+    value['world']['objects'][0]['transform']['x']=60
+    with pytest.raises(ServiceError) as caught:validate_scene_method(value)
+    assert caught.value.code=='scene_world_object_outside'
+    assert caught.value.details==dict(path='/method/scene_space/world/objects/0',rule='nested_contract')
+    assert len(caught.value.details['path'])<=240
+    # Intentional overflow still needs the existing explicit declaration.
+    value['world']['objects'][0].update(allow_overflow=True,overflow_reason='Intentional partial object at the edge.')
+    assert validate_scene_method(value)['world']['objects'][0]['allow_overflow'] is True
+
+
+def test_numeric_object_id_cannot_change_a_structural_error_index():
+    value=carrier(world=False)
+    value['world']=scene_method_guidance('static_image')['structural_example']['world']
+    second=deepcopy(value['world']['objects'][0]);second['id']='0'
+    value['world']['objects'].append(second)
+    value['world']['objects'][0]['bounds']['width']=False
+    with pytest.raises(ServiceError) as caught:validate_scene_method(value)
+    assert caught.value.code=='scene_world_number_invalid'
+    assert caught.value.details['path']=='/method/scene_space/world/objects/0/bounds/width'
+
+
+def test_nested_plan_world_error_does_not_claim_a_world_path_directly_under_plan():
+    value=carrier(world=False)
+    value['plan']=scene_method_guidance('static_image')['structural_example']['plan']
+    value['plan']['worlds'][0]['objects'][0]['bounds']['width']=False
+    with pytest.raises(ServiceError) as caught:validate_scene_method(value)
+    assert caught.value.code=='scene_world_number_invalid'
+    assert caught.value.details==dict(path='/method/scene_space/plan',rule='nested_contract')

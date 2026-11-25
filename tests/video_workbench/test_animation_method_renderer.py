@@ -321,6 +321,63 @@ def test_container_adapter_grants_frozen_input_read_access_and_bounds_actual_tim
     assert (root / 'host.mjs', False) in ownership
     assert (root / 'work', True) in ownership
     assert len(calls) == 2
+    create = calls[-1]
+    host_deadline = next(item for item in create if item.startswith('ANIMATION_METHOD_DEADLINE_AT_MS='))
+    deadline_ms = int(host_deadline.split('=', 1)[1])
+    assert renderer.time.time() * 1000 < deadline_ms <= (plan['deadline_at'] - 18) * 1000 + 5
+
+
+@pytest.mark.parametrize('failure', ['exit', 'timeout', 'unowned', 'inspect'])
+def test_container_failure_retains_only_verified_exit_state_before_cleanup(tmp_path, monkeypatch, failure):
+    root = tmp_path / 'failed-launch'
+    (root / 'input').mkdir(parents=True)
+    (root / 'host.mjs').write_bytes(b'// frozen fixture host')
+    request = dict(identity='f' * 64)
+    (root / 'input/request.json').write_bytes(canonical_bytes(request))
+    plan = dict(directory=str(root), image=IMAGE, repository='registry.example/renderer',
+        image_digest='sha256:' + 'a' * 64, request_sha256=digest(request), timeout_seconds=60)
+    (root / 'render-plan.json').write_bytes(canonical_bytes(plan))
+    monkeypatch.setattr(renderer.sys, 'platform', 'linux')
+    monkeypatch.setattr(renderer.docker, '_ownership', lambda *args, **kwargs: None)
+    monkeypatch.setattr(renderer.docker, '_checked', lambda args, deadline:
+        json.dumps(dict(image_id='sha256:' + 'b' * 64,
+            repo_digests=['registry.example/renderer@sha256:' + 'a' * 64]))
+        if args[:2] == ['image', 'inspect'] else 'c' * 64)
+    events = []
+
+    def inspect(*args):
+        events.append('inspect')
+        if len(events) > 1 and failure == 'inspect':
+            raise RuntimeError('must-not-copy-private-inspect-error')
+        return dict(running=False, exit_code=137, oom_killed=True,
+            env=['TOKEN=must-not-copy'], owner='must-not-copy')
+
+    def owned(*args, **kwargs):
+        return not (len(events) > 1 and failure == 'unowned')
+
+    def command(*args, **kwargs):
+        if failure == 'timeout':
+            raise TimeoutError('animation_lab_executor_capture_timeout')
+        return dict(code=137, out='must-not-copy', err='must-not-copy')
+
+    def cleanup(**kwargs):
+        events.append('cleanup')
+        return dict(status='removed_and_confirmed_absent', container_id='c' * 64)
+
+    monkeypatch.setattr(renderer.docker, '_container', inspect)
+    monkeypatch.setattr(renderer.docker, '_owned', owned)
+    monkeypatch.setattr(renderer.docker, '_command', command)
+    monkeypatch.setattr(renderer.docker, '_cleanup', cleanup)
+    result = renderer.execute_method_render(root)
+    assert result['status'] == 'failed' and events == ['inspect', 'inspect', 'cleanup']
+    assert result['automatic_retry'] is False
+    assert result['command_exit_code'] == (None if failure == 'timeout' else 137)
+    assert result['cleanup']['status'] == 'removed_and_confirmed_absent'
+    if failure in {'exit', 'timeout'}:
+        assert result['container_state'] == dict(status='observed', running=False, exit_code=137, oom_killed=True)
+    else:
+        assert result['container_state'] == dict(status='identity_mismatch' if failure == 'unowned' else 'unavailable')
+    assert b'must-not-copy' not in canonical_bytes(result)
 
 
 def test_commission_deadline_freezes_first_timeout_without_breaking_replay(adapter, monkeypatch):
@@ -459,7 +516,7 @@ def test_unbound_or_invalid_failed_receipt_cannot_supply_a_public_reason(adapter
     assert execution.calls == 1
 
 
-def install_failed_report(adapter, monkeypatch, error, *, failure=None, cleanup_mismatch=False):
+def install_failed_report(adapter, monkeypatch, error, *, failure=None, cleanup_mismatch=False, diagnostics=None):
     value, execution = adapter
     execution.failure = 'known'
 
@@ -478,11 +535,35 @@ def install_failed_report(adapter, monkeypatch, error, *, failure=None, cleanup_
             image_digest=binding['image_digest'], host_sha256=request['host_sha256'], error=error)
         if failure is not None:
             receipt['failure'] = failure
+        if diagnostics is not None:
+            receipt['diagnostics'] = diagnostics
         (root / 'work/render-receipt.json').write_bytes(canonical_bytes(receipt))
         return outcome
 
     monkeypatch.setattr(renderer, 'execute_method_render', failed_render)
     return value, execution
+
+
+@pytest.mark.parametrize('error,stage,expected,phase', [
+    ('Error: method_screenshot_timeout', 'screenshot', 'method_frame_capture_timeout', 'capture'),
+    ('Error: method_project_ready_timeout', 'project_ready', 'method_scene_prepare_timeout', 'prepare'),
+    ('Error: hyperframes_project_ready_timeout', 'project_ready', 'method_scene_prepare_timeout', 'prepare'),
+    ('Error: method_navigation_timeout', 'navigation', 'method_scene_prepare_timeout', 'prepare'),
+    ('Error: method_render_deadline_exceeded', 'seek', 'method_render_deadline_exceeded', 'deadline'),
+    ('Error: method_screenshot_timeout', 'project_ready', 'animation_method_render_container_failed', 'unknown'),
+    ('Error: method_screenshot_timeout', [], 'animation_method_render_container_failed', 'unknown'),
+])
+def test_bound_stage_timeouts_preserve_source_and_keep_raw_diagnostics_private(
+        adapter, monkeypatch, error, stage, expected, phase):
+    value, execution = install_failed_report(adapter, monkeypatch, error,
+        diagnostics=dict(schema='video.method-render-diagnostics.v1', stage=stage,
+            page_errors=['SOURCE_SECRET'], elapsed_ms=120000, frame=dict(index=0), crashed=False))
+    result = value.render('stage-failure', SOURCE, document())
+    assert result['error'] == expected
+    assert result['diagnostic']['phase'] == phase
+    assert result['diagnostic']['source_repair_recommended'] is False
+    assert 'SOURCE_SECRET' not in json.dumps(result)
+    assert result['media'] is None and execution.calls == 1
 
 
 @pytest.mark.parametrize('error,failure,category,code', [

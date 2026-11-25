@@ -133,6 +133,44 @@ def test_collector_computes_actual_source_identity_and_requires_proven_stop(tmp_
         protocol.VideoReferenceLearningProfile().collect_output(tmp_path, envelope, stopped)
 
 
+@pytest.mark.parametrize('raw,reason,location',[
+    (b'{"source":{"files":{"scene.js":"private-source\nnext-line"}}}', 'json_syntax', True),
+    (b'{"private-key":1,"private-key":2}', 'duplicate_key', False),
+    (b'{"private-value":NaN}', 'non_finite_number', False),
+    (b'\xff', 'invalid_utf8', False),
+])
+def test_output_diagnostics_keep_strict_json_rejection_and_do_not_echo_source(raw,reason,location):
+    with pytest.raises(ServiceError) as caught:protocol._decode_author_output(raw)
+    error=caught.value
+    assert error.code=='invalid_video_json' and error.status==422
+    assert error.details['phase']=='collect_output' and error.details['path']=='/output.json'
+    assert error.details['reason']==reason
+    assert ('line' in error.details)==location
+    if location:
+        with pytest.raises(json.JSONDecodeError) as parsed:json.loads(raw)
+        assert {key:error.details[key] for key in ('line','column','offset')}==dict(
+            line=parsed.value.lineno,column=parsed.value.colno,offset=parsed.value.pos)
+    assert 'private' not in json.dumps(error.details)
+
+
+def test_properly_serialized_multiline_source_stays_byte_exact_and_bundle_unchanged(tmp_path):
+    value=document();stage(tmp_path,value)
+    out=result(value)
+    out['source']['files']['scene.js']='window.__animationExperiment={\n  seek(t){}\n};\n'
+    out['source']['source_sha256']=protocol.source_sha256(out['source'])
+    raw=canonical_bytes(out);(tmp_path/'output.json').write_bytes(raw)
+    attempt=str(uuid4())
+    envelope=SimpleNamespace(profile=protocol.AUTHOR_PROFILE,profile_revision='1',attempt_id=attempt,
+        task=dict(input_sha256=digest(value)),checkpoint_ref=None,checkpoint_inputs=[],inputs=[
+            InlineFile.from_bytes(protocol.INPUT_NAME,canonical_bytes(value)),InlineFile.from_bytes('reference.png',PNG)])
+    stopped=StopEvidence(execution_id=attempt,all_writers_stopped=True,resource_ids=('fixture-writer',))
+    before=protocol.verified_bundle()
+    collected=protocol.VideoReferenceLearningProfile().collect_output(tmp_path,envelope,stopped)
+    assert json.loads(collected[0].content())['source']==out['source']
+    assert (tmp_path/'output.json').read_bytes()==raw
+    assert protocol.verified_bundle()==before
+
+
 def test_source_change_or_wrong_knowledge_policy_cannot_be_hidden(tmp_path):
     value = document()
     out = result(value)

@@ -20,9 +20,20 @@ from .video_learning_store import VideoLearningStore
 from .video_learning_media import VideoLearningMedia, MAX_UPLOAD, MAX_DURATION, LIMITATIONS
 from .video_learning_analysis import VideoLearningAnalysis
 from .video_learning_repair import VideoLearningRepairMixin
+from .video_learning_recovery import VideoSourceRecoveryMixin
 from .remote_reference_service import remote_reference, MAX_SOURCE_SECONDS
 
 PREFIX = '/api/video-lab'
+
+
+def author_output_contract():
+    """Input guidance, including when the admitted worker keeps an older image."""
+    return dict(schema='video.reference-learning-author-output-guide.v1', instructions=[
+        'Return one strict JSON object. Source files are JSON string values: escape embedded LF as \\n, quotes and backslashes. Do not hand-concatenate unescaped JavaScript into JSON.',
+        'Use actual read_inputs input_sha256 for the result binding. Copy supplied image IDs and SHA-256 values exactly, without shortening or regenerating hashes.',
+        'If method.scene_space is supplied, follow constraints.scene_space_learning exactly. Every stage evidence ID must also occur in its declared source.frame_ids; transformed object bounds must fit the world or declare supported overflow.',
+        'Check the complete result structure and string escaping before the final write. This checklist grants no shell, serialization or validation tool; do not claim a check ran unless an admitted tool actually executed it.',
+        'Do not drop spatial metadata or source evidence to bypass validation. Preserve the original creative goal, references, style and selected capabilities.'])
 
 
 def review_output_contract(mode):
@@ -75,7 +86,7 @@ def review_output_contract(mode):
                 motion='unverified', audio='unverified')))
 
 
-class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, PictureLearningService):
+class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, VideoLearningAnalysis, PictureLearningService):
     protocol = protocol
     prefix = PREFIX
     store_type = VideoLearningStore
@@ -246,6 +257,8 @@ class VideoLearningService(VideoLearningRepairMixin, VideoLearningAnalysis, Pict
             document['sound_events'] = deepcopy(self._candidate(run).get('sound_events', []))
         if mode in {'review', 'transfer_plan'}:
             document['constraints']['output_contract'] = review_output_contract(mode)
+        elif mode=='create':
+            document['constraints']['output_contract'] = author_output_contract()
         return self._remote_document(run, self._render_repair_document(run, document))
 
     def _agent(self, run, operation):

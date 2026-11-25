@@ -21,59 +21,87 @@ _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _SCOPES = {'scene_data_only', 'static_image', 'sampled_frames_only'}
 _STAGES = {'observe', 'spatial_hypothesis', 'reproduce', 'compare', 'temporal', 'transfer'}
 _STATUSES = {'proposed', 'inferred', 'pending', 'failed', 'excluded'}
+_ROOT = '/method/scene_space'
 
 
-def _require(ok, code='scene_space_method_invalid', status=422):
+def _require(ok, code='scene_space_method_invalid', status=422, *, path=_ROOT, rule='contract'):
     if not ok:
-        raise ServiceError(code, status)
+        error = ServiceError(code, status)
+        error.details = dict(path=path[:240], rule=rule)
+        raise error
 
 
-def _fields(value, keys):
-    _require(type(value) is dict and set(value) == set(keys))
+def _fields(value, keys, path=_ROOT):
+    _require(type(value) is dict and set(value) == set(keys), path=path, rule='fields')
 
 
-def _id(value):
-    _require(type(value) is str and _ID.fullmatch(value) is not None)
+def _id(value, path=_ROOT):
+    _require(type(value) is str and _ID.fullmatch(value) is not None, path=path, rule='id')
     return value
 
 
-def _text(value):
+def _text(value, path=_ROOT):
     _require(type(value) is str and bool(value.strip()) and len(value) <= 4000
         and not any((ord(c) < 32 and c not in '\n\r\t') or ord(c) == 127
-                    or 0xD800 <= ord(c) <= 0xDFFF for c in value))
+                    or 0xD800 <= ord(c) <= 0xDFFF for c in value), path=path, rule='text')
 
 
-def _texts(value):
-    _require(type(value) is list and len(value) <= MAX_ROWS)
-    for item in value:
-        _text(item)
+def _texts(value, path=_ROOT):
+    _require(type(value) is list and len(value) <= MAX_ROWS, path=path, rule='text_array')
+    for index, item in enumerate(value):
+        _text(item, path+'/'+str(index))
 
 
-def _ids(value):
-    _require(type(value) is list and len(value) <= 128)
-    for item in value:
-        _id(item)
-    _require(len(set(value)) == len(value))
-
-
-def _references(value):
-    _require(type(value) is list and len(value) <= 128)
+def _ids(value, path=_ROOT):
+    _require(type(value) is list and len(value) <= 128, path=path, rule='id_array')
     seen = set()
-    for row in value:
-        _fields(row, ('id', 'sha256'))
-        _id(row['id'])
-        _require(type(row['sha256']) is str and _SHA.fullmatch(row['sha256']) is not None)
-        _require(row['id'] not in seen)
+    for index, item in enumerate(value):
+        location = path+'/'+str(index)
+        _id(item, location)
+        _require(item not in seen, path=location, rule='duplicate_id')
+        seen.add(item)
+
+
+def _references(value, path=_ROOT+'/source/references'):
+    _require(type(value) is list and len(value) <= 128, path=path, rule='reference_array')
+    seen = set()
+    for index, row in enumerate(value):
+        location = path+'/'+str(index)
+        _fields(row, ('id', 'sha256'), location)
+        _id(row['id'], location+'/id')
+        _require(type(row['sha256']) is str and _SHA.fullmatch(row['sha256']) is not None,
+            path=location+'/sha256', rule='sha256')
+        _require(row['id'] not in seen, path=location+'/id', rule='duplicate_id')
         seen.add(row['id'])
     return {(row['id'], row['sha256']) for row in value}
 
 
-def _scope(value):
+def _scope(value, path=_ROOT+'/source/scope'):
     # The picture service's old observation name remains unchanged outside
     # this new carrier. Its explicit spatial-source label is static_image.
     value = 'static_image' if value == 'static_only' else value
-    _require(type(value) is str and value in _SCOPES)
+    _require(type(value) is str and value in _SCOPES, path=path, rule='scope')
     return value
+
+
+def _nested_error(error, prefix, value=None):
+    """Preserve strict nested codes while exposing only bounded locations."""
+    original = getattr(error, 'details', {})
+    relative = original.get('path', '') if type(original) is dict else ''
+    if type(relative) is not str or value is None:
+        relative = ''
+    parts = relative.strip('/').split('/')
+    # Structural paths already contain numeric indices. Only geometry checks
+    # name an object by ID, which can itself look like a numeric index.
+    identity_path = (error.code in {'scene_world_object_outside', 'scene_world_geometry_degenerate'}
+        or len(parts)>2 and parts[2] in {'world_matrix','world_corners','world_bounds'})
+    objects = value.get('objects') if type(value) is dict else None
+    if identity_path and len(parts)>1 and parts[0]=='objects' and type(objects) is list:
+        for index, obj in enumerate(objects):
+            if type(obj) is dict and obj.get('id')==parts[1]:
+                parts[1]=str(index); relative='/'.join(parts); break
+    error.details = dict(path=(prefix+'/'+relative.lstrip('/')).rstrip('/')[:240], rule='nested_contract')
+    return error
 
 
 def validate_scene_method(value, *, source_scope=None, source_refs=None, frame_ids=None):
@@ -87,63 +115,86 @@ def validate_scene_method(value, *, source_scope=None, source_refs=None, frame_i
                     'principles', 'stages', 'limitations'))
     try:
         _require(len(canonical_bytes(value)) <= MAX_METHOD_BYTES,
-            'scene_space_method_too_large', 413)
+            'scene_space_method_too_large', 413, rule='size')
     except (TypeError, ValueError, UnicodeError, RecursionError, OverflowError):
-        raise ServiceError('scene_space_method_invalid', 422) from None
-    _require(value['schema'] == METHOD_SCHEMA)
+        _require(False, rule='json_value')
+    _require(value['schema'] == METHOD_SCHEMA, path=_ROOT+'/schema', rule='schema')
     result = deepcopy(value)
     source = result['source']
     _fields(source, ('scope', 'references', 'frame_ids', 'motion_observed',
-                     'audio_observed', 'whole_video_watched'))
+                     'audio_observed', 'whole_video_watched'), _ROOT+'/source')
     source['scope'] = _scope(source['scope'])
     references = _references(source['references'])
-    _ids(source['frame_ids'])
+    _ids(source['frame_ids'], _ROOT+'/source/frame_ids')
     _require({row['id'] for row in source['references']} == set(source['frame_ids']),
-        'scene_space_method_frame_source_unbound', 409)
-    _require(all(source[key] is False for key in
-        ('motion_observed', 'audio_observed', 'whole_video_watched')),
-        'scene_space_method_observation_not_admitted')
+        'scene_space_method_frame_source_unbound', 409, path=_ROOT+'/source/frame_ids', rule='source_closure')
+    for key in ('motion_observed', 'audio_observed', 'whole_video_watched'):
+        _require(source[key] is False, 'scene_space_method_observation_not_admitted',
+            path=_ROOT+'/source/'+key, rule='observation_scope')
     if source_scope is not None:
-        _require(source['scope'] == _scope(source_scope), 'scene_space_method_source_scope_changed', 409)
+        _require(source['scope'] == _scope(source_scope), 'scene_space_method_source_scope_changed', 409,
+            path=_ROOT+'/source/scope', rule='frozen_scope')
     if source_refs is not None:
-        _require(references <= _references(source_refs), 'scene_space_method_source_changed', 409)
+        supplied = _references(source_refs)
+        for index, row in enumerate(source['references']):
+            _require((row['id'], row['sha256']) in supplied, 'scene_space_method_source_changed', 409,
+                path=_ROOT+'/source/references/'+str(index)+'/sha256', rule='frozen_source_identity')
     if frame_ids is not None:
         _ids(frame_ids)
-        _require(set(source['frame_ids']) <= set(frame_ids), 'scene_space_method_frame_not_supplied', 409)
+        for index, identity in enumerate(source['frame_ids']):
+            _require(identity in frame_ids, 'scene_space_method_frame_not_supplied', 409,
+                path=_ROOT+'/source/frame_ids/'+str(index), rule='supplied_frame')
     if source['scope'] == 'scene_data_only':
-        _require(not references and not source['frame_ids'], 'scene_space_method_source_scope_changed', 409)
+        _require(not references and not source['frame_ids'], 'scene_space_method_source_scope_changed', 409,
+            path=_ROOT+'/source', rule='source_scope')
     if result['world'] is not None:
-        result['world'] = validate_world(result['world'])
+        try:
+            result['world'] = validate_world(result['world'])
+        except ServiceError as error:
+            raise _nested_error(error, _ROOT+'/world', result['world']) from None
     if result['plan'] is not None:
-        result['plan'] = validate_plan(result['plan'])
+        try:
+            result['plan'] = validate_plan(result['plan'])
+        except ServiceError as error:
+            raise _nested_error(error, _ROOT+'/plan') from None
         if result['world'] is not None:
             matching = [world for world in result['plan']['worlds'] if world['id'] == result['world']['id']]
             _require(len(matching) == 1 and world_sha256(matching[0]) == world_sha256(result['world']),
-                'scene_space_method_world_plan_changed', 409)
-    _require(type(result['hypotheses']) is list and len(result['hypotheses']) <= MAX_ROWS)
+                'scene_space_method_world_plan_changed', 409, path=_ROOT+'/plan/worlds', rule='world_plan_identity')
+    _require(type(result['hypotheses']) is list and len(result['hypotheses']) <= MAX_ROWS,
+        path=_ROOT+'/hypotheses', rule='hypothesis_array')
     seen = set()
-    for row in result['hypotheses']:
-        _fields(row, ('id', 'claim', 'confidence', 'evidence_frame_ids', 'alternatives', 'unknowns'))
-        _id(row['id']); _require(row['id'] not in seen); seen.add(row['id'])
-        _text(row['claim'])
+    for index, row in enumerate(result['hypotheses']):
+        path = _ROOT+'/hypotheses/'+str(index)
+        _fields(row, ('id', 'claim', 'confidence', 'evidence_frame_ids', 'alternatives', 'unknowns'), path)
+        _id(row['id'], path+'/id')
+        _require(row['id'] not in seen, path=path+'/id', rule='duplicate_id'); seen.add(row['id'])
+        _text(row['claim'], path+'/claim')
         confidence = row['confidence']
-        _require(type(confidence) in (int, float) and 0 <= confidence <= 1 and math.isfinite(confidence))
-        _ids(row['evidence_frame_ids'])
-        _require(set(row['evidence_frame_ids']) <= set(source['frame_ids']),
-            'scene_space_method_evidence_frame_changed', 409)
-        _texts(row['alternatives']); _texts(row['unknowns'])
-    _texts(result['principles']); _texts(result['limitations'])
-    _require(type(result['stages']) is list and len(result['stages']) <= len(_STAGES))
+        _require(type(confidence) in (int, float) and 0 <= confidence <= 1 and math.isfinite(confidence),
+            path=path+'/confidence', rule='confidence')
+        _ids(row['evidence_frame_ids'], path+'/evidence_frame_ids')
+        for evidence_index, identity in enumerate(row['evidence_frame_ids']):
+            _require(identity in source['frame_ids'], 'scene_space_method_evidence_frame_changed', 409,
+                path=path+'/evidence_frame_ids/'+str(evidence_index), rule='source_closure')
+        _texts(row['alternatives'], path+'/alternatives'); _texts(row['unknowns'], path+'/unknowns')
+    _texts(result['principles'], _ROOT+'/principles'); _texts(result['limitations'], _ROOT+'/limitations')
+    _require(type(result['stages']) is list and len(result['stages']) <= len(_STAGES),
+        path=_ROOT+'/stages', rule='stage_array')
     seen = set()
-    for row in result['stages']:
-        _fields(row, ('stage', 'status', 'notes', 'evidence_frame_ids', 'limitations'))
-        _require(type(row['stage']) is str and row['stage'] in _STAGES and row['stage'] not in seen)
+    for index, row in enumerate(result['stages']):
+        path = _ROOT+'/stages/'+str(index)
+        _fields(row, ('stage', 'status', 'notes', 'evidence_frame_ids', 'limitations'), path)
+        _require(type(row['stage']) is str and row['stage'] in _STAGES and row['stage'] not in seen,
+            path=path+'/stage', rule='stage')
         seen.add(row['stage'])
         _require(type(row['status']) is str and row['status'] in _STATUSES,
-            'scene_space_method_unearned_verification')
-        _text(row['notes']); _ids(row['evidence_frame_ids']); _texts(row['limitations'])
-        _require(set(row['evidence_frame_ids']) <= set(source['frame_ids']),
-            'scene_space_method_evidence_frame_changed', 409)
+            'scene_space_method_unearned_verification', path=path+'/status', rule='verification_scope')
+        _text(row['notes'], path+'/notes'); _ids(row['evidence_frame_ids'], path+'/evidence_frame_ids')
+        _texts(row['limitations'], path+'/limitations')
+        for evidence_index, identity in enumerate(row['evidence_frame_ids']):
+            _require(identity in source['frame_ids'], 'scene_space_method_evidence_frame_changed', 409,
+                path=path+'/evidence_frame_ids/'+str(evidence_index), rule='source_closure')
     return result
 
 
@@ -207,12 +258,14 @@ def scene_method_guidance(scope):
         stages=sorted(_STAGES), statuses=sorted(_STATUSES),
         method_types=dict(world='null or a complete world object',plan='null or a complete plan object',
             source='object with exactly the listed source_fields; references is an array of {id,sha256}, '
-                'frame_ids an array of those same IDs; copy only supplied IDs/digests, at most 128; all observation flags false',
+                'frame_ids an array of those same IDs; copy the exact rows from the supplied source_references manifest, '
+                'never shorten, retype or reconstruct a digest; at most 128; all observation flags false',
             hypotheses='array of at most 32 objects: id, claim:string, confidence:finite number 0..1, '
                 'evidence_frame_ids:string array, alternatives:string array, unknowns:string array',
             principles='array of at most 32 nonempty strings, each at most 4000 characters',
             stages='array with unique admitted stage names; status from statuses, notes is a string, '
-                'evidence_frame_ids references supplied frames, limitations is a string array; authors cannot mark verified/completed',
+                'every evidence_frame_ids entry must also belong to source.frame_ids and source.references, '
+                'including cited baseline frames; limitations is a string array; authors cannot mark verified/completed',
             limitations='array of at most 32 nonempty strings, each at most 4000 characters',
             size='the whole scene-space method is at most 1048576 canonical JSON bytes'),
         world_contract=dict(required=['schema','id','revision','seed','style','space','layers',
@@ -236,6 +289,9 @@ def scene_method_guidance(scope):
                 identity='id and kind are ASCII IDs; layer_id references a declared layer; parent_id is null or another object ID',
                 transform=['x','y','scale_x','scale_y','rotation'],
                 transform_types='x/y are parent-local translations; scale_x/scale_y are numbers 0.0001..1000; rotation is degrees -360..360',
+                world_bounds='After all parent and object transforms, every object corner must stay inside world.space.bounds. '
+                    'For intentional overflow explicitly set allow_overflow=true and a nonempty overflow_reason; '
+                    'do not infer permission from clipping to the output viewport or silently enlarge the world.',
                 depth=dict(kind='ordinal | geometric | unknown',value='number; null for unknown'),
                 anchors='map of at most 32 ASCII anchor IDs to local [x,y] arrays inside object.bounds',
                 optional=['order','allow_overflow','overflow_reason','recipe_ref'],
@@ -311,6 +367,10 @@ def scene_method_guidance(scope):
                 scope='Authored shared XYZ mesh plus fixed-view projection for brush construction, not observed/calibrated reconstruction, automatic ink shading, a new pixel backend or orbit-camera admission'),
             data_location='Keep outlines, ridges, valleys, shared XYZ mesh/projection data and per-object drawing parameters in scene.js keyed by world/object ID. Do not add them to strict world/plan fields, source.strategy or recipe_ref.'),
         instructions=[
+            'Before final output, select every cited reference/output/baseline frame from constraints.scene_space_learning.source_references. '
+                'Copy its complete id and 64-character sha256 verbatim into source.references and the same id into source.frame_ids. '
+                'Every hypothesis and stage evidence_frame_ids must be a subset of that declared source.frame_ids; '
+                'being present elsewhere in the task is not sufficient. Do not invent, pad or repair a digest.',
             'The currently admitted Canvas compositor accepts only static layer cache_policy. Paint each object once; express supported local changes with absolute-frame transform/opacity tracks. Other cache policies remain descriptive metadata until separately admitted.',
             'When useful, record spatial, layer, scale, anchor and occlusion hypotheses in method.scene_space; source files retain their exact contract.',
             'Use explicit declared depth; image Y does not establish distance. Grid and named points assist object layout, not every brush stroke.',

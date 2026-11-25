@@ -55,6 +55,10 @@ def build_bundle(bundle, service, project, raw):
         enabled=True, hyperframes=True, legacy_bridge=True, candidate_engines=('canvas',))
     adapter = VideoLearningRenderer(bundle.parent / 'binding-renderer', runtime_renderer=runtime)
     adapter.candidate_engines = ('canvas',)  # Offline-only source binding, never an execution.
+    # This historical import fixture exercises the old, explicitly permitted
+    # three-edit host derivation. Freeze that original host independently of
+    # the current reference-learning host and its newer deadline protocol.
+    adapter._host_path = runtime._host_path
     binding = adapter._snapshot(operation['id'], candidate['source'], operation['input'], [])
     original_host = shared.HOST.read_bytes()
     host_patch = [
