@@ -50,6 +50,14 @@ def collection_reserve_seconds(operation):
     return PUBLICATION_TIMING['collection_reserve_seconds']
 
 
+def stored_compiler_revision(operation):
+    """Missing markers belong to the unchanged historical compiler contract."""
+    revision = operation.get('compiler_revision', '1')
+    require(type(revision) is str and revision in {'1', '2'},
+            'animation_wikiskill_compiler_revision_invalid', 409)
+    return revision
+
+
 def _metadata(release):
     result = {key: deepcopy(release[key]) for key in ('id', 'owner', 'sequence', 'created_at',
         'summary', 'sha256', 'snapshot_id', 'snapshot_sha256', 'evidence_scope')}
@@ -122,11 +130,12 @@ class AnimationWikiSkillStore:
         return {key: deepcopy(item) for key, item in value.items()
             if key not in {'input_document', 'input_refs'}}
 
-    def create(self, owner, body, snapshot, document):
+    def create(self, owner, body, snapshot, document, *, compilation_revision='1'):
         identity(owner)
         request = validate_start(body)
-        snapshot = validate_snapshot(snapshot)
-        document = validate_input(document)
+        stored_compiler_revision({'compiler_revision': compilation_revision})
+        snapshot = validate_snapshot(snapshot, compilation_revision=compilation_revision)
+        document = validate_input(document, compilation_revision=compilation_revision)
         require(snapshot['owner'] == owner and document['snapshot']['sha256'] == snapshot['sha256']
             and document['snapshot']['owner'] == owner and document['note'] == request['note'],
             'animation_wikiskill_input_binding_mismatch', 409)
@@ -149,6 +158,8 @@ class AnimationWikiSkillStore:
                 remote_state=None, remote_stop_proven=False, remote_receipt=None,
                 submission_attempted=False, deadline_at=now + PUBLICATION_SECONDS,
                 publication_timing=deepcopy(PUBLICATION_TIMING))
+            if compilation_revision != '1':
+                value['compiler_revision'] = compilation_revision
             db.execute('INSERT INTO wikiskill_snapshots VALUES (?,?,?,?)',
                 (snapshot['id'], owner, snapshot['sha256'], _json(snapshot)))
             db.execute('INSERT INTO wikiskill_jobs VALUES (?,?,?,?,?,?,?,?)',
@@ -172,14 +183,14 @@ class AnimationWikiSkillStore:
             require(row is not None, 'animation_wikiskill_request_not_found', 404)
             return self._present(json.loads(row['document']))
 
-    def snapshot(self, owner, snapshot_id):
+    def snapshot(self, owner, snapshot_id, *, compilation_revision='1'):
         identity(owner)
         uuid_identity(snapshot_id)
         with self._transaction() as db:
             row = db.execute('SELECT document,sha256 FROM wikiskill_snapshots WHERE owner=? AND id=?',
                 (owner, snapshot_id)).fetchone()
             require(row is not None, 'animation_wikiskill_snapshot_not_found', 404)
-            value = validate_snapshot(json.loads(row['document']))
+            value = validate_snapshot(json.loads(row['document']), compilation_revision=compilation_revision)
             require(value['sha256'] == row['sha256'], 'animation_wikiskill_snapshot_changed', 409)
             return value
 
@@ -226,7 +237,9 @@ class AnimationWikiSkillStore:
 
     def publish(self, owner, job_id, token, result):
         operation = self.operation(owner, job_id, token)
-        result = validate_result(result, operation['input_sha256'], operation['input_document'])
+        revision = stored_compiler_revision(operation)
+        result = validate_result(result, operation['input_sha256'], operation['input_document'],
+                                 compilation_revision=revision)
         with self._transaction() as db:
             row, value = self._job(db, owner, job_id)
             require(row['lease_token'] == token and value['state'] == 'running'

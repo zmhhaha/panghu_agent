@@ -30,6 +30,8 @@ INPUT_MAX_BYTES = 1024 * 1024
 RECORD_MAX_BYTES = 4 * 1024 * 1024
 SNAPSHOT_MAX_BYTES = 30 * 1024 * 1024
 INPUT_TOTAL_MAX_BYTES = 32 * 1024 * 1024
+CAPACITY_SNAPSHOT_MAX_BYTES = 63 * 1024 * 1024
+CAPACITY_INPUT_TOTAL_MAX_BYTES = 64 * 1024 * 1024
 OUTPUT_MAX_BYTES = 16 * 1024 * 1024
 MAX_RECORDS = 2047
 EVIDENCE_SCOPE = 'frozen_records_only_no_new_media_validation'
@@ -40,6 +42,13 @@ _SHA = re.compile(r'^[0-9a-f]{64}$')
 def require(condition, code='animation_wikiskill_invalid', status=422):
     if not condition:
         raise ServiceError(code, status)
+
+
+def compilation_limits(compilation_revision='1'):
+    require(type(compilation_revision) is str and compilation_revision in {'1', '2'},
+        'animation_wikiskill_compilation_revision_invalid')
+    return (SNAPSHOT_MAX_BYTES, INPUT_TOTAL_MAX_BYTES) if compilation_revision == '1' else (
+        CAPACITY_SNAPSHOT_MAX_BYTES, CAPACITY_INPUT_TOTAL_MAX_BYTES)
 
 
 def text(value, maximum=400, *, empty=False):
@@ -90,12 +99,13 @@ def _record(value):
     return deepcopy(value)
 
 
-def make_snapshot(owner, records, *, captured_at=None, snapshot_id=None):
+def make_snapshot(owner, records, *, captured_at=None, snapshot_id=None, compilation_revision='1'):
     """Capture caller-supplied records verbatim; never truncate an oversized set.
 
     A record may omit sha256, which is then computed from its actual content.
     A supplied checksum is always verified rather than silently repaired.
     """
+    snapshot_limit, _ = compilation_limits(compilation_revision)
     identity(owner)
     require(type(records) is list and 1 <= len(records) <= MAX_RECORDS,
             'animation_wikiskill_snapshot_record_limit', 413 if records else 422)
@@ -115,21 +125,21 @@ def make_snapshot(owner, records, *, captured_at=None, snapshot_id=None):
     value = dict(schema=SNAPSHOT_SCHEMA, id=snapshot_id, owner=owner,
         captured_at=captured_at, records=frozen)
     value['sha256'] = digest(value)
-    require(len(_bytes(value)) <= SNAPSHOT_MAX_BYTES, 'animation_wikiskill_snapshot_too_large', 413)
+    require(len(_bytes(value)) <= snapshot_limit, 'animation_wikiskill_snapshot_too_large', 413)
     return value
 
 
-def validate_snapshot(value):
+def validate_snapshot(value, *, compilation_revision='1'):
     require(type(value) is dict and set(value) ==
         {'schema', 'id', 'owner', 'captured_at', 'records', 'sha256'} and value['schema'] == SNAPSHOT_SCHEMA)
     expected = make_snapshot(value['owner'], value['records'], captured_at=value['captured_at'],
-                             snapshot_id=value['id'])
+                             snapshot_id=value['id'], compilation_revision=compilation_revision)
     require(value == expected, 'animation_wikiskill_snapshot_changed', 409)
     return expected
 
 
-def build_input(snapshot, *, note=''):
-    snapshot = validate_snapshot(snapshot)
+def build_input(snapshot, *, note='', compilation_revision='1'):
+    snapshot = validate_snapshot(snapshot, compilation_revision=compilation_revision)
     text(note, 4000, empty=True)
     records = []
     for index, row in enumerate(snapshot['records']):
@@ -139,10 +149,11 @@ def build_input(snapshot, *, note=''):
     value = dict(schema=INPUT_SCHEMA,
         snapshot={key: deepcopy(item) for key, item in snapshot.items() if key != 'records'},
         records=records, note=note, evidence_scope=EVIDENCE_SCOPE)
-    return validate_input(value)
+    return validate_input(value, compilation_revision=compilation_revision)
 
 
-def validate_input(value):
+def validate_input(value, *, compilation_revision='1'):
+    _, input_total_limit = compilation_limits(compilation_revision)
     require(type(value) is dict and set(value) == {'schema', 'snapshot', 'records', 'note', 'evidence_scope'}
         and value['schema'] == INPUT_SCHEMA and value['evidence_scope'] == EVIDENCE_SCOPE)
     head = value['snapshot']
@@ -167,15 +178,16 @@ def validate_input(value):
         and rows == sorted(rows, key=lambda row: row['record_id']))
     raw = _bytes(value)
     require(len(raw) <= INPUT_MAX_BYTES, 'animation_wikiskill_manifest_too_large', 413)
-    require(len(raw) + sum(row['bytes'] for row in rows) <= INPUT_TOTAL_MAX_BYTES,
+    require(len(raw) + sum(row['bytes'] for row in rows) <= input_total_limit,
             'animation_wikiskill_inputs_too_large', 413)
     return deepcopy(value)
 
 
-def input_files(snapshot, document=None):
-    snapshot = validate_snapshot(snapshot)
-    document = build_input(snapshot) if document is None else validate_input(document)
-    require(build_input(snapshot, note=document['note']) == document,
+def input_files(snapshot, document=None, *, compilation_revision='1'):
+    snapshot = validate_snapshot(snapshot, compilation_revision=compilation_revision)
+    document = (build_input(snapshot, compilation_revision=compilation_revision) if document is None else
+        validate_input(document, compilation_revision=compilation_revision))
+    require(build_input(snapshot, note=document['note'], compilation_revision=compilation_revision) == document,
             'animation_wikiskill_input_binding_mismatch', 409)
     result = {INPUT_NAME: _bytes(document)}
     result.update({entry['file_name']: _bytes(row)
@@ -183,8 +195,8 @@ def input_files(snapshot, document=None):
     return result
 
 
-def validate_input_files(document, files):
-    document = validate_input(document)
+def validate_input_files(document, files, *, compilation_revision='1'):
+    document = validate_input(document, compilation_revision=compilation_revision)
     require(type(files) is dict and set(files) == {INPUT_NAME} | {row['file_name'] for row in document['records']},
             'animation_wikiskill_unexpected_input')
     require(files[INPUT_NAME] == _bytes(document), 'animation_wikiskill_input_binding_mismatch', 409)
@@ -204,7 +216,8 @@ def validate_input_files(document, files):
                 'animation_wikiskill_input_binding_mismatch', 409)
         records.append(record)
     head = document['snapshot']
-    snapshot = make_snapshot(head['owner'], records, captured_at=head['captured_at'], snapshot_id=head['id'])
+    snapshot = make_snapshot(head['owner'], records, captured_at=head['captured_at'], snapshot_id=head['id'],
+        compilation_revision=compilation_revision)
     require(snapshot['sha256'] == head['sha256'], 'animation_wikiskill_snapshot_changed', 409)
     return snapshot
 
@@ -221,9 +234,9 @@ def normalize_agent_result(value):
     return result
 
 
-def validate_result(value, input_sha256, input_document=None):
+def validate_result(value, input_sha256, input_document=None, *, compilation_revision='1'):
     require(input_document is not None, 'animation_wikiskill_input_required')
-    context = validate_input(input_document)
+    context = validate_input(input_document, compilation_revision=compilation_revision)
     require(type(value) is dict and set(value) == {'schema', 'input_sha256', 'snapshot_sha256',
         'evidence_scope', 'summary', 'packages', 'index', 'exclusions', 'limitations'}
         and value['schema'] == RESULT_SCHEMA and value['input_sha256'] == input_sha256 == digest(context)

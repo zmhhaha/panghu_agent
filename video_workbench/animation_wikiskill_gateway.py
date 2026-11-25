@@ -36,12 +36,26 @@ class AnimationWikiSkillGateway(_AnimationGateway):
     input_role = 'animation_wikiskill_input'
     business_prefix, idempotency_prefix = 'animation-wikiskill:', 'wikiskill-'
     input_limit, output_limit = INPUT_MAX_BYTES, OUTPUT_MAX_BYTES
-    validate_input = staticmethod(validate_input)
-    validate_result = staticmethod(validate_result)
+
+    def __init__(self, client, profile_revision='1'):
+        require(type(profile_revision) is str and profile_revision in {'1', '2'},
+                'animation_wikiskill_compiler_revision_invalid')
+        super().__init__(client, profile_revision=profile_revision)
+
+    def for_revision(self, revision):
+        """Each durable operation retains its own admitted compiler contract."""
+        return type(self)(self.client, profile_revision=revision)
+
+    def validate_input(self, document):
+        return validate_input(document, compilation_revision=self.profile_revision)
+
+    def validate_result(self, result, input_sha256, document):
+        return validate_result(result, input_sha256, document,
+                               compilation_revision=self.profile_revision)
 
     def _files(self, document, files=None):
         self._document_bytes(document)
-        validate_input_files(document, files)
+        validate_input_files(document, files, compilation_revision=self.profile_revision)
         return files
 
     def upload(self, document, files=None):

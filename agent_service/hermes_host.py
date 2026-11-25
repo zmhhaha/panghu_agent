@@ -32,7 +32,7 @@ class HermesHostDriver:
         self.config, self.credentials, self.scope = config, credentials, scope
         self.stop_controller, self.control_root = stopper, Path(control_root)
         self.policy = __import__('agent_service.worker_entry', fromlist=['host_policy']).host_policy(config)
-        self.impl = implementation(self.policy.name)
+        self.impl = implementation(self.policy.name, self.policy.revision)
         self.profile = DomainExecutionProfile(self.policy, self.policy.execution_binding.bundle_revision)
         self.profile.agent_uid, self.profile.preview_uid, self.profile.control_root = (
             scope.agent_uid, scope.preview_uid, self.control_root)

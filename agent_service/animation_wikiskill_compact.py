@@ -25,8 +25,8 @@ def expand_ranges(ranges, document):
     return [rows[index]['record_id'] for index in indices]
 
 
-def expand_compact_result(value, document):
-    document = validate_input(document)
+def expand_compact_result(value, document, *, compilation_revision='1'):
+    document = validate_input(document, compilation_revision=compilation_revision)
     require(type(value) is dict and value.get('schema') == COMPACT_RESULT_SCHEMA,
             'animation_wikiskill_compact_schema_required')
     result = deepcopy(value)

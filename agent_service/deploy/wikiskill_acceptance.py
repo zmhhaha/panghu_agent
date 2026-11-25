@@ -17,6 +17,7 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
     COMPILATION_EVIDENCE_ENVIRONMENT_NAME, COMPILATION_EVIDENCE_EXTENSION_SHA256,
     COMPILATION_CHECKED_ENVIRONMENT_NAME, COMPILATION_CHECKED_FILES,
+    COMPILATION_CAPACITY_ENVIRONMENT_NAME, COMPILATION_CAPACITY_FILES, COMPILATION_CAPACITY_TOOLS_SHA256,
     COMPILATION_INPUT_EXTENSION_SHA256, compilation_input_environment_revision)
 from agent_service.deploy.acceptance_probe import candidate_config
 from agent_service.deploy.animation_creation_acceptance import (
@@ -61,8 +62,11 @@ def sha(raw):
 
 
 def _bundle(package, registry, binding, policy):
-    module, handler = profile_module(binding.profile), implementation(binding.profile)
-    contract = registry.contract(binding.profile, policy.revision)
+    require(binding.profile in PROFILES and (binding.profile_revision == '1'
+        or binding.profile == PROFILES[4] and binding.profile_revision == '2')
+        and policy.revision == binding.profile_revision, 'wikiskill_admission_profile_not_allowed')
+    module, handler = profile_module(binding.profile), implementation(binding.profile, binding.profile_revision)
+    contract = registry.contract(binding.profile, binding.profile_revision)
     bundle = registry.bundle(binding.bundle.name, binding.bundle.revision)
     environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
     tools = set(handler.required_tools)
@@ -80,11 +84,14 @@ def _bundle(package, registry, binding, policy):
             and sha(_capture(package, 'skill_tools_extension.mjs', 128 * 1024)) == SKILL_TOOLS_EXTENSION_SHA256,
             'wikiskill_admission_tools_mismatch')
     elif binding.profile == PROFILES[4]:
-        require(environment.name == COMPILATION_CHECKED_ENVIRONMENT_NAME
+        capacity = binding.profile_revision == '2'
+        require(environment.name == (COMPILATION_CAPACITY_ENVIRONMENT_NAME if capacity else COMPILATION_CHECKED_ENVIRONMENT_NAME)
             and tools == {'read_compilation_input', 'write', 'check_compilation_output'}
+            and (not capacity or bool(COMPILATION_CAPACITY_FILES)
+                and digest(COMPILATION_CAPACITY_FILES) == COMPILATION_CAPACITY_TOOLS_SHA256)
             and environment.revision == compilation_input_environment_revision(environment.model_dump(mode='json'))
             and all(sha(_capture(package, name, 128 * 1024)) == checksum
-                    for name, checksum in COMPILATION_CHECKED_FILES.items()),
+                    for name, checksum in (COMPILATION_CAPACITY_FILES if capacity else COMPILATION_CHECKED_FILES).items()),
             'wikiskill_admission_tools_mismatch')
     elif binding.profile in {PROFILES[2], PROFILES[3]}:
         survey = binding.profile == PROFILES[3]
@@ -127,7 +134,10 @@ def _bundle(package, registry, binding, policy):
 
 def _role_capture(root, envelope, result, raw):
     """Bind exact new-role inputs, stopped artifacts and host-owned tool evidence."""
-    module, handler = profile_module(envelope.profile), implementation(envelope.profile)
+    require(envelope.profile in PROFILES and (envelope.profile_revision == '1'
+        or envelope.profile == PROFILES[4] and envelope.profile_revision == '2'),
+        'wikiskill_admission_profile_not_allowed')
+    module, handler = profile_module(envelope.profile), implementation(envelope.profile, envelope.profile_revision)
     inputs = {item.name: item.content() for item in envelope.inputs}
     require(len(inputs) == len(envelope.inputs) and module.INPUT_NAME in inputs
         and len(inputs) <= handler.limits.max_input_files
@@ -137,8 +147,9 @@ def _role_capture(root, envelope, result, raw):
         raw[name] = _capture(root, name, handler.limits.max_input_bytes)
         require(raw[name] == value, 'wikiskill_admission_input_mismatch')
     if envelope.profile in COMPILER_PROFILES:
-        document = module.validate_input(decode_video_json(raw[module.INPUT_NAME]))
-        module.validate_input_files(document, inputs)
+        document = module.validate_input(decode_video_json(raw[module.INPUT_NAME]),
+            compilation_revision=envelope.profile_revision)
+        module.validate_input_files(document, inputs, compilation_revision=envelope.profile_revision)
         artifact_names = {module.RESULT_NAME}
     else:
         document = module.validate_joint_plan_input(decode_video_json(raw[module.INPUT_NAME]))
@@ -160,7 +171,8 @@ def _role_capture(root, envelope, result, raw):
         require(item.content() == raw[item.name], 'wikiskill_admission_artifact_mismatch')
     value = decode_video_json(raw[module.RESULT_NAME])
     if envelope.profile in COMPILER_PROFILES:
-        artifact = module.validate_result(value, digest(document), document)
+        artifact = module.validate_result(value, digest(document), document,
+            compilation_revision=envelope.profile_revision)
         facts = dict(compiled_package_count=len(artifact['packages']),
             frozen_record_count=len(document['records']), evidence_scope=artifact['evidence_scope'],
             new_media_validation_performed=False)
@@ -193,7 +205,8 @@ def assess_candidate(candidate_dir, *, source_root=None):
     docs = {name:decode_video_json(value) for name,value in raw.items() if name.endswith('.json')}
     require(all(type(value) is dict for value in docs.values()))
     envelope, result = verify_parent({name:docs[name] for name in PARENT_FILES.values()})
-    require(envelope.profile in PROFILES and envelope.profile_revision == '1' and envelope.engine == 'pi'
+    require(envelope.profile in PROFILES and (envelope.profile_revision == '1'
+        or envelope.profile == PROFILES[4] and envelope.profile_revision == '2') and envelope.engine == 'pi'
         and not envelope.checkpoint_inputs and envelope.checkpoint_ref is None,
         'wikiskill_admission_profile_not_allowed')
     profile, proof = envelope.profile, result.stop_receipt
@@ -202,14 +215,14 @@ def assess_candidate(candidate_dir, *, source_root=None):
     record, observation = docs['candidate-evidence.json'], docs['candidate-result.json']['observations']
     host, policy, binding = candidate_config(docs['host-config.json'])
     registry = _host_registry(host)
-    combination = binding_fingerprint(registry.contract(profile, '1'),
+    combination = binding_fingerprint(registry.contract(profile, envelope.profile_revision),
         registry.bundle(binding.bundle.name, binding.bundle.revision),
         registry.environment(binding.tool_environment.name, binding.tool_environment.revision), binding)
     require(policy.matches(envelope) and policy.execution_binding == envelope.execution_binding
         and record.get('schema_version') == 'agent-candidate-probe.v1'
         and record.get('candidate_only') is True and record.get('candidate_scope_only') is True
         and record.get('production_acceptance_created') is False and record.get('production_routes_changed') is False
-        and record.get('profile_revision') == '1'
+        and record.get('profile_revision') == envelope.profile_revision
         and record.get('binding_id') == binding.id and record.get('binding_revision') == binding.revision
         and record.get('combination_sha256') == combination
         and record.get('execution_binding_sha256') == envelope.execution_binding.sha256
@@ -259,7 +272,7 @@ def assess_candidate(candidate_dir, *, source_root=None):
         and type(capability.get('allowed_tools')) is list
         and all(type(tool) is str for tool in capability['allowed_tools'])
         and len(capability['allowed_tools']) == len(set(capability['allowed_tools']))
-        and set(capability['allowed_tools']) == set(implementation(profile).required_tools)
+        and set(capability['allowed_tools']) == set(implementation(profile, envelope.profile_revision).required_tools)
         and capability.get('pi_cage_repository') == PI_CAGE_REPOSITORY
         and capability.get('pi_cage_revision') == PI_CAGE_REVISION and capability.get('pi_version') == PI_VERSION
         and type(capability.get('node_version')) is str and re.fullmatch(r'24\.\d+\.\d+',capability['node_version']),
@@ -326,7 +339,7 @@ def assess_candidate(candidate_dir, *, source_root=None):
     require(all(_capture(root,name) == value for name,value in raw.items()),
             'wikiskill_admission_capture_changed')
     report = dict(schema='video-wikiskill-independent-review.v1', suite=SUITES[profile],
-        evidence_origin='captured_real_candidate',profile=profile,profile_revision='1',engine='pi',
+        evidence_origin='captured_real_candidate',profile=profile,profile_revision=envelope.profile_revision,engine='pi',
         candidate_name=directory.name,image_digest=envelope.image_digest,runtime_revision=envelope.runtime_revision,
         candidate_job_id=envelope.job_id,candidate_attempt_id=envelope.attempt_id,
         binding_id=binding.id,binding_revision=binding.revision,combination_sha256=combination,
@@ -369,7 +382,7 @@ def review_candidate(candidate_dir, output, *, source_root=None):
     require(not policy.enabled and all(row.get('enabled') is False for row in host['execution_catalog']['routes'])
         and policy.execution_binding.combination_sha256==combination)
     _save(target/'config.json',host)
-    _save(target/'acceptance.json',dict(schema_version=1,engine='pi',profile=profile,profile_revision='1',
+    _save(target/'acceptance.json',dict(schema_version=1,engine='pi',profile=profile,profile_revision=report['profile_revision'],
         runtime_revision=report['runtime_revision'],image_digest=report['image_digest'],model_api='openai-responses',
         checks={key:True for key in CHECKS},evidence_sha256=checksum,
         execution_binding_sha256=policy.execution_binding.sha256))
@@ -377,7 +390,7 @@ def review_candidate(candidate_dir, output, *, source_root=None):
     _save(output/'binding-approvals.json',[dict(binding_id=report['binding_id'],
         binding_revision=report['binding_revision'],acceptance=approval,host_config_map=name,
         path='worker-configs/'+name)])
-    summary = dict(schema='wikiskill-technical-admission.v1',profile=profile,suite=SUITES[profile],
+    summary = dict(schema='wikiskill-technical-admission.v1',profile=profile,profile_revision=report['profile_revision'],suite=SUITES[profile],
         combination_sha256=combination,report_sha256=checksum,
         accepted_execution_binding_sha256=policy.execution_binding.sha256,host_config_map=name,
         accepted_host=True,enabled=False,technical_host_admission_only=True,deployment_performed=False,

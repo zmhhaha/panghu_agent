@@ -12,6 +12,7 @@ import re
 from agent_service.catalog import CATALOG_KEYS
 from agent_service.compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
     COMPILATION_EVIDENCE_ENVIRONMENT_NAME, COMPILATION_CHECKED_ENVIRONMENT_NAME,
+    COMPILATION_CAPACITY_ENVIRONMENT_NAME,
     compilation_input_environment_revision, verified_compilation_input_extension)
 from agent_service.contracts import digest
 from agent_service.deploy.animation_review_catalog import _model, _pool
@@ -60,10 +61,12 @@ def measure_wikiskill_bundle(profile):
 
 def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
                               resource_manifests, runtime_revision=None,
-                              model_policy=None,
+                              model_policy=None, profile_revision='1',
                               model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1'):
     before = deepcopy(current)
     existing, module = registry(current), role(profile)
+    require(type(profile_revision) is str and (profile_revision == '1'
+        or profile == PROFILES[4] and profile_revision == '2'), 'wikiskill_profile_revision_invalid')
     require(type(worker_image) is str and re.fullmatch(
         r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', worker_image),
         'wikiskill_worker_latest_digest_required')
@@ -74,8 +77,8 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
     require(previous_environment is not None, 'wikiskill_source_environment_required')
     model = _model(source.model_policy if model_policy is None else model_policy,
                    {'text', 'tool_calls'}, 'wikiskill_model_policy_required')
-    handler = implementation(profile)
-    contract = TaskContract.model_validate(dict(name=profile, revision='1',
+    handler = implementation(profile, profile_revision)
+    contract = TaskContract.model_validate(dict(name=profile, revision=profile_revision,
         task_schema=handler.task_schema, output_schema=handler.output_schema,
         required_tools=list(handler.required_tools),
         required_model_capabilities=list(required_model_capabilities(handler)),
@@ -87,7 +90,8 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
             dict(name=row['path'], sha256=row['sha256']) for row in manifests[module.BUNDLE_REVISION]['local_files']]))
     skills = 'skill_read' in handler.required_tools
     compilation_input = 'read_compilation_input' in handler.required_tools
-    compilation_environment = (COMPILATION_CHECKED_ENVIRONMENT_NAME if profile == PROFILES[4]
+    compilation_environment = (COMPILATION_CAPACITY_ENVIRONMENT_NAME if profile == PROFILES[4] and profile_revision == '2'
+        else COMPILATION_CHECKED_ENVIRONMENT_NAME if profile == PROFILES[4]
         else COMPILATION_EVIDENCE_ENVIRONMENT_NAME if profile == PROFILES[3]
         else COMPILATION_INPUT_ENVIRONMENT_NAME)
     if compilation_input:
@@ -105,7 +109,7 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
         else 'wikiskill-compile-v3' if profile == PROFILES[3]
         else 'wikiskill-compile-v2' if profile == PROFILES[2]
         else 'wikiskill-compile' if profile == PROFILES[0] else 'joint-plan-skills')
-    binding_data = dict(id=prefix + '-pi', revision='v1', profile=profile, profile_revision='1',
+    binding_data = dict(id=prefix + '-pi', revision='v1', profile=profile, profile_revision=profile_revision,
         engine='pi', adapter_revision=PI_ADAPTER_REVISION,
         bundle=dict(name=bundle.name, revision=bundle.revision),
         tool_environment=dict(name=environment.name, revision=environment.revision),
@@ -113,7 +117,7 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
     fingerprint = binding_fingerprint(contract, bundle, environment, ExecutionBinding.model_validate(binding_data))
     binding_data['revision'] = 'binding-' + fingerprint[:20]
     binding = ExecutionBinding.model_validate(binding_data)
-    route = dict(profile=profile, profile_revision='1', binding_id=binding.id,
+    route = dict(profile=profile, profile_revision=profile_revision, binding_id=binding.id,
                  binding_revision=binding.revision, enabled=False)
     name = prefix + '-pi-' + fingerprint[:20]
     worker = dict(deepcopy(pool), pool_id=name, binding_id=binding.id,
@@ -133,7 +137,7 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
     append_row(merged, 'kubernetes_workers', worker, ('pool_id',))
     host = HostConfig.model_validate(dict(schema_version=1, engine='pi',
         binding_id=binding.id, binding_revision=binding.revision,
-        profile=dict(name=profile, revision='1', enabled=False,
+        profile=dict(name=profile, revision=profile_revision, enabled=False,
             runtime_revision=environment.runtime_revision, image_digest=environment.image_digest,
             max_timeout_seconds=contract.max_timeout_seconds),
         model=dict(model=model.model, provider=model.provider, api='openai-responses', proxy_base_url=model_proxy_url),
@@ -145,7 +149,7 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
                 else merged[key] == old, 'wikiskill_existing_catalog_changed')
     require(current == before, 'wikiskill_current_catalog_mutated')
     return merged, {profile: host.model_dump(mode='json', exclude_none=True)}, dict(
-        schema='video.wikiskill-catalog-preparation.v1', profile=profile,
+        schema='video.wikiskill-catalog-preparation.v1', profile=profile, profile_revision=profile_revision,
         before_sha256=digest(before), after_sha256=digest(merged),
         combination_sha256=fingerprint, binding_id=binding.id, binding_revision=binding.revision,
         worker_pool_id=name, worker_host_config_map=name,

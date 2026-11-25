@@ -245,7 +245,7 @@ class WorkerHost:
                 raise ServiceError('invalid_lease', 422)
             self.policy.task_validator(envelope.task)
             from .profiles import implementation
-            profile = implementation(envelope.profile)
+            profile = implementation(envelope.profile, envelope.profile_revision)
             if (profile.task_schema != envelope.task_schema or profile.output_schema != envelope.output_schema):
                 raise ServiceError('execution_schema_mismatch', 422)
             profile.validate_task(envelope.task)
@@ -372,7 +372,7 @@ class WorkerHost:
         watchdog.start()
         try:
             from .profiles import implementation
-            profile = implementation(envelope.profile)
+            profile = implementation(envelope.profile, envelope.profile_revision)
             staged_input = staged_checkpoint = None
             if envelope.inputs:
                 staged_input = stage_inputs(self.control_dir / 'input-sources',

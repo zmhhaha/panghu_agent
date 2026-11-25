@@ -196,9 +196,9 @@ def test_verified_extension_and_exact_environment_bind_image_runtime_and_bytes(m
 
 def test_domain_uses_only_fixed_reader_and_write(monkeypatch):
     from agent_service import domain_runtime
-    monkeypatch.setattr(domain_runtime, 'implementation', lambda name:SimpleNamespace(
+    monkeypatch.setattr(domain_runtime, 'implementation', lambda name, revision='1':SimpleNamespace(
         required_tools=('read_compilation_input','write')))
-    profile = domain_runtime.DomainExecutionProfile(SimpleNamespace(name='fixture.v1'), 'fixture',
+    profile = domain_runtime.DomainExecutionProfile(SimpleNamespace(name='fixture.v1', revision='1'), 'fixture',
         extensions=(tool.COMPILATION_INPUT_EXTENSION,))
     assert profile.allowed_tools == ('read_compilation_input','write')
     assert profile.extension_paths == (tool.COMPILATION_INPUT_EXTENSION,)

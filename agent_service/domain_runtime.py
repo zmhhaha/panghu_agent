@@ -21,7 +21,7 @@ class DomainExecutionProfile(ExecutionProfile):
 
     def __init__(self, policy, bundle_revision, *, extensions=()):
         self.policy, self.bundle_revision = policy, bundle_revision
-        self.impl = implementation(policy.name)
+        self.impl = implementation(policy.name, policy.revision)
         # Pi 0.99.2 applies --tools to registered extension tools as well as
         # builtins. Select precisely the domain contract's supported tools;
         # merely loading the academic extension does not activate its tools.

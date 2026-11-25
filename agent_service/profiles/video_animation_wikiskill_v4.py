@@ -5,11 +5,13 @@ The v4 collector expands only manifest-index addresses, then applies the same
 whole-library release validation. It never authors or repairs Skill prose.
 """
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 from .video import _read, decode_video_json
 from .video_animation_wikiskill import VideoAnimationWikiSkillProfile, BUNDLE_FILES
 from ..animation_wikiskill_contract import (INPUT_NAME, RESULT_NAME, OUTPUT_MAX_BYTES,
+    CAPACITY_INPUT_TOTAL_MAX_BYTES, compilation_limits,
     validate_input, validate_input_files, normalize_agent_result, validate_result, require)
 from ..animation_wikiskill_compact import expand_compact_result
 from ..contracts import InlineFile, canonical_bytes
@@ -47,6 +49,16 @@ class VideoAnimationWikiSkillV4Profile(VideoAnimationWikiSkillProfile):
     name = PROFILE
     required_tools = ('read_compilation_input', 'write', 'check_compilation_output')
 
+    def __init__(self, profile_revision='1'):
+        compilation_limits(profile_revision)
+        self.profile_revision = profile_revision
+        self.limits = (replace(super().limits, max_input_total_bytes=CAPACITY_INPUT_TOTAL_MAX_BYTES)
+            if profile_revision == '2' else super().limits)
+
+    def _input(self, workspace, task, *, input_root=None):
+        return super()._input(workspace, task, input_root=input_root,
+            compilation_revision=self.profile_revision)
+
     def build_prompt(self, task):
         self.validate_task(task)
         bundle = verified_bundle()
@@ -69,7 +81,7 @@ class VideoAnimationWikiSkillV4Profile(VideoAnimationWikiSkillProfile):
         verified_bundle()
         require(type(proof) is StopEvidence and proof.execution_id == envelope.attempt_id
             and proof.all_writers_stopped is True and bool(proof.resource_ids), 'writers_not_stopped')
-        require(envelope.profile == self.name and envelope.profile_revision == '1',
+        require(envelope.profile == self.name and envelope.profile_revision == self.profile_revision,
                 'animation_wikiskill_profile_binding_mismatch')
         document, files = self._input(workspace, envelope.task)
         require(not envelope.checkpoint_inputs and envelope.checkpoint_ref is None
@@ -78,6 +90,7 @@ class VideoAnimationWikiSkillV4Profile(VideoAnimationWikiSkillProfile):
                 == {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()},
             'animation_wikiskill_input_binding_mismatch')
         output = decode_video_json(_read(workspace, 'output.json', OUTPUT_MAX_BYTES))
-        expanded = expand_compact_result(output, document)
-        result = validate_result(normalize_agent_result(expanded), envelope.task['input_sha256'], document)
+        expanded = expand_compact_result(output, document, compilation_revision=self.profile_revision)
+        result = validate_result(normalize_agent_result(expanded), envelope.task['input_sha256'], document,
+            compilation_revision=self.profile_revision)
         return [InlineFile.from_bytes(RESULT_NAME, canonical_bytes(result))]

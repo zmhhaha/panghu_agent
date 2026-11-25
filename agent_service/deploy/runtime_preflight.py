@@ -196,7 +196,7 @@ class RuntimePreflightAuthority:
                 and capability.get('pi_cage_revision') == PI_CAGE_REVISION
                 and type(capability.get('node_version')) is str
                 and capability.get('package_measured') is True
-                and capability.get('allowed_tools') == list(implementation(self.policy.name).required_tools),
+                and capability.get('allowed_tools') == list(implementation(self.policy.name, self.policy.revision).required_tools),
                 'runtime_preflight_capability_unverified')
             require(type(isolation) is dict and all(isolation.get(key) is True for key in ISOLATION)
                 and isolation.get('uid') == [self.uid + 2] * 3 and isolation.get('groups') == [],

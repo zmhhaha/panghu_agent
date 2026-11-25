@@ -175,7 +175,7 @@ class ProbeAuthority:
         task, files = (fixture(config.profile.name) if scenario is None else
                        (scenario.document['task'], scenario.files))
         from agent_service.profiles import implementation
-        implementation(config.profile.name).validate_task(task)
+        implementation(config.profile.name, config.profile.revision).validate_task(task)
         refs = []
         for name, raw in sorted(files.items()):
             item = self.store.put_input('candidate-probe', 'administrator', name, raw)

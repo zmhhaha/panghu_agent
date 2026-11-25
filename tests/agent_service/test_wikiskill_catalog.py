@@ -107,6 +107,28 @@ def test_v2_environment_binds_extension_and_full_image_runtime_identity():
         assert COMPILATION_INPUT_EXTENSION_SHA256 in observed['revision']
 
 
+def test_capacity_contract_is_additive_and_preserves_historical_v4_authority():
+    from agent_service.compilation_input_tools import (COMPILATION_CAPACITY_ENVIRONMENT_NAME,
+        COMPILATION_CHECKED_ENVIRONMENT_NAME)
+    profile = 'video.animation-wikiskill-compile.v4'
+    previous, old_hosts, _ = prepare(profile)
+    frozen = deepcopy(previous)
+    merged, hosts, receipt = prepare(profile, previous, profile_revision='2')
+    assert previous == frozen
+    for section in (*CATALOG_KEYS, 'kubernetes_workers', 'callers'):
+        assert merged[section][:len(frozen[section])] == frozen[section]
+    admitted = registry(merged)
+    assert admitted.contract(profile, '1').max_input_total_bytes == 32 * 1024 * 1024
+    assert admitted.contract(profile, '2').max_input_total_bytes == 64 * 1024 * 1024
+    assert old_hosts[profile]['execution_catalog']['tool_environments'][0]['name'] == COMPILATION_CHECKED_ENVIRONMENT_NAME
+    assert hosts[profile]['execution_catalog']['tool_environments'][0]['name'] == COMPILATION_CAPACITY_ENVIRONMENT_NAME
+    config, policy, binding = candidate_config(hosts[profile])
+    assert config.profile.revision == policy.revision == binding.profile_revision == '2'
+    assert policy.max_input_total_bytes == 64 * 1024 * 1024
+    assert not policy.enabled and binding.acceptance is None
+    assert receipt['profile_revision'] == '2' and receipt['acceptance_created'] is False
+
+
 def test_v2_preparation_rejects_changed_fixed_input_reader(tmp_path, monkeypatch):
     from agent_service import compilation_input_tools
     changed = tmp_path / 'read_compilation_input_extension.mjs'
