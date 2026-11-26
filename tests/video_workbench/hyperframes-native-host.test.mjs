@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {existsSync,readFileSync,mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {captureMethodFrames} from '../../video_workbench/animation_method_host.mjs';
+import {CANVAS_FRAME_STATE, captureMethodFrames as captureLearningFrames} from '../../video_workbench/video_learning_host.mjs';
 import {capturePicture} from '../../video_workbench/picture_learning_host.mjs';
 import * as engineRuntime from '../../video_workbench/motion_renderer/engine_runtime.mjs';
 import * as projectRuntime from '../../video_workbench/motion_renderer/hyperframes_project.mjs';
@@ -59,21 +60,23 @@ const unseededCanvas=seededCanvas.replace(
  'let seed=0x13579bdf;const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return (seed>>>0)/4294967296;};',
  'const random=()=>Math.random();');
 
-async function capture(engine,html){
+async function capture(engine,html,{learning=false,resetCanvas=false,legacyBridge=false}={}){
  mkdirSync(evidence,{recursive:true});const root=mkdtempSync(join(evidence,'hyperframes-'+engine+'-'));
  const project={schema:'video.hyperframes-project.v1',project_id:'real-core-'+engine,
   width:320,height:180,fps:24,duration_seconds:1,entry:'scene.html',scenes:[
    {id:'scene',start_seconds:0,duration_seconds:1,entry:'scene.html',source_sha256:sha(html),engine}]};
  const request={schema:'video.animation-method-render-request.v3',engine,project,
-  project_sha256:sha(JSON.stringify(project)),legacy_bridge:false,
+  project_sha256:sha(JSON.stringify(project)),legacy_bridge:legacyBridge,
   constraints:{width:320,height:180,fps:24,duration_seconds:1},max_evidence_bytes:16*1024*1024};
+ if(resetCanvas)request.canvas_frame_state=CANVAS_FRAME_STATE;
  writeFileSync(join(root,'frozen-input.json'),JSON.stringify({scope:'technical_protocol_fixture',
   request,source_sha256:sha(html),core_sha256:HYPERFRAMES_CORE_SHA256},null,2),{flag:'wx'});
  writeFileSync(join(root,'fixture.html'),html,{flag:'wx'});
  const resources=new Map([['/scene.html',Buffer.from(html)]]);
  if(engine==='three')resources.set('/assets/three.module.min.js',readFileSync(join(assetsRoot,'three.module.min.js')));
  let result;
- try{result=await captureMethodFrames({chromium,request,resources,root,engineRuntime,executablePath,hyperFramesDist});}
+ const captureFrames=learning?captureLearningFrames:captureMethodFrames;
+ try{result=await captureFrames({chromium,request,resources,root,engineRuntime,executablePath,hyperFramesDist});}
  catch(error){writeFileSync(join(root,'rejected.json'),JSON.stringify({error:String(error),
   source_sha256:sha(html)},null,2),{flag:'wx'});throw error;}
  writeFileSync(join(root,'capture.json'),JSON.stringify(result,null,2));return result;
@@ -120,6 +123,39 @@ test('real core seeded random state survives forward/reverse/nonmonotonic/repeat
 test('real core rejects unfrozen random state before accepting encoded media',
  {skip:!available},async()=>{
  await assert.rejects(capture('canvas',unseededCanvas),/method_(reverse|absolute)_seek_mismatch/);
+});
+
+test('video learning resets a legacy visible Canvas before each trusted seek and preserves scene caches',
+ {skip:!available},async()=>{
+ const html=`<!doctype html><style>body{margin:0}</style>
+ <canvas id="output" width="320" height="180"></canvas>
+ <canvas id="hidden" width="24" height="24" style="opacity:0"></canvas>
+ <script>
+ const cached=document.createElement('canvas');cached.width=cached.height=24;
+ const artwork=cached.getContext('2d');artwork.fillStyle='red';artwork.fillRect(0,0,24,24);
+ const hidden=document.querySelector('#hidden').getContext('2d');
+ hidden.fillStyle='blue';hidden.fillRect(0,0,24,24);
+ const output=document.querySelector('#output').getContext('2d',{alpha:false});
+ window.__animationExperiment={seek(time){
+  if(artwork.getImageData(0,0,1,1).data[0]!==255||hidden.getImageData(0,0,1,1).data[2]!==255)
+   throw Error('scene cache was reset');
+  output.fillStyle='white';output.fillRect(0,0,320,180);
+  if(time>0){output.shadowColor='black';output.shadowBlur=8;output.shadowOffsetX=12;}
+  output.drawImage(cached,20+time*20,20);output.drawImage(hidden.canvas,100,20);
+ }};
+ </script>`;
+ const options={learning:true,legacyBridge:true};
+ await assert.rejects(capture('canvas',html,options),/method_reverse_seek_mismatch/);
+ const result=await capture('canvas',html,{...options,resetCanvas:true});
+ assert.equal(result.frames[0].sha256,result.frames[24].sha256);
+ assert.deepEqual(result.canvas_frame_state,{policy:CANVAS_FRAME_STATE,seek_count:32,reset_contexts:32});
+ assert.equal(result.seek_checks.fresh_load_verified,true);
+});
+
+test('video learning canvas reset still rejects source drawing unfrozen random pixels',
+ {skip:!available},async()=>{
+ await assert.rejects(capture('canvas',unseededCanvas,{learning:true,resetCanvas:true}),
+  /method_(reverse|absolute)_seek_mismatch/);
 });
 
 function captureStill(html, options = {}) {
