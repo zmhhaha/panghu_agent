@@ -335,6 +335,25 @@ class KubernetesWorkerAdapter:
                     return False
         return bool(spec.get('containers'))
 
+    def _stop_proven(self, pod, allocation):
+        if self._all_terminated(pod):
+            return True
+        # Kubernetes terminalizes deleted, unscheduled Pods without container
+        # statuses. Node assignment is sticky for this exact Pod UID, so it
+        # never had a kubelet that could have started a writer.
+        spec, status, meta = (pod.get(key, {}) for key in ('spec', 'status', 'metadata'))
+        if (allocation.get('worker_start_claimed') is not False
+                or not meta.get('uid') or meta['uid'] != allocation.get('pod_uid')
+                or not meta.get('deletionTimestamp') or spec.get('nodeName')
+                or status.get('phase') != 'Failed' or status.get('reason') in {'NodeLost', 'Unknown'}
+                or any(status.get(key) for key in ('startTime', 'hostIP', 'hostIPs', 'podIP', 'podIPs',
+                    'containerStatuses', 'initContainerStatuses', 'ephemeralContainerStatuses'))):
+            return False
+        scheduled = [condition for condition in status.get('conditions', [])
+                     if condition.get('type') == 'PodScheduled']
+        return (len(scheduled) == 1 and scheduled[0].get('status') == 'False'
+                and scheduled[0].get('reason') == 'Unschedulable')
+
     def _pod(self, allocation, expected):
         pod = self._get('pods', allocation['pod_name'])
         if pod is None:
@@ -484,7 +503,7 @@ class KubernetesWorkerAdapter:
             return allocation
         pod = self._pod(allocation, expected)
         if pod is not None:
-            if not self._all_terminated(pod):
+            if not self._stop_proven(pod, allocation):
                 raise ServiceError('worker_stop_observation_changed', 503)
             self._delete_pod(allocation)
             pod = self._pod(allocation, expected)
@@ -508,7 +527,7 @@ class KubernetesWorkerAdapter:
         pod = None if allocation['retired'] else self._pod(allocation, expected)
         candidate = allocation['candidate_result']
         if candidate is None:
-            if pod is not None and self._all_terminated(pod):
+            if pod is not None and self._stop_proven(pod, allocation):
                 # The outer runtime can prove stop even if the worker never
                 # admitted or lost its result. Never invent usage or artifacts.
                 result = WorkerResult(state='failed', error_code='capsule_stopped_without_result')
@@ -532,7 +551,7 @@ class KubernetesWorkerAdapter:
         if allocation['stop_observed_at'] is None:
             self._delete_pod(allocation)
             pod = self._pod(allocation, expected)
-            if pod is None or not self._all_terminated(pod):
+            if pod is None or not self._stop_proven(pod, allocation):
                 raise ServiceError('worker_stop_pending', 409)
             allocation = self.store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256,
                                                           allocation['pod_uid'], float(self.clock()))
@@ -555,7 +574,7 @@ class KubernetesWorkerAdapter:
         allocation, expected, _ = self._allocation(envelope)
         if not allocation['retired']:
             pod = self._pod(allocation, expected)
-            if pod is not None and not self._all_terminated(pod):
+            if pod is not None and not self._stop_proven(pod, allocation):
                 self._delete_pod(allocation)
                 raise ServiceError('worker_stop_pending', 409)
         return self.result(envelope)
