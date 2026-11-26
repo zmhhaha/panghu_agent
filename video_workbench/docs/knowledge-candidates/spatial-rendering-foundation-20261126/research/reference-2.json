@@ -1,0 +1,38 @@
+{
+  "observation": {
+    "audio_intervals": [],
+    "frames": [],
+    "limitations": [
+      "只读源码/文档，未运行这套渲染器或复测Apple M3 Max性能。",
+      "视频UP与GitHub匿名账户没有独立身份交叉证明；仅确认材料与片名/三个示例一致。",
+      "MIT仅指所读仓库许可；上游各仓库许可需分别核对。"
+    ],
+    "motion_intervals": []
+  },
+  "provenance": {
+    "audit_sha256": "50a43d76d7ef82ac566167c99f4549d7f72e934808edc6b23b06831b6fc0c66c",
+    "external_urls_runtime_dependencies": false,
+    "license": "MIT",
+    "scope": "source_and_author_report_not_independent_performance_benchmark",
+    "v1_commit": "16a9bd434c40c50707ceab3987e0ca1ecaf3fd42",
+    "v2_commit": "c37fc23b28f9e9a00a9a1a27f93e8b4dfacd6245"
+  },
+  "raw_observations": [
+    "首版16a9bd434c40c50707ceab3987e0ca1ecaf3fd42：原生WebGL2/GLSL距离场或高度场；不是一个Three.js后处理插件。",
+    "代码确认N·L、向主光遮挡、粗糙度/Fresnel近似、AO、薄透镜采样、快门时间采样和ACES近似；不是完整PBR或全局路径追踪。",
+    "山湖4096² RG32F高度/植被图约128MiB，加载时烘焙后逐帧查表；分块gl.finish用于避免单次重绘看门狗，不减少总工作量。",
+    "后续c37fc23b28f9e9a00a9a1a27f93e8b4dfacd6245新增真实尺度/镜头/运动/灰模与检查，修正首版过大光圈；这些不能倒写为原视频已具备。",
+    "后续三次测试仍自报玩具车/模型火车/面团山；正确开关不能补救造型和构图。",
+    "render默认30fps而示例快门/颗粒基准24fps；CLAY参数必须场景实际实现；示例默认灰模不能仅凭URL启用。",
+    "README限定单镜头；声音、分镜、多镜头剪辑、字幕不在范围；Windows/GPU/驱动要另测。"
+  ],
+  "research_id": "spatial-foundation-zhenshi-code",
+  "source": {
+    "media_identity": {
+      "external_id": "syydaniel/zhenshi-kaiguan@c37fc23b28f9e9a00a9a1a27f93e8b4dfacd6245",
+      "platform": "github"
+    },
+    "url": "https://github.com/syydaniel/zhenshi-kaiguan/tree/c37fc23b28f9e9a00a9a1a27f93e8b4dfacd6245"
+  },
+  "title": "真实感开关公开源码：首版机制与后续修订边界"
+}

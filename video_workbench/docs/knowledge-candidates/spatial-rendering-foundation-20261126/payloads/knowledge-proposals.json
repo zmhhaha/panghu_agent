@@ -1,0 +1,172 @@
+[
+  {
+    "body": {
+      "applicability": [
+        "具有独立实体覆盖、绝对时钟、明确表面/层关系的Canvas绘画场景；本次只验证既有山水。"
+      ],
+      "content": "先保持共同基座、可见面、深度和独立实体覆盖，再由同坐标法线/主光指导湿笔、皴擦和勾骨。长笔沿途复核表面/明暗，不能只判断起点。浅墨颜料稀薄不等于山体透明，遮挡是宿主职责。该方法不是完整自阴影或光源重建。",
+      "counterexamples": [
+        {
+          "description": "只加噪点、全图明暗渐变或描全部网格边，不能修复错形体和错覆盖。",
+          "evidence_ids": [
+            "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8"
+          ]
+        }
+      ],
+      "limitations": [
+        "候选未发布/未采用。",
+        "未验证完整PBR、GPU性能、其它引擎、连续视听或跨题材迁移。",
+        "当前山水艺术认可仍为false。"
+      ],
+      "title": "共享表面先于光墨，淡墨实体仍须独立覆盖"
+    },
+    "change_kind": "create",
+    "change_note": "整理外部研究与ae06a9e本地实测；保留失败与范围，候选归档，不apply或发布。",
+    "evidence_ids": [
+      "exp_4a32bea4229ccc90aac295261630b19d4798f5b0d215a7a65c8ee7ca7b0d9c36",
+      "exp_b8f497d24915297e5b43e037b519a6e16d791c8efc4a88041983082e9e971364",
+      "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8",
+      "exp_dfc58173bcba7a18218cf3dee0468cd7665c88bb8a336d0d367f19ecf8f33633"
+    ],
+    "expected_revision": 0,
+    "page_id": "spatial-light-and-coverage",
+    "relations": [],
+    "status": "provisional"
+  },
+  {
+    "body": {
+      "applicability": [
+        "具有独立实体覆盖、绝对时钟、明确表面/层关系的Canvas绘画场景；本次只验证既有山水。"
+      ],
+      "content": "为运动物选择对象坐标，为共同地形选择明确共享世界坐标；固定seed/频率和三尺度含义。噪声接入笔触墨量、干湿或真实材质通道，不能把随机点当作岩层。需要改变轮廓的细节仍由形体或真实笔触表达。",
+      "counterexamples": [
+        {
+          "description": "纹理在表面滑动、均匀竖排线与任意墨点均可能削弱体积；现有样片的削木纹仍未艺术通过。",
+          "evidence_ids": [
+            "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8"
+          ]
+        }
+      ],
+      "limitations": [
+        "候选未发布/未采用。",
+        "未验证完整PBR、GPU性能、其它引擎、连续视听或跨题材迁移。",
+        "当前山水艺术认可仍为false。"
+      ],
+      "title": "结构纹理绑定坐标与尺度，三频只作材质线索"
+    },
+    "change_kind": "create",
+    "change_note": "整理外部研究与ae06a9e本地实测；保留失败与范围，候选归档，不apply或发布。",
+    "evidence_ids": [
+      "exp_4a32bea4229ccc90aac295261630b19d4798f5b0d215a7a65c8ee7ca7b0d9c36",
+      "exp_b8f497d24915297e5b43e037b519a6e16d791c8efc4a88041983082e9e971364",
+      "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8",
+      "exp_dfc58173bcba7a18218cf3dee0468cd7665c88bb8a336d0d367f19ecf8f33633"
+    ],
+    "expected_revision": 0,
+    "page_id": "spatial-anchored-texture",
+    "relations": [],
+    "status": "provisional"
+  },
+  {
+    "body": {
+      "applicability": [
+        "具有独立实体覆盖、绝对时钟、明确表面/层关系的Canvas绘画场景；本次只验证既有山水。"
+      ],
+      "content": "按明确作者距离/已知深度应用有限空气；transmittance只进入颜色/颜料，不取消实体coverage。云还承担方向、厚度、留白和前后穿插，不重复施加同一雾alpha，不用屏幕Y冒充真实深度。",
+      "counterexamples": [
+        {
+          "description": "一条水平白带、浓雾洗平主体或把远山设透明，不等于可靠景深；水墨留白不是细节缺失bug。",
+          "evidence_ids": [
+            "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8"
+          ]
+        }
+      ],
+      "limitations": [
+        "候选未发布/未采用。",
+        "未验证完整PBR、GPU性能、其它引擎、连续视听或跨题材迁移。",
+        "当前山水艺术认可仍为false。"
+      ],
+      "title": "空气调整颜料对比，云白与实体覆盖分别处理"
+    },
+    "change_kind": "create",
+    "change_note": "整理外部研究与ae06a9e本地实测；保留失败与范围，候选归档，不apply或发布。",
+    "evidence_ids": [
+      "exp_4a32bea4229ccc90aac295261630b19d4798f5b0d215a7a65c8ee7ca7b0d9c36",
+      "exp_b8f497d24915297e5b43e037b519a6e16d791c8efc4a88041983082e9e971364",
+      "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8",
+      "exp_dfc58173bcba7a18218cf3dee0468cd7665c88bb8a336d0d367f19ecf8f33633"
+    ],
+    "expected_revision": 0,
+    "page_id": "spatial-air-and-reserves",
+    "relations": [],
+    "status": "provisional"
+  },
+  {
+    "body": {
+      "applicability": [
+        "具有独立实体覆盖、绝对时钟、明确表面/层关系的Canvas绘画场景；本次只验证既有山水。"
+      ],
+      "content": "在初始计划决定静镜头、推进、平移或局部动画，不设必须动镜头。冻结世界/种子/资源并复用对象缓存，按绝对时间求视点。逐层检查完整取景范围/最大zoom与overscan，固定正交2.5D不声称任意绕行背面。",
+      "counterexamples": [
+        {
+          "description": "靠不断生成新山树代替镜头、只看端点不看全范围、位图无限放大或越界后补画，都可能浪费成本并破坏一致性。",
+          "evidence_ids": [
+            "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8"
+          ]
+        }
+      ],
+      "limitations": [
+        "候选未发布/未采用。",
+        "未验证完整PBR、GPU性能、其它引擎、连续视听或跨题材迁移。",
+        "当前山水艺术认可仍为false。"
+      ],
+      "title": "先定镜头与边界，再探索缓存世界"
+    },
+    "change_kind": "create",
+    "change_note": "整理外部研究与ae06a9e本地实测；保留失败与范围，候选归档，不apply或发布。",
+    "evidence_ids": [
+      "exp_4a32bea4229ccc90aac295261630b19d4798f5b0d215a7a65c8ee7ca7b0d9c36",
+      "exp_b8f497d24915297e5b43e037b519a6e16d791c8efc4a88041983082e9e971364",
+      "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8",
+      "exp_dfc58173bcba7a18218cf3dee0468cd7665c88bb8a336d0d367f19ecf8f33633"
+    ],
+    "expected_revision": 0,
+    "page_id": "spatial-camera-and-reuse",
+    "relations": [],
+    "status": "provisional"
+  },
+  {
+    "body": {
+      "applicability": [
+        "具有独立实体覆盖、绝对时钟、明确表面/层关系的Canvas绘画场景；本次只验证既有山水。"
+      ],
+      "content": "固定同内容/几何/布局/seed/时间/机位/分辨率/资源，分别关闭一项引导并独立冻结条件；保存全图、诊断与具体弱点。技术确定性/解码/成本证据不等于连续视听或艺术认可。当前内容未达预期前不默认换内容。",
+      "counterexamples": [
+        {
+          "description": "另一题材的分数不能替代当前山水用户认可；多变量迭代也不能全部归因于单一参数。",
+          "evidence_ids": [
+            "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8"
+          ]
+        }
+      ],
+      "limitations": [
+        "候选未发布/未采用。",
+        "未验证完整PBR、GPU性能、其它引擎、连续视听或跨题材迁移。",
+        "当前山水艺术认可仍为false。"
+      ],
+      "title": "同内容对照先于迁移，计量与艺术认可分开"
+    },
+    "change_kind": "create",
+    "change_note": "整理外部研究与ae06a9e本地实测；保留失败与范围，候选归档，不apply或发布。",
+    "evidence_ids": [
+      "exp_4a32bea4229ccc90aac295261630b19d4798f5b0d215a7a65c8ee7ca7b0d9c36",
+      "exp_b8f497d24915297e5b43e037b519a6e16d791c8efc4a88041983082e9e971364",
+      "exp_c08f47585701f19057e82d91f43ce6a0e43c3a8bd557573673318d7f04839df8",
+      "exp_dfc58173bcba7a18218cf3dee0468cd7665c88bb8a336d0d367f19ecf8f33633"
+    ],
+    "expected_revision": 0,
+    "page_id": "spatial-same-content-comparison",
+    "relations": [],
+    "status": "provisional"
+  }
+]

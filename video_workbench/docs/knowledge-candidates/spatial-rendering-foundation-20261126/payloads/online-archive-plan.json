@@ -1,0 +1,49 @@
+{
+  "execute_automatically": false,
+  "local_owner": "local-spatial-research",
+  "prohibited_actions": [
+    "apply_proposals",
+    "method acceptance",
+    "effect adoption",
+    "Skill publication",
+    "new generation",
+    "cross-content validation"
+  ],
+  "schema": "video.local-candidate-archive-plan.v1",
+  "service_scope": "Internal existing store workflow; not a fabricated public HTTP endpoint or a commission/model-operation import.",
+  "status": "prepared_for_root_review_not_executed",
+  "steps": [
+    {
+      "api": "AnimationMethodStore.create_research",
+      "payload_files": [
+        "research/reference-1.json",
+        "research/reference-2.json"
+      ],
+      "result_binding": "Preserve returned server record IDs/content hashes; do not reuse local UUIDs."
+    },
+    {
+      "api": "AnimationMethodStore.create_method",
+      "payload_file": "payloads/method-candidate.json",
+      "result_binding": "Replace research_record_ids with returned same-owner server IDs; package and guidance stay identical; keep status candidate."
+    },
+    {
+      "api": "AnimationKnowledgeStore.record_experience",
+      "payload_file": "payloads/experience-inputs.json",
+      "result_binding": "Record exact immutable documents under actual owner; preserve returned evidence identities."
+    },
+    {
+      "api": "AnimationKnowledgeStore.snapshot",
+      "payload": {
+        "experience_ids": "IDs returned by preceding step",
+        "page_ids": "Existing target page IDs after an actual owner-scoped read, or [] only if all are absent"
+      },
+      "result_binding": "Freeze actual target revisions before recording proposals; do not carry local snapshot SHA."
+    },
+    {
+      "api": "AnimationKnowledgeStore.record_proposals",
+      "payload_file": "payloads/knowledge-proposals.json",
+      "result_binding": "Rebind evidence/counterexample IDs and actual frozen snapshot_id; expected_revision=0/create only while target page is absent, otherwise use actual revision/revise."
+    }
+  ],
+  "target_owner_policy": "Use the authenticated actual owner; never reuse the local snapshot or local server IDs."
+}

@@ -1,0 +1,31 @@
+{
+  "artistic_acceptance": false,
+  "checks": [
+    "native source/artifact identities match existing ae06a9e evidence",
+    "existing skill package build/validate",
+    "existing research and method validators",
+    "existing store candidate creation",
+    "experience/snapshot/proposal validation",
+    "reopen/idempotent replay",
+    "zero Wiki page revisions",
+    "zero method publications/acceptances",
+    "URL-free self-contained runtime files"
+  ],
+  "effects_adopted": 0,
+  "local_validation_not_server_import": true,
+  "manifest_sha256": "5d6de338e4454cf35e3d025e73d11a287c84e1a3720387d1ce5b8762140e434b",
+  "method_candidate_id": "3a6d8a6e-2e8f-4116-a0c5-98ce4ef553ae",
+  "new_model_calls": 0,
+  "new_renders": 0,
+  "no_network": true,
+  "pages_applied": 0,
+  "passed": true,
+  "proposal_id": "exp_03a7079d9274e7ea00bf0b4fde3bd6231c858ee3519f6e20682b2cab7ee14ebe",
+  "published_versions": 0,
+  "schema": "video.local-knowledge-candidate-validation.v1",
+  "skill_package_sha256": "bfef543c89b4e43670cd60b8f7d780f3469f26a924c3e834c3adcc5efec42e06",
+  "store_paths": {
+    "knowledge": "D:\\codex-work\\operations\\video-spatial-foundation-20261126\\knowledge-candidates\\spatial-rendering-foundation-20261126\\knowledge.sqlite3",
+    "methods": "D:\\codex-work\\operations\\video-spatial-foundation-20261126\\knowledge-candidates\\spatial-rendering-foundation-20261126\\methods.sqlite3"
+  }
+}
