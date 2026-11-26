@@ -1177,6 +1177,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         production_run_workflow.require_enabled()
         return production_run_store.resume_resources(owner, run_id, body.expected_revision, idempotency(idempotency_key))
 
+    @app.post('/api/production-runs/{run_id}/retry-module', status_code=202)
+    def retry_production_module(run_id: str, body: Revision, owner=Depends(mutation),
+                                idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.retry_module(owner, run_id, body.expected_revision, idempotency(idempotency_key))
+
     @app.post('/api/production-runs/{run_id}/cancel')
     def cancel_production_run(run_id: str, owner=Depends(mutation)):
         return production_run_store.cancel(owner, run_id)

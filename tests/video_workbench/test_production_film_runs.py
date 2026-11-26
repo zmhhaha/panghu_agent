@@ -272,6 +272,60 @@ def test_all_recordings_then_exact_native_modules_then_one_film_without_old_moti
     assert [scene['narration'] for scene in after['scenes']] == [scene['narration'] for scene in before['scenes']]
 
 
+def deadline_cancel_module(env, operation, *, requested=False):
+    with env.store.transaction() as db:
+        operation = deepcopy(operation)
+        operation.update(status='cancelled', stop_proven=True, submit_attempted=True,
+            job_id=str(uuid4()), cancel_requested=requested, cancel_attempts=1,
+            next_cancel_at=operation['deadline_at'] + 2,
+            finished_at=operation['deadline_at'] + 3)
+        db.execute('UPDATE film_module_operations SET document=? WHERE id=?',
+                   (json.dumps(operation), operation['id']))
+    env.runs.tick()
+
+
+def test_retry_deadline_cancelled_module_preserves_recordings_and_completed_prefix(env):
+    run = begin(env)
+    audio_phase(env)
+    first = children(env, 'film_module_operations')[0]
+    finish_module(env, first['id'])
+    env.runs.tick()
+    second = children(env, 'film_module_operations')[1]
+    deadline_cancel_module(env, second)
+    failed = env.runs.get(OWNER, run['id'])
+    assert failed['error'] == 'production_run_child_cancelled'
+    revision = env.store.project(OWNER, env.project['id'])['revision']
+
+    queued = env.runs.retry_module(OWNER, run['id'], revision, 'stopped-module-retry')
+    assert queued['status'] == 'queued' and queued['items'][0] == failed['items'][0]
+    assert queued['items'][1]['audio_version_id'] == failed['items'][1]['audio_version_id']
+    assert queued['module_retries'][0]['previous_operation_id'] == second['id']
+    assert env.runs.retry_module(OWNER, run['id'], revision, 'stopped-module-retry') == queued
+    env.runs.tick()
+
+    operations = children(env, 'film_module_operations')
+    assert len(operations) == 3
+    replacement = operations[-1]
+    assert replacement['id'] != second['id']
+    assert replacement['request'] == second['request']
+    assert replacement['request_key'] == queued['module_retries'][0]['replacement_intent_key']
+    assert len(children(env, 'audio_operations')) == 2
+    deadline_cancel_module(env, replacement)
+    with pytest.raises(ServiceError, match='production_run_module_retry_exhausted'):
+        env.runs.retry_module(OWNER, run['id'], revision, 'another-module-retry')
+
+
+def test_retry_module_rejects_explicit_child_cancel(env):
+    run = begin(env)
+    audio_phase(env)
+    first = children(env, 'film_module_operations')[0]
+    deadline_cancel_module(env, first, requested=True)
+    revision = env.store.project(OWNER, env.project['id'])['revision']
+    with pytest.raises(ServiceError, match='production_run_module_deadline_stop_unverified'):
+        env.runs.retry_module(OWNER, run['id'], revision, 'stopped-module-retry')
+    assert len(children(env, 'film_module_operations')) == 1
+
+
 @pytest.mark.parametrize('phase', ['module', 'render'])
 def test_lost_local_child_response_restart_finds_same_frozen_intent_without_reissue(env, monkeypatch, phase):
     run = begin(env)

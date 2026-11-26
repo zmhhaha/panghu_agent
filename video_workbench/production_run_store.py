@@ -124,6 +124,8 @@ class ProductionRunStore:
             result['progress']['done'] = sum(bool(item.get('world_source_sha256')) for item in raw_items) + int(run['status']=='completed')
         if 'resource_deadline_resumes' in run:
             result['resource_deadline_resumes'] = deepcopy(run['resource_deadline_resumes'])
+        if 'module_retries' in run:
+            result['module_retries'] = deepcopy(run['module_retries'])
         return result
 
     @staticmethod
@@ -1162,6 +1164,81 @@ class ProductionRunStore:
                     and inspect_wav(data).duration_seconds == metadata['duration_seconds'] == item['audio_seconds'],
                     'production_run_audio_binding_mismatch', 409)
 
+    def retry_module(self, owner, run_id, expected_revision, idem):
+        """Retry one deadline-cancelled module after its producer stopped."""
+        from .production_module_reuse import _child
+
+        require(type(expected_revision) is int and expected_revision >= 1)
+        require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
+        with self.store.lock, self.store.transaction() as db:
+            run = self._read(db, run_id, owner)
+            project = self.store._project(db, owner, run['project_id'])
+            retries = run.get('module_retries', [])
+            for receipt in retries:
+                if receipt['request_id'] == idem:
+                    require(receipt['expected_revision'] == expected_revision, 'idempotency_conflict', 409)
+                    return self.public(run, current=self._matches(run, project, db))
+
+            self.store._revision(project, expected_revision)
+            require(self._matches(run, project, db), 'production_run_inputs_changed', 409)
+            require(run['status'] == 'failed' and run['phase'] == 'module'
+                    and run['error'] == 'production_run_child_cancelled'
+                    and self._uses_film(run) and run.get('audio_mode', 'narration') == 'narration'
+                    and not (run.get('cancel_requested') or run.get('draining')
+                             or run.get('blocked_reason') or run.get('draft_render_id'))
+                    and all(intent['phase'] in {'audio', 'module'} and not intent.get('active')
+                            for intent in run['intents'].values())
+                    and digest(run['film']) == run['film_sha256'],
+                    'production_run_module_retry_unavailable', 409)
+            for row in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=? AND id<>?',
+                                  (owner, run['project_id'], run_id)):
+                require(not self._unfinished(json.loads(row[0])), 'production_run_in_progress', 409)
+            self._require_idle_project_children(db, run['project_id'])
+            self._require_recovery_recordings(db, run)
+
+            index = next((i for i, item in enumerate(run['items']) if not item.get('module_version_id')), None)
+            require(index is not None, 'production_run_module_retry_unavailable', 409)
+            name = 'module:' + str(index)
+            intent = run['intents'].get(name)
+            item = run['items'][index]
+            require(intent is not None and intent['index'] == index
+                    and all(not later.get('module_operation_id') and not later.get('module_version_id')
+                            for later in run['items'][index + 1:]),
+                    'production_run_module_retry_unavailable', 409)
+            require(not any(receipt['scene_id'] == item['scene_id'] for receipt in retries),
+                    'production_run_module_retry_exhausted', 409)
+            child = _child(db, run, intent)
+            require(child['id'] == item.get('module_operation_id')
+                    and child['kind'] == 'module' and child['status'] == 'cancelled'
+                    and child.get('submit_attempted') is True and child.get('job_id')
+                    and child.get('cancel_requested') is False and not child.get('version_id')
+                    and child.get('cancel_attempts', 0) > 0
+                    and child['created_at'] < child['deadline_at'] <= child['finished_at']
+                    and child['next_cancel_at'] > child['deadline_at'],
+                    'production_run_module_deadline_stop_unverified', 409)
+            for previous in range(index):
+                prior_item = run['items'][previous]
+                prior_child = _child(db, run, run['intents'].get('module:' + str(previous)))
+                require(prior_child['status'] == 'completed' and prior_child['id'] == prior_item['module_operation_id']
+                        and prior_child['version_id'] == prior_item['module_version_id']
+                        and prior_child['input_sha256'] == prior_item['module_input_sha256'],
+                        'production_run_module_binding_mismatch', 409)
+
+            immutable_request = {key: value for key, value in child['request'].items() if key != 'expected_revision'}
+            key = 'production-run:' + run_id + ':' + name + ':retry:' + uuid4().hex
+            run.setdefault('module_retries', []).append(dict(request_id=idem, expected_revision=expected_revision,
+                scene_id=item['scene_id'], previous_operation_id=child['id'], previous_job_id=child['job_id'],
+                previous_intent_key=intent['key'], previous_request_sha256=child['request_sha256'],
+                previous_input_sha256=child['input_sha256'], previous_deadline_at=child['deadline_at'],
+                previous_finished_at=child['finished_at'], previous_cancel_attempts=child['cancel_attempts'],
+                stop_proven=True, replacement_intent_key=key, created_at=time.time()))
+            run['intents'][name] = dict(phase='module', index=index, key=key, request=None, active=False,
+                previous_content_sha256=digest(immutable_request))
+            item.update(status='queued', module_status='queued', module_operation_id=None, error=None)
+            run.update(status='queued', error=None, finished_at=None)
+            self._write(db, run)
+            return self.public(run, current=True)
+
     def cancel(self, owner, run_id):
         with self.store.lock:
             with self.store.transaction() as db:
@@ -1570,6 +1647,10 @@ class ProductionRunStore:
         intent = run['intents'].get(name)
         revision = project['revision'] if intent is None or intent['request'] is None else intent['request']['expected_revision']
         request = self._film_child_request(run, phase, index, revision)
+        if intent and 'previous_content_sha256' in intent:
+            require(intent['previous_content_sha256'] == digest(
+                {key: value for key, value in request.items() if key != 'expected_revision'}),
+                'production_run_module_retry_inputs_changed', 409)
         request_sha256 = digest(dict(request=request, provider_speed=intent['provider_speed'])
                                 if intent and 'provider_speed' in intent else request)
         if intent is None:
