@@ -21,6 +21,8 @@ from .video_learning_source_handoff import decode_author_output as _decode_autho
 from ..animation_knowledge_contract import validate_snapshot
 from ..contracts import InlineFile, ServiceError, canonical_bytes, digest
 from ..engines import StopEvidence
+from ..learning_source_tools import SOURCE_ENVIRONMENTS
+from ..learning_source_validation import validate_source_syntax
 from .. import reference_observation_contract as remote_observation
 
 
@@ -400,4 +402,7 @@ class VideoReferenceLearningProfile:
             _decode_author_output(_read(workspace, 'output.json', OUTPUT_MAX_BYTES)))
         source_handoff.collect_source(workspace, output, file_handoff=file_handoff)
         result = validate_result(output, envelope.task['input_sha256'], context)
+        binding = getattr(envelope, 'execution_binding', None)
+        if result['source'] is not None and binding is not None and binding.tool_environment_name in SOURCE_ENVIRONMENTS:
+            validate_source_syntax(result['source'])
         return [InlineFile.from_bytes(RESULT_NAME, canonical_bytes(result))]

@@ -71,7 +71,8 @@ SAFE_OUTPUT_CODES = frozenset({'invalid_workflow_evidence',
     'invalid_workflow_paper', 'invalid_workflow_contract',
     'invalid_research_json', 'research_artifact_too_large',
     'learning_output_manifest_file_invalid', 'learning_output_json_invalid',
-    'learning_source_manifest_invalid', 'learning_source_file_invalid', 'learning_source_utf8_invalid'})
+    'learning_source_manifest_invalid', 'learning_source_file_invalid', 'learning_source_utf8_invalid',
+    'learning_source_javascript_syntax_invalid', 'learning_source_syntax_check_unavailable'})
 _CODES = _CODES | SAFE_OUTPUT_CODES
 
 
