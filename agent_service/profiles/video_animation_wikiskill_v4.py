@@ -11,7 +11,7 @@ from pathlib import Path
 from .video import _read, decode_video_json
 from .video_animation_wikiskill import VideoAnimationWikiSkillProfile, BUNDLE_FILES
 from ..animation_wikiskill_contract import (INPUT_NAME, RESULT_NAME, OUTPUT_MAX_BYTES,
-    CAPACITY_INPUT_TOTAL_MAX_BYTES, compilation_limits,
+    CAPACITY_INPUT_TOTAL_MAX_BYTES, compilation_limits, compilation_native_max_seconds,
     validate_input, validate_input_files, normalize_agent_result, validate_result, require)
 from ..animation_wikiskill_compact import expand_compact_result
 from ..contracts import InlineFile, canonical_bytes
@@ -52,8 +52,9 @@ class VideoAnimationWikiSkillV4Profile(VideoAnimationWikiSkillProfile):
     def __init__(self, profile_revision='1'):
         compilation_limits(profile_revision)
         self.profile_revision = profile_revision
+        self.max_timeout_seconds = compilation_native_max_seconds(profile_revision)
         self.limits = (replace(super().limits, max_input_total_bytes=CAPACITY_INPUT_TOTAL_MAX_BYTES)
-            if profile_revision == '2' else super().limits)
+            if profile_revision in {'2', '3'} else super().limits)
 
     def _input(self, workspace, task, *, input_root=None):
         return super()._input(workspace, task, input_root=input_root,

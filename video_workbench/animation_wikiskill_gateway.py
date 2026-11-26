@@ -7,7 +7,7 @@ import time
 
 from agent_service.animation_wikiskill_contract import (
     INPUT_NAME, RESULT_NAME, INPUT_MAX_BYTES, OUTPUT_MAX_BYTES,
-    validate_input, validate_input_files, validate_result, require,
+    validate_input, validate_input_files, validate_result, require, compilation_native_max_seconds,
 )
 from .agent import _uuid, _sha, _finite_number
 from .animation_review_gateway import _AnimationGateway
@@ -38,7 +38,7 @@ class AnimationWikiSkillGateway(_AnimationGateway):
     input_limit, output_limit = INPUT_MAX_BYTES, OUTPUT_MAX_BYTES
 
     def __init__(self, client, profile_revision='1'):
-        require(type(profile_revision) is str and profile_revision in {'1', '2'},
+        require(type(profile_revision) is str and profile_revision in {'1', '2', '3'},
                 'animation_wikiskill_compiler_revision_invalid')
         super().__init__(client, profile_revision=profile_revision)
 
@@ -91,10 +91,12 @@ class AnimationWikiSkillGateway(_AnimationGateway):
                 'animation_wikiskill_input_refs_invalid')
             names.add(ref['path'])
             ids.add(ref['input_id'])
-        require(type(collection_reserve_seconds) is int and collection_reserve_seconds in {0, 250},
+        allowed_reserves = {450} if self.profile_revision == '3' else {0, 250}
+        require(type(collection_reserve_seconds) is int and collection_reserve_seconds in allowed_reserves,
             'animation_wikiskill_publication_timing_invalid', 409)
         # Only the publisher's new timing marker supplies this reserve. The
-        # public Agent request and the compiler's existing 900s route stay fixed.
+        # public schemas and old compiler clocks remain fixed. The new compiler
+        # revision has its own admitted 3600s route and outer collection margin.
         execution_deadline = deadline_at - collection_reserve_seconds
         route = self.preflight(execution_deadline)
         remaining = execution_deadline - time.time()
@@ -102,7 +104,8 @@ class AnimationWikiSkillGateway(_AnimationGateway):
         request = dict(api_version='1', profile=self.profile, profile_revision=self.profile_revision,
             business_ref=self.business_prefix + operation_id, task=dict(input_sha256=hashlib.sha256(raw).hexdigest()),
             inputs=[dict(row) for row in input_refs], execution_deadline_at=execution_deadline,
-            timeout_seconds=min(900, route['max_timeout_seconds'], math.ceil(remaining)))
+            timeout_seconds=min(compilation_native_max_seconds(self.profile_revision),
+                route['max_timeout_seconds'], math.ceil(remaining)))
         def admit():
             response = self._remote(self.client.submit, request, idempotency_key=key)
             return self._checked_job(response, operation_id=operation_id)

@@ -15,6 +15,7 @@ from agent_service.compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT
     COMPILATION_CAPACITY_ENVIRONMENT_NAME,
     compilation_input_environment_revision, verified_compilation_input_extension)
 from agent_service.contracts import digest
+from agent_service.animation_wikiskill_contract import compilation_native_max_seconds
 from agent_service.deploy.animation_review_catalog import _model, _pool
 from agent_service.deploy.video_catalog import append_row, registry, require
 from agent_service.profiles import implementation
@@ -66,7 +67,7 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
     before = deepcopy(current)
     existing, module = registry(current), role(profile)
     require(type(profile_revision) is str and (profile_revision == '1'
-        or profile == PROFILES[4] and profile_revision == '2'), 'wikiskill_profile_revision_invalid')
+        or profile == PROFILES[4] and profile_revision in {'2', '3'}), 'wikiskill_profile_revision_invalid')
     require(type(worker_image) is str and re.fullmatch(
         r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', worker_image),
         'wikiskill_worker_latest_digest_required')
@@ -82,7 +83,8 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
         task_schema=handler.task_schema, output_schema=handler.output_schema,
         required_tools=list(handler.required_tools),
         required_model_capabilities=list(required_model_capabilities(handler)),
-        max_timeout_seconds=900 if profile in COMPILER_PROFILES else 600, **handler.limits.as_dict()))
+        max_timeout_seconds=compilation_native_max_seconds(profile_revision) if profile in COMPILER_PROFILES else 600,
+        **handler.limits.as_dict()))
     bundle = CapabilityBundle.model_validate(dict(name=module.BUNDLE_REVISION,
         revision=module.BUNDLE_REVISION, source='original-local-' + module.BUNDLE_REVISION,
         license='MIT', required_tools=list(handler.required_tools),
@@ -90,7 +92,7 @@ def prepare_wikiskill_catalog(current, *, profile, worker_image, source_pool_id,
             dict(name=row['path'], sha256=row['sha256']) for row in manifests[module.BUNDLE_REVISION]['local_files']]))
     skills = 'skill_read' in handler.required_tools
     compilation_input = 'read_compilation_input' in handler.required_tools
-    compilation_environment = (COMPILATION_CAPACITY_ENVIRONMENT_NAME if profile == PROFILES[4] and profile_revision == '2'
+    compilation_environment = (COMPILATION_CAPACITY_ENVIRONMENT_NAME if profile == PROFILES[4] and profile_revision in {'2', '3'}
         else COMPILATION_CHECKED_ENVIRONMENT_NAME if profile == PROFILES[4]
         else COMPILATION_EVIDENCE_ENVIRONMENT_NAME if profile == PROFILES[3]
         else COMPILATION_INPUT_ENVIRONMENT_NAME)
