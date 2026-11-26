@@ -11,6 +11,7 @@ from agent_service.contracts import digest
 from agent_service.deploy.animation_review_catalog import _model, _pool
 from agent_service.deploy.video_catalog import append_row, registry, require
 from agent_service.picture_learning_tools import ENVIRONMENT_NAME, environment_revision, verified_extensions
+from agent_service.learning_source_tools import checked_environment_revision, verified_source_check_extension
 from agent_service.profiles import implementation
 from agent_service.profiles import video_picture_learning as picture
 from agent_service.registry import (CapabilityBundle, ExecutionBinding, TaskContract,
@@ -40,7 +41,7 @@ def measure_picture_learning_bundle():
 
 def prepare_picture_learning_catalog(current, *, worker_image, resource_manifests,
         source_pool_id, author_model_policy=None, review_model_policy=None, caller=None,
-        runtime_revision=None, register_caller=True,
+        runtime_revision=None, register_caller=True, checked_source=False,
         model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1'):
     """Inherit confinement, never readiness, credentials or old role acceptance."""
     before = deepcopy(current)
@@ -49,6 +50,9 @@ def prepare_picture_learning_catalog(current, *, worker_image, resource_manifest
         r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', worker_image),
         'picture_learning_worker_latest_digest_required')
     require(type(register_caller) is bool, 'picture_learning_caller_registration_invalid')
+    require(type(checked_source) is bool, 'picture_learning_checked_source_invalid')
+    if checked_source:
+        verified_source_check_extension()
     manifests, _ = measure_picture_learning_bundle()
     require(resource_manifests == manifests, 'picture_learning_bundle_changed')
     rows = manifests[picture.BUNDLE_REVISION]['local_files']
@@ -84,10 +88,13 @@ def prepare_picture_learning_catalog(current, *, worker_image, resource_manifest
             required_tools=list(handler.required_tools), resources=[
                 dict(name='manifest.json', sha256=picture.BUNDLE_MANIFEST_SHA256),
                 *[dict(name=row['path'], sha256=row['sha256']) for row in rows]]))
-        environment_data = dict(name=ENVIRONMENT_NAME, tools=list(handler.required_tools),
+        checked_author = checked_source and role == 'author'
+        environment_data = dict(name=ENVIRONMENT_NAME + '-checked-source' if checked_author else ENVIRONMENT_NAME,
+            tools=list(handler.required_tools),
             capabilities=[handler.output_schema], image_digest=worker_image.rsplit('@', 1)[1],
             runtime_revision=runtime_revision or source_environment.runtime_revision)
-        environment_data['revision'] = environment_revision(environment_data)
+        environment_data['revision'] = (checked_environment_revision(environment_data) if checked_author else
+            environment_revision(environment_data))
         environment = ToolEnvironment.model_validate(environment_data)
         binding_data = dict(id='picture-learning-' + role + '-pi', revision='v1', profile=name,
             profile_revision='1', engine='pi', adapter_revision=PI_ADAPTER_REVISION,

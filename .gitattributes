@@ -17,6 +17,10 @@ agent_service/compilation_output_preflight.mjs text eol=lf
 agent_service/read_compilation_capacity_extension.mjs text eol=lf
 agent_service/checked_compilation_capacity_extension.mjs text eol=lf
 agent_service/picture_learning_extension.mjs text eol=lf
+agent_service/reference_learning_extension.mjs text eol=lf
+agent_service/learning_source_write_extension.mjs text eol=lf
+agent_service/learning_source_validation.py text eol=lf
+agent_service/learning_source_syntax.mjs text eol=lf
 agent_service/Dockerfile* text eol=lf
 # Engine/host identities and upstream assets are hashes of exact bytes.
 video_workbench/motion_renderer/engine_runtime.mjs text eol=lf

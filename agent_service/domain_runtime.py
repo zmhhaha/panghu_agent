@@ -167,6 +167,15 @@ class DomainExecutionProfile(ExecutionProfile):
     def build_prompt(self, wire):
         self.validate(wire)
         text = self.impl.build_prompt(wire['task'])
+        from .learning_source_tools import SOURCE_ENVIRONMENTS
+        if (self.policy.execution_binding is not None
+                and self.policy.execution_binding.tool_environment_name in SOURCE_ENVIRONMENTS):
+            text += ('\nThe write tool checks your handoff after writing output.json. '
+                     'If it reports a JavaScript syntax error, correct the indicated source file '
+                     'and write output.json again to recheck the final files. For multiline '
+                     'JavaScript strings use template literals or explicit escaped line breaks. '
+                     'Finish after write reports source_syntax=checked. This check parses '
+                     'JavaScript and the result contract. The host performs rendering separately.\n')
         if self.policy.name.startswith('ppt.'):
             if (self._handoff_inputs is None or self._handoff_workspace is None
                     or self._handoff_task_digest != digest(wire['task'])):

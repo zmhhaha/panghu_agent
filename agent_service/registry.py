@@ -16,6 +16,7 @@ from pydantic import Field, field_validator, model_validator
 from .contracts import (ExecutionBindingPins, ProfilePolicy, ProfileRegistry,
                         WireModel, digest, safe_relative_path)
 from .profiles import implementation
+from .learning_source_tools import SOURCE_ENVIRONMENTS, checked_environment_revision
 from .catalog_limits import (CATALOG_READER_MAX_BYTES, CONTRACT_RECORD_LIMIT, HISTORY_RECORD_LIMIT,
                              validate_catalog_budget)
 
@@ -178,7 +179,12 @@ class ToolEnvironment(_Record):
 
     @model_validator(mode='after')
     def fixed_input_reader(self):
-        if self.name == 'tools-pi-reference-learning':
+        if self.name in SOURCE_ENVIRONMENTS:
+            if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
+                    or self.capabilities != (SOURCE_ENVIRONMENTS[self.name],)
+                    or self.revision != checked_environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Checked source requires its fixed author tool environment')
+        elif self.name == 'tools-pi-reference-learning':
             from .reference_learning_tools import environment_revision
             if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
                     or not set(self.capabilities) <= {'video-reference-learning-author-output.v1',

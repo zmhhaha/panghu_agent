@@ -6,6 +6,8 @@ import. A quarantined attempt retains its execution slot; a lease is not stop pr
 """
 from __future__ import annotations
 
+from .worker_events import valid_worker_payload
+
 from contextlib import contextmanager
 import hashlib
 import math
@@ -143,7 +145,6 @@ _CODE = re.compile(r"[a-z][a-z0-9_.-]{0,63}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _RESOURCE_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
 _POD_UID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
-_WORKER_EVENT_KINDS = frozenset({"pi_event", "runtime_finished", "engine_started", "engine_progress"})
 
 
 def _name(value):
@@ -1032,9 +1033,7 @@ class Store(FileStoreMixin):
         for index, item in enumerate(items, after + 1):
             if (not isinstance(item, dict) or set(item) != {"seq", "type", "payload"}
                     or type(item["seq"]) is not int or item["seq"] != index
-                    or item["type"] != "engine.progress" or not isinstance(item["payload"], dict)
-                    or set(item["payload"]) != {"event"} or not isinstance(item["payload"]["event"], str)
-                    or item["payload"]["event"] not in _WORKER_EVENT_KINDS):
+                    or item["type"] != "engine.progress" or not valid_worker_payload(item["payload"])):
                 raise ServiceError("invalid_worker_events", 422)
         with self._tx() as conn:
             row = self._worker_current(conn, job_id, attempt_id, fence)

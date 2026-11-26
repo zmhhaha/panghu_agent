@@ -454,6 +454,24 @@ def isolation_preflight(scope):
         source.cleanup()
 
 
+def _record_learning_source_check(event, observations):
+    if event.get('type') != 'tool_execution_end' or event.get('toolName') != 'write':
+        return
+    result = event.get('result')
+    details = result.get('details') if isinstance(result, dict) else None
+    check = details.get('learning_source_check') if isinstance(details, dict) else None
+    if not isinstance(check, dict) or len(observations) >= 32:
+        return
+    if check.get('source_syntax') == 'checked' and event.get('isError') is False:
+        observations.append({'source_syntax': 'checked'})
+    elif (check.get('source_syntax') == 'check_failed' and event.get('isError') is True
+            and check.get('code') == 'learning_source_javascript_syntax_invalid'
+            and check.get('path') in ('/scene.html', '/scene.js')):
+        observations.append(dict(source_syntax='check_failed', code='learning_source_javascript_syntax_invalid',
+            path=check['path'], **{key: check[key] for key in ('line', 'column')
+                if type(check.get(key)) is int and 1 <= check[key] <= 524290}))
+
+
 def build_candidate_driver(config, credentials, scope, stopper, observations):
     """Explicit admin-only factory using measured preflights, no acceptance file."""
     from agent_service.domain_runtime import DomainExecutionProfile
@@ -513,7 +531,22 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
             extensions += (verified_read_inputs_extension(),)
         except (OSError, ValueError):
             raise ServiceError('candidate_input_reader_integrity_invalid', 422) from None
-    profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
+    from agent_service.learning_source_tools import SOURCE_ENVIRONMENTS, verified_source_check_extension
+    profile_class = DomainExecutionProfile
+    if environment.name in SOURCE_ENVIRONMENTS:
+        try:
+            extensions += (verified_source_check_extension(),)
+        except (OSError, ValueError):
+            raise ServiceError('candidate_learning_source_checker_integrity_invalid', 422) from None
+        source_checks = observations['learning_source_checks'] = []
+
+        class CandidateCheckedLearningProfile(DomainExecutionProfile):
+            def observe_native_tool_event(self, event):
+                super().observe_native_tool_event(event)
+                _record_learning_source_check(event, source_checks)
+
+        profile_class = CandidateCheckedLearningProfile
+    profile = profile_class(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
