@@ -19,7 +19,8 @@ MAX_HISTORY = 32
 MAX_MEASUREMENT = 2**53-1
 _ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}\Z')
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
-_PHASES = {'generation','review','collaboration','repair','preview','render','export','retry'}
+MODEL_PHASES = frozenset({'generation','review','collaboration','repair'})
+_PHASES = MODEL_PHASES | {'preview','render','export','retry'}
 _UNMEASURED = object()
 
 
@@ -77,6 +78,22 @@ def _event(value):
     return deepcopy(value)
 
 
+def validate_reservation(*, id, phase, model_calls=0, model_tokens=0, render_seconds=0):
+    """Validate finite admission holds without treating estimates as spending.
+
+    Every admitted model operation needs both a call and a token allowance.
+    Actual settlement may still report unknown or overrun usage; neither is
+    replaced with this estimate or rejected to hide consumed resources.
+    """
+    _require(model_tokens is not None and render_seconds is not None,
+        'scene_space_reservation_measurement_invalid')
+    event=_event(dict(id=id,phase=phase,outcome='completed',model_calls=model_calls,
+        model_tokens=model_tokens,render_seconds=render_seconds))
+    if phase in MODEL_PHASES or model_calls or model_tokens:
+        _require(model_calls>0 and model_tokens>0,'scene_space_model_reservation_required')
+    return {key:value for key,value in event.items() if key!='outcome'}
+
+
 def validate_usage(value):
     """Validate content identity and all bounded accounting inputs."""
     _fields(value,('schema','lineage_id','plan_id','root_plan_sha256','plan_sha256',
@@ -131,7 +148,7 @@ def record_usage(ledger, *, id, phase, outcome, model_calls=_UNMEASURED,
     """
     checked=validate_usage(ledger)
     if model_calls is _UNMEASURED:
-        _require(type(phase) is str and phase not in {'generation','review','collaboration','repair'},
+        _require(type(phase) is str and phase not in MODEL_PHASES,
             'scene_space_usage_measurement_required')
         model_calls=0
     if model_tokens is _UNMEASURED:

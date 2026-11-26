@@ -7,8 +7,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from contextlib import contextmanager
+import base64
+import binascii
 import hashlib
+import io
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -21,10 +25,78 @@ from .scene_space_plan import freeze_plan, technical_retry
 
 PREFIX='/api/scene-space-renders'
 MAX_BODY=24*1024*1024
+MAX_PREVIEW_FRAMES=3
+MAX_PREVIEW_FRAME_BYTES=4*1024*1024
+PREVIEW_SCHEMA='video.scene-space-preview-frames.v1'
 
 
 def _require(ok,code='scene_space_render_request_invalid',status=422):
     if not ok:raise ServiceError(code,status)
+
+
+def _frame_limit(value):
+    _require(type(value) is int and 1<=value<=MAX_PREVIEW_FRAMES,
+        'scene_space_preview_frame_limit_invalid')
+    return value
+
+
+def _frame_response_limit(max_frames):
+    return _frame_limit(max_frames)*((MAX_PREVIEW_FRAME_BYTES+2)//3*4)+65536
+
+
+def _preview_metadata(row,operation_id):
+    _require(type(row) is dict and row.get('id')==operation_id
+        and row.get('status')=='completed' and row.get('stop_proven') is True,
+        'scene_space_preview_frames_unavailable',409)
+    result=row.get('result')
+    _require(type(result) is dict and result.get('mime')=='video/mp4'
+        and result.get('fps')==24 and type(result.get('frame_count')) is int
+        and 1<=result['frame_count']<=7200,'scene_space_preview_frames_unavailable',409)
+    viewport=dict(width=result.get('width'),height=result.get('height'))
+    _require(all(type(viewport[key]) is int and 1<=viewport[key]<=limit
+        for key,limit in (('width',1280),('height',720))),
+        'scene_space_preview_metadata_changed',409)
+    duration=result['frame_count']/24
+    _require(type(result.get('duration_seconds')) in (int,float)
+        and math.isfinite(result['duration_seconds']) and result['duration_seconds']==duration,
+        'scene_space_preview_metadata_changed',409)
+    identities={key:row.get(key) for key in ('request_sha256','plan_sha256','source_sha256')}
+    identities['snapshot_sha256']=result.get('snapshot_sha256')
+    _require(all(type(value) is str and len(value)==64 and all(c in '0123456789abcdef' for c in value)
+        for value in identities.values()) and result.get('plan_sha256')==identities['plan_sha256']
+        and result.get('source_sha256')==identities['source_sha256'],
+        'scene_space_preview_metadata_changed',409)
+    return dict(schema=PREVIEW_SCHEMA,operation_id=operation_id,**identities,
+        viewport=viewport,duration_seconds=duration)
+
+
+def _preview_frame(value,metadata,*,encoded=False):
+    code='scene_space_preview_frame_invalid'
+    expected={'timestamp_seconds','mime','bytes','sha256','content_base64'} if encoded else {'timestamp_seconds','mime','raw'}
+    _require(type(value) is dict and set(value)==expected,code,409)
+    timestamp=value['timestamp_seconds'];mime=value['mime']
+    _require(type(timestamp) in (int,float) and math.isfinite(timestamp)
+        and 0<=timestamp<metadata['duration_seconds'] and mime in ('image/png','image/jpeg'),code,409)
+    if encoded:
+        length=value['bytes'];content=value['content_base64']
+        _require(type(length) is int and 0<length<=MAX_PREVIEW_FRAME_BYTES
+            and type(content) is str and len(content)==4*((length+2)//3),code,409)
+        try:raw=base64.b64decode(content,validate=True)
+        except (ValueError,binascii.Error):raise ServiceError(code,409) from None
+        _require(len(raw)==length and type(value['sha256']) is str
+            and hashlib.sha256(raw).hexdigest()==value['sha256'],'scene_space_preview_frame_changed',409)
+    else:raw=value['raw']
+    _require(type(raw) is bytes and 0<len(raw)<=MAX_PREVIEW_FRAME_BYTES,code,409)
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(raw)) as image:
+            _require(image.format==('PNG' if mime=='image/png' else 'JPEG')
+                and image.size==(metadata['viewport']['width'],metadata['viewport']['height']),code,409)
+            image.verify()
+        with Image.open(io.BytesIO(raw)) as image:image.load()
+    except (OSError,ValueError,SyntaxError,Image.DecompressionBombError):
+        raise ServiceError(code,409) from None
+    return dict(timestamp_seconds=timestamp,mime=mime,raw=raw)
 
 
 class SceneSpaceRenderClient(CreationAPIClient):
@@ -55,6 +127,21 @@ class SceneSpaceRenderClient(CreationAPIClient):
     def video(self,owner,operation_id):
         identifier(operation_id)
         return self._request(owner,'GET',PREFIX+'/'+quote(operation_id,safe='')+'/video',artifact=True)
+
+    def frames(self,owner,operation_id,max_frames=3):
+        identifier(operation_id);_frame_limit(max_frames)
+        metadata=_preview_metadata(self.get(owner,operation_id),operation_id)
+        raw,mime=self._request(owner,'GET',PREFIX+'/'+quote(operation_id,safe='')+'/frames/'+str(max_frames),
+            artifact=True,response_limit=_frame_response_limit(max_frames))
+        _require(mime=='application/json','scene_space_preview_frame_invalid',409)
+        try:value=json.loads(raw)
+        except (ValueError,UnicodeError):raise ServiceError('scene_space_preview_frame_invalid',409) from None
+        _require(type(value) is dict and set(value)==set(metadata)|{'frames'}
+            and all(value.get(key)==item for key,item in metadata.items()),
+            'scene_space_preview_metadata_changed',409)
+        frames=value['frames']
+        _require(type(frames) is list and 1<=len(frames)<=max_frames,'scene_space_preview_frame_count_invalid',409)
+        return [_preview_frame(frame,metadata,encoded=True) for frame in frames]
 
     def capabilities(self,owner):
         return self._request(owner,'GET',PREFIX+'/capabilities')
@@ -310,6 +397,44 @@ class SceneSpaceRenderService:
             'scene_space_render_media_changed',409)
         return raw,row['result'].get('mime','video/mp4')
 
+    def _verified_frames(self,owner,operation_id,max_frames):
+        _frame_limit(max_frames)
+        with self._db() as db:row=self._load(db,owner,operation_id)
+        metadata=_preview_metadata(row,operation_id)
+        request=row['request'];frozen=request['scene_space']
+        plan=frozen['plan'] if frozen.get('schema')=='video.scene-space-frozen-plan.v1' else frozen
+        frame_range=request.get('frame_range',dict(start_frame=0,end_frame=plan['duration_frames']))
+        _require(digest(request)==row['request_sha256'] and metadata['viewport']==plan['viewport']
+            and metadata['duration_seconds']==(frame_range['end_frame']-frame_range['start_frame'])/24,
+            'scene_space_preview_metadata_changed',409)
+        verified=self.renderer.lookup(operation_id)
+        _require(type(verified) is dict and verified.get('status')=='rendered'
+            and verified.get('technical_passed') is True and verified.get('stop_proven') is True,
+            'scene_space_preview_frames_unavailable',409)
+        _require(type(verified.get('scene_space')) is dict and verified.get('source_sha256')==row['source_sha256']
+            and verified.get('scene_space',{}).get('plan_sha256')==row['plan_sha256']
+            and verified.get('scene_space_sha256')==metadata['snapshot_sha256']
+            and all(verified.get(key)==row['result'].get(key) for key in
+                ('sha256','frame_count','fps','mime','width','height','duration_seconds'))
+            and (row['render_request_sha256'] is None
+                or verified.get('render_request_sha256')==row['render_request_sha256']),
+            'scene_space_preview_result_changed',409)
+        frames=self.renderer.frames(operation_id,max_frames=max_frames)
+        _require(type(frames) is list and 1<=len(frames)<=max_frames,'scene_space_preview_frame_count_invalid',409)
+        return metadata,[_preview_frame(frame,metadata) for frame in frames]
+
+    def frames(self,owner,operation_id,max_frames=3):
+        return self._verified_frames(owner,operation_id,max_frames)[1]
+
+    def frames_response(self,owner,operation_id,max_frames=3):
+        metadata,frames=self._verified_frames(owner,operation_id,max_frames)
+        value=dict(metadata,frames=[dict(timestamp_seconds=frame['timestamp_seconds'],mime=frame['mime'],
+            bytes=len(frame['raw']),sha256=hashlib.sha256(frame['raw']).hexdigest(),
+            content_base64=base64.b64encode(frame['raw']).decode('ascii')) for frame in frames])
+        _require(len(canonical_bytes(value))<=_frame_response_limit(max_frames),
+            'scene_space_preview_frames_too_large',413)
+        return value
+
 
 def route_private(handler,owner,method,path,body=None):
     if not (path==PREFIX or path.startswith(PREFIX+'/')):return False
@@ -321,6 +446,9 @@ def route_private(handler,owner,method,path,body=None):
         elif len(pieces)==2 and pieces[0]=='requests':value=service.lookup(owner,unquote(pieces[1]))
         elif len(pieces)==2 and pieces[1]=='video':
             raw,mime=service.video(owner,unquote(pieces[0]));handler._send(raw,raw=True,mime=mime);return True
+        elif len(pieces) in (2,3) and pieces[1]=='frames':
+            _require(len(pieces)==2 or pieces[2] in ('1','2','3'),'scene_space_preview_frame_limit_invalid')
+            value=service.frames_response(owner,unquote(pieces[0]),int(pieces[2]) if len(pieces)==3 else 3)
         elif len(pieces)==1 and pieces[0]:value=service.get(owner,unquote(pieces[0]))
         else:raise ServiceError('scene_space_render_not_found',404)
         handler._send(value);return True

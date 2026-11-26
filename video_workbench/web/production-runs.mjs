@@ -5,6 +5,7 @@ const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'stale']);
 const STATUS = { queued: '等待制作', running: '制作中', completed: '草稿待审阅', failed: '制作未完成', cancelled: '已取消', stale: '项目内容已变化' };
 const PHASE = { audio: '制作全片配音', resources: '按方案准备动画与声音资源', motion: '按实际录音制作动画', module: '编排完整视频画面', draft: '渲染整片草稿', completed: '草稿待审阅' };
 Object.assign(PHASE,{scene_space_author:'规划并绘制完整场景',scene_space_preview:'制作取景预演',
+  scene_space_clip_preview:'制作短片预演',scene_space_repair:'修正本次预演画面',
   scene_space_review:'核对预演画面',scene_space_planned:'准备场景漫游',scene_space_rendering:'渲染完整漫游'});
 const animationReady = (run, item) => run.renderer_mode === 'scene-space'
   ? Boolean(item.world_source_sha256 && item.scene_space_plan_sha256===run.scene_space?.plan_sha256)
@@ -65,6 +66,12 @@ export function productionRunErrorLabel(code) {
     scene_space_budget_exhausted:'本次制作额度已用尽，已保留预演与已有结果。',
     scene_space_render_budget_insufficient:'本次可用渲染时间不足，已保留规划和已有预演，没有继续导出整片。',
     scene_space_preview_coverage_budget_exceeded:'本次场景覆盖超过预演限额，已保留规划和绘制结果，尚未启动整片导出。',
+    scene_space_model_budget_unavailable:'本次学习与评审额度不足或用量未确认，已保留预演，没有继续导出整片。',
+    scene_space_budget_unavailable:'本次制作额度不足或用量未确认，已保留规划和已有预演。',
+    scene_space_budget_reservation_exceeded:'剩余制作额度不足，已保留规划和已有预演。',
+    scene_space_repair_plan_changed:'本次修正改变了原场景规划，未采用修改，已保留原预演。',
+    scene_space_repair_unchanged:'本次修正未产生有效修改，已保留原预演和意见。',
+    scene_space_preview_samples_missing:'短片预演的画面证据不完整，已停止后续导出。',
     production_run_film_plan_too_long: '当前整片制作支持最长 5 分钟，请先缩短制作方案。尚未开始配音。',
     production_run_film_too_long: '实际录音与留白超过当前 5 分钟制作上限，已保留录音，请缩短内容后再制作。',
     production_run_film_configuration_changed: '制作服务版本已变化，已暂停后续制作。已有结果保留，请重新核对。',
@@ -192,12 +199,25 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     const previewPrefix=`/api/production-runs/${encodeURIComponent(run.id)}/scene-previews/`;
     const previews=(run.scene_space?.previews ?? []).filter(item=>item.status==='completed'
       && typeof item.url==='string' && item.url.startsWith(previewPrefix));
-    $('production-run-previews').hidden=!previews.length;
+    const clips=(run.scene_space?.preview_clips ?? []).filter(item=>item.status==='completed'
+      && typeof item.url==='string' && item.url.startsWith(previewPrefix));
+    const history=(run.scene_space?.retained_attempts ?? []).flatMap(attempt=>(attempt.previews ?? [])
+      .filter(item=>typeof item.url==='string' && item.url.startsWith(previewPrefix))
+      .map(item=>({...item,attempt:attempt.attempt})));
+    $('production-run-previews').hidden=!previews.length&&!clips.length&&!history.length;
     $('production-run-preview-images').replaceChildren(...previews.map((item,index)=>{
       const figure=text('figure'),link=text('a'),image=document.createElement('img');
       link.href=item.url;link.target='_blank';link.rel='noopener';
       image.src=item.url;image.alt=`预演画面 ${index+1}`;image.loading='lazy';link.append(image);
       figure.append(link,text('figcaption',`画面 ${index+1} · ${seconds(item.frame/24)} 秒`));return figure;
+    }),...clips.map((item,index)=>{
+      const figure=text('figure'),video=document.createElement('video');
+      video.src=item.url;video.controls=true;video.muted=true;video.preload='metadata';
+      figure.append(video,text('figcaption',`短片预演 ${index+1} · ${(item.end_frame-item.start_frame)/24} 秒`));
+      return figure;
+    }),...history.map(item=>{
+      const link=text('a',`修正前预演 ${item.attempt+1} · 第 ${item.frame+1} 帧`);
+      link.href=item.url;link.target='_blank';link.rel='noopener';return link;
     }));
     $('cancel-production-run').hidden = !['queued', 'running'].includes(run.status);
     $('cancel-production-run').disabled = cancelPending.has(run.id) || busy.has(id);
