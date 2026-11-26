@@ -54,6 +54,51 @@ identity hashes each cost about 0.87 seconds and reproduced the original
 The read-only timing omits advisory lock contention and is not a native authoring
 acceptance test.
 
+## Delivered verification and rollout
+
+The exact production role source, based on the concurrently delivered
+`8f2abd3ad94fd09a47c4a92033da9e981c9e22ed` stop-proof repair, passed all 193 relevant
+tests in its actual Linux image. Existing `_stop_proven`, result, cleanup and
+quarantine reconciliation methods were independently compared by AST and
+preserved. The earlier local overlapping test runs are not counted again.
+
+The actual 1,892 frozen inputs now prepare in 2.446 seconds with 11 SQL statements,
+including read-only transaction setup, and reproduce the original request hash.
+The comparison still omits advisory lock contention. A separate actual Pi image
+probe used the complete original inputs with an injected offline driver:
+`WorkerHost.start` took 2.845 seconds, staging and real profile validation reached
+the fixture driver after 17.565 seconds, and three renewals took 2.69–3.08 seconds.
+It retained over 54 seconds of worker lease after each renewal/progress pair,
+peaked at 766,693,376 cgroup bytes and recorded zero OOM events. This verifies
+large-input host preparation and lease I/O, not a real native authoring result.
+There were zero native model calls, production jobs or knowledge publications;
+temporary fixture state was cleaned.
+
+The source patch is `176d2a28aad1648887e7b45f0216b6bfc38395f8`.
+Its exact production role revision is
+`24940de733ce4a4eea2f597297dd701838fbb0d1`, deployed using
+`arm-cluster-master:5000/agent-service-control:latest@sha256:e026d8e4d309216912d04e9f4b062157faad45759c9183e0e871dab9e10117c6`.
+The guarded rollout checked physical quiet, empty occupied slots and unretired
+allocations, stopped worker Pods, no pending publication, and Deployment
+UID/resourceVersion/full spec before replacement. API, model proxy, executor,
+lab and the public catalog retained their pre-rollout specs/identities.
+
+All five WikiSkill publication-table fingerprints match before and after:
+12 original jobs, two releases, and active release
+`bccef9ca-433d-46f4-bfc5-ac638db5fbbd` remain unchanged. Both failed attempts remain
+terminal with original snapshots and receipts; neither has a recoverable output.
+The repair did not retry the author or activate new knowledge. A later explicit
+publication uses the repaired cold-admission path.
+
+Remote build and rollout evidence:
+`/root/video-releases/cold-admission-20261126-r2/`.
+The first prepared image was retained without deployment after the rollout guard
+detected a concurrent production source change; the delivered image includes
+that newer baseline. A stale historical-exception preflight was replaced by a
+strict current-state quiet check after those old quarantines had legitimately
+been resolved by the concurrent stop-proof repair. The new check has no
+historical exception and changes no service records.
+
 Operational evidence is retained at
 `D:/codex-work/operations/wikiskill-publication-failure-20261126-r2/`.
 OpenSpec change: `fix-agent-cold-admission-lease`, mapped project
