@@ -4,10 +4,12 @@ NATIVE_EVENT_KINDS = frozenset({'pi_event', 'runtime_finished', 'engine_started'
 OUTPUT_FAILURE_STAGES = frozenset({'stage_inputs', 'execute_native', 'collect_output', 'release_context',
     'freeze_artifacts', 'freeze_manifest', 'sign_result', 'unknown'})
 OUTPUT_FAILURE_CLASSES = frozenset({'invalid_json', 'invalid_output_contract', 'output_io_failure',
-    'handoff_failure'})
+    'invalid_javascript', 'handoff_failure'})
 JSON_FAILURE_REASONS = frozenset({'strict_json', 'json_syntax', 'duplicate_key', 'non_finite_number',
     'invalid_utf8'})
 JSON_LOCATION_CODES = frozenset({'json_line', 'json_column', 'json_offset'})
+JAVASCRIPT_LOCATION_CODES = frozenset({'javascript_line', 'javascript_column'})
+JAVASCRIPT_OUTPUT_FILE_CODES = {'/scene.html': 'scene_html', '/scene.js': 'scene_js'}
 
 
 def valid_worker_payload(value):
@@ -24,7 +26,10 @@ def valid_worker_payload(value):
         return set(value) == {'event', 'phase', 'code'} and value['code'] in OUTPUT_FAILURE_CLASSES
     if kind == 'output_validation_reason':
         return set(value) == {'event', 'phase', 'code'} and value['code'] in JSON_FAILURE_REASONS
+    if kind == 'output_validation_file':
+        return set(value) == {'event', 'phase', 'code'} and value['code'] in JAVASCRIPT_OUTPUT_FILE_CODES.values()
     if kind == 'output_validation_location':
-        return (set(value) == {'event', 'phase', 'code', 'count'} and value['code'] in JSON_LOCATION_CODES
+        return (set(value) == {'event', 'phase', 'code', 'count'}
+            and value['code'] in JSON_LOCATION_CODES | JAVASCRIPT_LOCATION_CODES
             and type(value.get('count')) is int and 0 <= value['count'] <= 2**31 - 1)
     return False

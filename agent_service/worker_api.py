@@ -32,12 +32,14 @@ from .artifacts import freeze_files, frozen_manifest, unique_paths
 from .staging import ExecutionContext, stage_inputs
 from .transport import MAX_WORKER_WIRE_BYTES
 from .diagnostics import log_execution_failure
-from .worker_events import OUTPUT_FAILURE_STAGES, JSON_FAILURE_REASONS
+from .worker_events import OUTPUT_FAILURE_STAGES, JSON_FAILURE_REASONS, JAVASCRIPT_OUTPUT_FILE_CODES
+from .learning_source_validation import SYNTAX_ERROR
 
 
 _SCHEMA_OUTPUT_CODES = frozenset({'reference_learning_protocol_invalid','reference_learning_result_binding_mismatch',
     'reference_learning_input_binding_mismatch','reference_learning_source_changed','invalid_video_source',
-    'worker_output_invalid'})
+    'learning_source_manifest_invalid', 'learning_source_utf8_invalid', 'worker_output_invalid'})
+_FILE_OUTPUT_CODES = frozenset({'learning_output_manifest_file_invalid', 'learning_source_file_invalid'})
 
 
 def _output_failure_diagnostic(stage, error):
@@ -47,13 +49,18 @@ def _output_failure_diagnostic(stage, error):
     code = getattr(error, 'code', None)
     diagnostic = dict(stage=stage if type(stage) is str and stage in OUTPUT_FAILURE_STAGES else 'unknown',
         classification='handoff_failure')
-    if code == 'invalid_video_json' or isinstance(error, json.JSONDecodeError):
+    if code in ('invalid_video_json', 'learning_output_json_invalid') or isinstance(error, json.JSONDecodeError):
         diagnostic['classification'] = 'invalid_json'
         reason = details.get('reason')
         diagnostic['reason'] = reason if type(reason) is str and reason in JSON_FAILURE_REASONS else 'strict_json'
+    elif code == SYNTAX_ERROR:
+        diagnostic['classification'] = 'invalid_javascript'
+        path = details.get('path')
+        if type(path) is str and path in JAVASCRIPT_OUTPUT_FILE_CODES:
+            diagnostic['file'] = JAVASCRIPT_OUTPUT_FILE_CODES[path]
     elif type(code) is str and code in _SCHEMA_OUTPUT_CODES:
         diagnostic['classification'] = 'invalid_output_contract'
-    elif isinstance(error, OSError):
+    elif isinstance(error, OSError) or (type(code) is str and code in _FILE_OUTPUT_CODES):
         diagnostic['classification'] = 'output_io_failure'
     for key in ('line','column','offset'):
         value = details.get(key, getattr(error, {'line':'lineno','column':'colno','offset':'pos'}[key], None))
@@ -344,8 +351,14 @@ class WorkerHost:
             if 'reason' in diagnostic:
                 payloads.append(dict(event='output_validation_reason', phase=diagnostic['stage'],
                     code=diagnostic['reason']))
+            if 'file' in diagnostic:
+                payloads.append(dict(event='output_validation_file', phase=diagnostic['stage'],
+                    code=diagnostic['file']))
+            syntax = diagnostic['classification'] == 'invalid_javascript'
+            prefix = 'javascript_' if syntax else 'json_'
+            locations = ('line', 'column') if syntax else ('line', 'column', 'offset')
             payloads.extend(dict(event='output_validation_location', phase=diagnostic['stage'],
-                code='json_'+key, count=diagnostic[key]) for key in ('line','column','offset') if key in diagnostic)
+                code=prefix+key, count=diagnostic[key]) for key in locations if key in diagnostic)
             for payload in payloads:
                 if len(events) >= 500:
                     break

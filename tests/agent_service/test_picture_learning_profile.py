@@ -15,6 +15,7 @@ import pytest
 from agent_service.contracts import InlineFile, ServiceError, canonical_bytes, digest
 from agent_service.engines import StopEvidence
 from agent_service.profiles import implementation, video_picture_learning as protocol
+from agent_service.profiles.video_learning_source_handoff import SOURCE_HANDOFF
 from agent_service.picture_learning_tools import verified_extensions
 from video_workbench.animation_knowledge import AnimationKnowledgeStore
 from video_workbench.picture_learning_gateway import PictureAuthorGateway, PictureReviewGateway
@@ -112,19 +113,43 @@ def test_comparison_requires_supplied_baseline_and_finite_enum():
     assert protocol.validate_result(out, digest(value), value) == out
 
 
-def test_collector_computes_actual_source_identity_and_requires_proven_stop(tmp_path):
+@pytest.mark.parametrize('file_handoff', [False, True])
+def test_collector_computes_actual_source_identity_and_requires_proven_stop(tmp_path, file_handoff):
     value = document()
+    task_fields = {}
+    if file_handoff:
+        task_fields['source_handoff'] = SOURCE_HANDOFF
+        value.update(task_fields)
     stage(tmp_path, value)
     out = result(value)
-    expected_sha = out['source'].pop('source_sha256')
+    expected = out['source']
+    expected['files']['scene.js'] = 'const label = "引号 \\u6c34";\r\nwindow.__animationExperiment = {seek(t){}};\n'
+    expected['source_sha256'] = protocol.source_sha256(expected)
+    deferred = out['source'] = deepcopy(expected)
+    del deferred['source_sha256']
+    if file_handoff:
+        directory = tmp_path / 'output-source'
+        directory.mkdir()
+        files = deferred.pop('files')
+        for name, content in files.items():
+            (directory / name).write_bytes(content.encode('utf-8'))
+        deferred['file_names'] = list(files)
     (tmp_path / 'output.json').write_bytes(canonical_bytes(out))
     attempt = str(uuid4())
     envelope = SimpleNamespace(profile=protocol.AUTHOR_PROFILE, profile_revision='1', attempt_id=attempt,
-        task=dict(input_sha256=digest(value)), checkpoint_ref=None, checkpoint_inputs=[], inputs=[
+        task=dict(input_sha256=digest(value), **task_fields), checkpoint_ref=None, checkpoint_inputs=[], inputs=[
             InlineFile.from_bytes(protocol.INPUT_NAME, canonical_bytes(value)), InlineFile.from_bytes('reference.png', PNG)])
     stopped = StopEvidence(execution_id=attempt, all_writers_stopped=True, resource_ids=('fixture-writer',))
-    collected = protocol.VideoPictureLearningProfile().collect_output(tmp_path, envelope, stopped)
-    assert json.loads(collected[0].content())['source']['source_sha256'] == expected_sha
+    profile = protocol.VideoPictureLearningProfile()
+    assert ('output-source/scene.html' in profile.build_prompt(envelope.task)) == file_handoff
+    assert ('"file_names":["scene.html","scene.js"]' in profile.build_prompt(envelope.task)) == file_handoff
+    collected = profile.collect_output(tmp_path, envelope, stopped)
+    assert json.loads(collected[0].content())['source'] == expected
+    if file_handoff:
+        del envelope.task['source_handoff']
+        with pytest.raises(ServiceError, match='input_binding_mismatch'):
+            profile.collect_output(tmp_path, envelope, stopped)
+        envelope.task.update(task_fields)
     unsafe = StopEvidence(execution_id=attempt, all_writers_stopped=False, resource_ids=('fixture-writer',))
     with pytest.raises(ServiceError, match='writers_not_stopped'):
         protocol.VideoPictureLearningProfile().collect_output(tmp_path, envelope, unsafe)

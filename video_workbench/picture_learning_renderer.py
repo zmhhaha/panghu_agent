@@ -20,6 +20,9 @@ from .animation_method_renderer import (MethodAnimationRenderer, execute_method_
 
 HOST = Path(__file__).with_name('picture_learning_host.mjs')
 MAX_PNG_BYTES = 8 * 1024 * 1024
+FAILURE_SCHEMA = 'video.picture-learning-render-failure.v1'
+FAILURE_PHASES = frozenset({'launch', 'browser_setup', 'project_ready', 'seek', 'scene_assets',
+    'engine_check', 'screenshot', 'navigation', 'coverage'})
 
 
 class PictureLearningRenderer(MethodAnimationRenderer):
@@ -103,7 +106,8 @@ class PictureLearningRenderer(MethodAnimationRenderer):
             host_sha256=digest_bytes(_read(HOST, 1024 * 1024)),
             engine_runtime_sha256=digest_bytes(_read(ENGINE_RUNTIME, 1024 * 1024)),
             project_runtime_sha256=digest_bytes(_read(PROJECT_RUNTIME, 1024 * 1024)),
-            image_digest=self.image_digest, hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256)
+            image_digest=self.image_digest, hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256,
+            failure_diagnostic_schema=FAILURE_SCHEMA)
         if generated is not None:
             request.update(schema='video.picture-learning-render-request.v2', generated_resources=deepcopy(generated))
         if libraries:
@@ -282,6 +286,26 @@ class PictureLearningRenderer(MethodAnimationRenderer):
                     drawing_library_observation=deepcopy(receipt['drawing_library_observation']))
         else:
             result['error'] = 'picture_render_failed'
+            receipt_path = root / 'work/render-receipt.json'
+            if request.get('failure_diagnostic_schema') == FAILURE_SCHEMA and cid is not None and receipt_path.exists():
+                failure, _ = _json(receipt_path)
+                diagnostic = failure.get('diagnostic')
+                if diagnostic is not None:
+                    phase = diagnostic.get('phase') if type(diagnostic) is dict else None
+                    _require(type(phase) is str and phase in FAILURE_PHASES
+                        and set(diagnostic) == {'schema', 'code', 'phase'}
+                        and diagnostic.get('schema') == FAILURE_SCHEMA
+                        and diagnostic.get('code') in ('picture_render_deadline_exceeded', 'picture_' + phase + '_timeout')
+                        and failure.get('schema') == 'video.picture-learning-render-receipt.v1'
+                        and failure.get('status') == 'failed' and failure.get('evidence_scope') == 'static_only'
+                        and failure.get('request_identity') == request['identity']
+                        and failure.get('request_sha256') == binding['request_sha256']
+                        and all(failure.get(key) == request[key] for key in ('image_digest','host_sha256',
+                            'engine_runtime_sha256','project_runtime_sha256','engine'))
+                        and digest_bytes(_read(root / 'host.mjs', 1024 * 1024)) == request['host_sha256'],
+                        'picture_render_failure_receipt_changed', 409)
+                    receipt = failure
+                    result.update(error=diagnostic['code'], diagnostic=deepcopy(diagnostic))
         proof = digest(dict(binding_sha256=digest(binding),outcome_sha256=digest_bytes(raw_outcome),
             receipt_sha256=digest(receipt) if receipt else None))
         result['evidence_sha256'] = proof

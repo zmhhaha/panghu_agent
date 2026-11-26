@@ -6,6 +6,7 @@ import pytest
 
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles import video_reference_learning as protocol
+from agent_service.profiles.video_learning_source_handoff import SOURCE_HANDOFF
 from video_workbench.video_learning_service import VideoLearningService
 from test_video_learning_service import system, real_mp4, start, finish, Gateway, Renderer
 
@@ -50,7 +51,10 @@ def test_review_and_transfer_plan_examples_bind_actual_input_and_reject_object_f
                 protocol.validate_result(invalid_plan, digest(document), document)
         contract['review_required']['issues'] = 'mutated caller copy'
         assert service._document(run, mode)['constraints']['output_contract']['review_required']['issues'] == 'string[]; NEVER object[]'
-    assert 'output_contract' not in service._document(run, 'create')['constraints']
+    author_input = author.uploads[0][0]
+    assert author_input['source_handoff'] == SOURCE_HANDOFF
+    instructions = author_input['constraints']['output_contract']['instructions'][0]
+    assert 'output-source/scene.html' in instructions and 'source.file_names' in instructions
 
 
 class OldVideoLearningService(VideoLearningService):

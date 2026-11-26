@@ -16,9 +16,12 @@ from .video import _read, decode_video_json
 from .video_animation_create import source_sha256
 from .video_animation_experiment import _validate_source_output
 from .video_animation_review import _image_header, MAX_IMAGE_BYTES
+from . import video_learning_source_handoff as source_handoff
 from ..animation_knowledge_contract import validate_snapshot
 from ..contracts import InlineFile, ServiceError, canonical_bytes, digest
 from ..engines import StopEvidence
+from ..learning_source_tools import SOURCE_ENVIRONMENTS
+from ..learning_source_validation import validate_source_syntax
 from .. import reference_observation_contract as remote_observation
 
 
@@ -72,11 +75,12 @@ def validate_input(document):
         'constraints', 'observation', 'base_source', 'feedback', 'knowledge_snapshot',
         'prior_review', 'learned_method'}
     require(type(document) is dict and required <= set(document)
-        and set(document) <= required | {'knowledge_binding', 'assets', 'frozen_at', 'selection'}
+        and set(document) <= required | {'knowledge_binding', 'assets', 'frozen_at', 'selection', 'source_handoff'}
             | remote_observation.INPUT_FIELDS)
     require(document['schema'] == INPUT_SCHEMA and type(document['mode']) is str
         and document['mode'] in {'create', 'review', 'transfer_plan'}
         and type(document['work_kind']) is str and document['work_kind'] in {'reproduction', 'transfer'})
+    source_handoff.validate_marker(document, author=document['mode'] == 'create', require=require)
     require(all(type(document[key]) is str and _ID.fullmatch(document[key])
                 for key in ('project_id', 'experiment_id')))
     _text(document['goal'])
@@ -221,8 +225,9 @@ class VideoPictureLearningProfile:
         self.output_schema = self.task_schema.replace('.v1', '-output.v1')
 
     def validate_task(self, task):
-        require(type(task) is dict and set(task) == {'input_sha256'}
+        require(type(task) is dict and {'input_sha256'} <= set(task) <= {'input_sha256', 'source_handoff'}
             and type(task['input_sha256']) is str and _SHA.fullmatch(task['input_sha256']))
+        source_handoff.validate_marker(task, author=not self.review, require=require)
 
     def _input(self, workspace, task, input_root=None):
         self.validate_task(task)
@@ -230,7 +235,9 @@ class VideoPictureLearningProfile:
         raw = _read(root, INPUT_NAME, INPUT_MAX_BYTES)
         document = validate_input(decode_video_json(raw))
         require(raw == canonical_bytes(document) and hashlib.sha256(raw).hexdigest() == task['input_sha256']
-            and (document['mode'] != 'create') == self.review, 'picture_learning_input_binding_mismatch')
+            and (document['mode'] != 'create') == self.review
+            and document.get('source_handoff') == task.get('source_handoff'),
+            'picture_learning_input_binding_mismatch')
         expected = {INPUT_NAME}
         total = len(raw)
         for frame in document['observation']['frames']:
@@ -252,7 +259,11 @@ class VideoPictureLearningProfile:
     def build_prompt(self, task):
         self.validate_task(task)
         bundle = verified_bundle()
-        return (bundle['learning-procedure/SKILL.md'] + '\n' + bundle['CONTRACT.md']
+        contract = bundle['CONTRACT.md']
+        if 'source_handoff' in task:
+            contract = source_handoff.author_contract(contract)
+            contract += '\n' + source_handoff.AUTHOR_PROMPT
+        return (bundle['learning-procedure/SKILL.md'] + '\n' + contract
             + '\nRole: ' + ('independent static reviewer' if self.review else 'reference image creator')
             + '. Call read_inputs once for the frozen task and every supplied ORIGINAL image. '
             'Expected manifest SHA-256: ' + task['input_sha256'] + '. '
@@ -277,10 +288,12 @@ class VideoPictureLearningProfile:
             and len({row.name for row in envelope.inputs}) == len(expected)
             and {row.name: row.sha256 for row in envelope.inputs} == expected,
             'picture_learning_input_binding_mismatch')
-        output = decode_video_json(_read(workspace, 'output.json', OUTPUT_MAX_BYTES))
-        if type(output) is dict and type(output.get('source')) is dict:
-            source = output['source']
-            if set(source) == {'engine', 'strategy', 'files'}:
-                source['source_sha256'] = source_sha256(source)
+        file_handoff = 'source_handoff' in context
+        output = (source_handoff.read_manifest(workspace, OUTPUT_MAX_BYTES) if file_handoff else
+            decode_video_json(_read(workspace, 'output.json', OUTPUT_MAX_BYTES)))
+        source_handoff.collect_source(workspace, output, file_handoff=file_handoff)
         result = validate_result(output, envelope.task['input_sha256'], context)
+        binding = getattr(envelope, 'execution_binding', None)
+        if result['source'] is not None and binding is not None and binding.tool_environment_name in SOURCE_ENVIRONMENTS:
+            validate_source_syntax(result['source'])
         return [InlineFile.from_bytes(RESULT_NAME, canonical_bytes(result))]

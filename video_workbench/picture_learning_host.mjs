@@ -61,7 +61,33 @@ function drawingExecution(functions) {
 }
 
 export async function capturePicture({chromium, request, resources, engineRuntime, projectRuntime,
-  executablePath = '/opt/browser/headless_shell', hyperFramesDist = '/opt/renderer/node_modules/hyperframes/dist'}) {
+  executablePath = '/opt/browser/headless_shell', hyperFramesDist = '/opt/renderer/node_modules/hyperframes/dist',
+  deadlineAtMs = Date.now() + 3600000}) {
+  if (!Number.isFinite(deadlineAtMs)) throw Error('picture_render_deadline_invalid');
+  const deadline = performance.now() + Math.min(3600000, deadlineAtMs - Date.now());
+  const stage = async (name, cap, action) => {
+    const remaining = Math.floor(deadline - performance.now());
+    const timeoutError = () => {
+      const code = remaining <= cap ? 'picture_render_deadline_exceeded' : 'picture_' + name + '_timeout';
+      return Object.assign(Error(code), {pictureFailure: {code, phase: name}});
+    };
+    if (remaining <= 0) throw timeoutError();
+    const timeout = Math.min(cap, remaining);
+    let timer;
+    try {
+      return await Promise.race([
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(timeoutError()), timeout);
+        }),
+        Promise.resolve().then(() => action(timeout)),
+      ]);
+    } catch (error) {
+      if (error.name === 'TimeoutError') throw timeoutError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const drawingLibraries = validateDrawingLibraries(request, resources);
   const c = request.constraints, engine = request.engine;
   const generated = request.generated_resources;
@@ -88,11 +114,13 @@ export async function capturePicture({chromium, request, resources, engineRuntim
   try {
     const origin = 'http://127.0.0.1:' + server.address().port, errors = [], blocked = [];
     const scripts = new Set(), loadedPNG = new Set();
-    browser = await chromium.launch({headless:true,executablePath,args:engineRuntime.browserLaunchArgs(engine)});
-    const context = await browser.newContext({viewport:{width:c.width,height:c.height},deviceScaleFactor:1,
-      serviceWorkers:'block',acceptDownloads:false});
-    await engineRuntime.installEngineGuard(context,engine);
-    await context.route('**/*', async route => {
+    browser = await stage('launch',60000,timeout=>chromium.launch({headless:true,executablePath,timeout,
+      args:engineRuntime.browserLaunchArgs(engine)}));
+    const setup = action => stage('browser_setup',60000,action);
+    const context = await setup(()=>browser.newContext({viewport:{width:c.width,height:c.height},deviceScaleFactor:1,
+      serviceWorkers:'block',acceptDownloads:false}));
+    await setup(()=>engineRuntime.installEngineGuard(context,engine));
+    await setup(()=>context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.origin === origin && resources.has(url.pathname) && !url.search && route.request().method() === 'GET') {
         if (route.request().resourceType() === 'script') scripts.add(url.pathname);
@@ -100,34 +128,52 @@ export async function capturePicture({chromium, request, resources, engineRuntim
         await route.continue();
       }
       else { if (blocked.length < 16) blocked.push(url.protocol); await route.abort(); }
-    });
-    if(context.routeWebSocket) await context.routeWebSocket('**/*',socket => { blocked.push('websocket'); socket.close(); });
-    const page = await context.newPage(); page.setDefaultTimeout(20000);
-    const security = await context.newCDPSession(page); await security.send('Log.enable');
+    }));
+    if(context.routeWebSocket) await setup(()=>context.routeWebSocket('**/*',socket => { blocked.push('websocket'); socket.close(); }));
+    const page = await setup(()=>context.newPage());
+    const security = await setup(()=>context.newCDPSession(page));
+    await setup(()=>security.send('Log.enable'));
     let drawingFunctions = [];
-    if (drawingLibraries) {
+    if (drawingLibraries) await setup(async()=>{
       await security.send('Debugger.enable'); await security.send('Profiler.enable');
       await security.send('Profiler.startPreciseCoverage', {callCount:true,detailed:true});
-    }
+    });
     security.on('Log.entryAdded',({entry}) => { if(entry.source==='security' && entry.level==='error') errors.push('security_policy'); });
     page.on('pageerror',() => { if(errors.length<16) errors.push('scene_error'); });
     page.on('crash',() => errors.push('page_crashed'));
     page.on('popup',popup => { errors.push('popup_forbidden'); popup.close(); });
     page.on('dialog',dialog => dialog.dismiss());
+    const assertScene = () => {
+      if (errors.length || blocked.length) throw Error('picture_scene_failed_or_blocked');
+    };
     const ready = async () => {
-      await page.goto(origin+'/scene.html',{waitUntil:'networkidle',timeout:30000});
-      await projectRuntime.installHyperFramesProject(page,{project,runtimePath:core.runtimePath,legacyBridge:true});
+      assertScene();
+      // Still capture uses its own budget while the pinned shared HyperFrames
+      // installer keeps its existing limits for other renderer callers.
+      await stage('project_ready',180000,async timeout=>{
+        if (hash(read(core.runtimePath,16*1024*1024))!==core.core_sha256)
+          throw Error('hyperframes_runtime_digest_mismatch');
+        await page.evaluate(projectRuntime.prepareHyperFramesPage,{project,legacyBridge:true});
+        assertScene();
+        await page.addScriptTag({path:core.runtimePath});
+        await page.waitForFunction(()=>window.__playerReady===true&&window.__renderReady===true
+          &&typeof window.__player?.renderSeek==='function',null,{timeout,polling:50});
+        await page.evaluate(projectRuntime.bindHyperFramesCore);
+        assertScene();
+      });
     };
     const capture = async () => {
-      await projectRuntime.seekHyperFramesProject(page,0);
-      await page.evaluate(async () => {
+      await stage('seek',60000,timeout=>projectRuntime.seekHyperFramesProject(page,0,{timeoutMs:timeout}));
+      assertScene();
+      await stage('scene_assets',120000,()=>page.evaluate(async () => {
         await document.fonts.ready;
         await Promise.all([...document.images].map(image => image.decode()));
         if(document.getAnimations().some(animation=>animation.playState==='running')) throw Error('picture_autonomous_animation');
-      });
-      const observation = await engineRuntime.verifyPageEngine(page,engine);
-      const bytes = await page.screenshot({type:'png',animations:'disabled',timeout:30000});
-      if(errors.length || blocked.length) throw Error('picture_scene_failed_or_blocked');
+      }));
+      const observation = await stage('engine_check',60000,()=>engineRuntime.verifyPageEngine(page,engine));
+      const bytes = await stage('screenshot',120000,timeout=>
+        page.screenshot({type:'png',animations:'disabled',timeout}));
+      assertScene();
       if(generated) {
         const expectedPNG = generated.flatMap(item => Object.keys(item.assets_sha256)
           .filter(name => name.endsWith('.png')).map(name => '/assets/' + name)).sort();
@@ -137,12 +183,13 @@ export async function capturePicture({chromium, request, resources, engineRuntim
       }
       return {bytes,observation};
     };
+    await stage('navigation',180000,timeout=>page.goto(origin+'/scene.html',{waitUntil:'networkidle',timeout}));
     await ready(); const first = await capture(), repeat = await capture();
-    if (drawingLibraries) drawingFunctions = await collectDrawingExecution(security, origin, drawingFunctions);
-    await page.reload({waitUntil:'networkidle',timeout:30000});
-    await projectRuntime.installHyperFramesProject(page,{project,runtimePath:core.runtimePath,legacyBridge:true});
+    if (drawingLibraries) drawingFunctions = await stage('coverage',60000,()=>collectDrawingExecution(security, origin, drawingFunctions));
+    await stage('navigation',180000,timeout=>page.reload({waitUntil:'networkidle',timeout}));
+    await ready();
     const reload = await capture();
-    if (drawingLibraries) drawingFunctions = await collectDrawingExecution(security, origin, drawingFunctions);
+    if (drawingLibraries) drawingFunctions = await stage('coverage',60000,()=>collectDrawingExecution(security, origin, drawingFunctions));
     if(!first.bytes.equals(repeat.bytes) || !first.bytes.equals(reload.bytes)) throw Error('picture_repeat_or_reload_mismatch');
     return {bytes:first.bytes,engine_observation:first.observation,
       ...(drawingLibraries ? {drawing_library_observation:{schema:'video.learning-drawing-library-observation.v1',
@@ -153,16 +200,26 @@ export async function capturePicture({chromium, request, resources, engineRuntim
       ...(generated ? {generated_resource_observation:{schema:'video.manim-method-resource-observation.v1',
         scope:'loaded_resources_not_visual_acceptance', helpers_loaded:true,
         resources_sha256:generated.map(item=>item.sha256),loaded_png_paths:[...loadedPNG].sort()}} : {}),
-      project_runtime:{...(await page.evaluate(()=>({...window.__trustedHyperFramesProject.state}))),
+      project_runtime:{...(await stage('engine_check',60000,()=>page.evaluate(()=>({...window.__trustedHyperFramesProject.state})))),
         core_sha256:core.core_sha256,version:core.version,project_sha256:request.project_sha256}};
   } finally {
-    if(browser) await browser.close().catch(()=>{});
+    if(browser) {
+      let timer;
+      try {
+        await Promise.race([browser.close().catch(()=>{}), new Promise(resolve=>{
+          timer = setTimeout(resolve,2000);
+        })]);
+      } finally { clearTimeout(timer); }
+    }
+    server.closeAllConnections();
     await new Promise(resolve=>server.close(resolve));
   }
 }
 
 async function main() {
   const receipt = {schema:'video.picture-learning-render-receipt.v1',status:'starting',evidence_scope:'static_only'};
+  const diagnosticSchema='video.picture-learning-render-failure.v1';
+  let includeDiagnostic=false;
   try {
     const raw=read('/input/request.json',256*1024), request=JSON.parse(raw);
     if(!['video.picture-learning-render-request.v1','video.picture-learning-render-request.v2'].includes(request.schema)
@@ -171,6 +228,10 @@ async function main() {
       || request.image_digest!==process.env.ANIMATION_METHOD_IMAGE_DIGEST
       || hash(read(fileURLToPath(import.meta.url),1024*1024))!==request.host_sha256
       || !['html-svg','canvas','three'].includes(request.engine)) throw Error('picture_request_binding_invalid');
+    Object.assign(receipt,{request_identity:request.identity,request_sha256:hash(raw),
+      image_digest:request.image_digest,host_sha256:request.host_sha256,engine:request.engine,
+      engine_runtime_sha256:request.engine_runtime_sha256,project_runtime_sha256:request.project_runtime_sha256});
+    includeDiagnostic=request.failure_diagnostic_schema===diagnosticSchema;
     for(const [name,key] of [['engine_runtime.mjs','engine_runtime_sha256'],['hyperframes_project.mjs','project_runtime_sha256']])
       if(hash(read('/opt/renderer/'+name,1024*1024))!==request[key]) throw Error('picture_runtime_changed');
     const c=request.constraints;
@@ -194,15 +255,18 @@ async function main() {
     }
     const engineRuntime=await import('./engine_runtime.mjs'), projectRuntime=await import('./hyperframes_project.mjs');
     const {chromium}=createRequire('/opt/renderer/package.json')('playwright-core');
-    const {bytes,...evidence}=await capturePicture({chromium,request,resources,engineRuntime,projectRuntime});
+    const deadlineAtMs=process.env.ANIMATION_METHOD_DEADLINE_AT_MS===undefined ?
+      undefined : Number(process.env.ANIMATION_METHOD_DEADLINE_AT_MS);
+    const {bytes,...evidence}=await capturePicture({chromium,request,resources,engineRuntime,projectRuntime,deadlineAtMs});
     if(bytes.length>8*1024*1024) throw Error('picture_output_too_large');
     writeFileSync('/work/output.png',bytes);
-    Object.assign(receipt,{status:'rendered',request_identity:request.identity,request_sha256:hash(raw),
-      image_digest:request.image_digest,host_sha256:request.host_sha256,engine:request.engine,
-      engine_runtime_sha256:request.engine_runtime_sha256,project_runtime_sha256:request.project_runtime_sha256,
+    Object.assign(receipt,{status:'rendered',
       output_sha256:hash(bytes),output_bytes:bytes.length,width:c.width,height:c.height,
       ...evidence,expressive_quality:'not_evaluated'});
-  } catch(error) { receipt.status='failed'; receipt.error=String(error).slice(0,500); process.exitCode=1; }
+  } catch(error) {
+    receipt.status='failed'; receipt.error=String(error).slice(0,500); process.exitCode=1;
+    if (includeDiagnostic && error.pictureFailure) receipt.diagnostic={schema:diagnosticSchema,...error.pictureFailure};
+  }
   finally { writeFileSync('/work/render-receipt.json',JSON.stringify(receipt)); }
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)) await main();

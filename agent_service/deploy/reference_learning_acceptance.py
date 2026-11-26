@@ -22,6 +22,7 @@ from agent_service.deploy.animation_creation_acceptance import (
     CHECKS, ISOLATION, _capture, _directory, _pod_stop, _save, _source_package)
 from agent_service.deploy.candidate_scenario import PARENT_FILES, verify_parent
 from agent_service.input_tools import READ_INPUTS_EXTENSION_SHA256
+from agent_service.learning_source_tools import SOURCE_CHECK_HASHES, checked_environment_revision
 from agent_service.reference_learning_tools import ENVIRONMENT_NAME, EXTENSION_SHA256, environment_revision
 from agent_service.pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_VERSION
 from agent_service.profiles import video_reference_learning as method
@@ -29,6 +30,7 @@ from agent_service.profiles import implementation
 from agent_service.profiles.video import decode_video_json
 from agent_service.profiles.video_animation_create import source_sha256
 from agent_service.profiles.video_animation_review import _image_header
+from agent_service.profiles.video_learning_source_handoff import task_for_input
 from agent_service.registry import binding_fingerprint, required_model_capabilities
 from agent_service.worker_entry import HostConfig, _host_registry, accepted_host, host_policy
 from video_workbench.animation_candidate_import import EXPORT_NAMES, _pod
@@ -63,11 +65,13 @@ def _bundle(package, registry, binding, policy):
     contract = registry.contract(binding.profile, policy.revision)
     bundle = registry.bundle(binding.bundle.name, binding.bundle.revision)
     environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
+    checked = environment.name == ENVIRONMENT_NAME + '-checked-source' and binding.profile == method.AUTHOR_PROFILE
+    revision = checked_environment_revision if checked else environment_revision
     name = 'reference-learning'
     require(bundle.name == name and bundle.revision == method.BUNDLE_REVISION
         and set(contract.required_tools) == set(bundle.required_tools) == set(environment.tools)
-        == {'read_inputs', 'skill_search', 'skill_read', 'write'} and environment.name == ENVIRONMENT_NAME
-        and environment.revision == environment_revision(environment.model_dump(mode='json')),
+        == {'read_inputs', 'skill_search', 'skill_read', 'write'} and (checked or environment.name == ENVIRONMENT_NAME)
+        and environment.revision == revision(environment.model_dump(mode='json')),
         'reference_learning_admission_tools_mismatch')
     require(set(required_model_capabilities(handler)) <= set(binding.model_policy.capabilities),
             'reference_learning_admission_model_policy_mismatch')
@@ -91,6 +95,9 @@ def _bundle(package, registry, binding, policy):
         and sha(_capture(package, 'read_inputs_extension.mjs', 128 * 1024)) == READ_INPUTS_EXTENSION_SHA256
         and sha(_capture(package, 'reference_learning_extension.mjs', 128 * 1024)) == EXTENSION_SHA256,
         'reference_learning_admission_resource_mismatch')
+    if checked:
+        require(all(sha(_capture(package, name, 128 * 1024)) == expected
+            for name, expected in SOURCE_CHECK_HASHES.items()), 'reference_learning_admission_source_checker_mismatch')
     return measured
 
 
@@ -248,7 +255,7 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir=None, rend
             'reference_learning_admission_input_mismatch')
     document = method.validate_input(decode_video_json(inputs[method.INPUT_NAME]))
     require(inputs[method.INPUT_NAME] == canonical_bytes(document)
-        and envelope.task == {'input_sha256':digest(document)}
+        and envelope.task == task_for_input(document, digest(document))
         and (document['mode'] != 'create') == (profile == method.REVIEW_PROFILE),
         'reference_learning_admission_input_mismatch')
     require(set(inputs) == {method.INPUT_NAME, *[f['file_name'] for f in document['observation']['frames']]},

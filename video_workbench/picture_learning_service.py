@@ -16,6 +16,7 @@ import time
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_picture_learning as protocol
+from agent_service.profiles.video_learning_source_handoff import SOURCE_HANDOFF
 from .animation_creation_service import _run_lock
 from .learning_capabilities import LearningCapabilitiesMixin
 from .learning_strategy_service import LearningStrategyMixin
@@ -630,6 +631,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             document['experiment_id'] = run['id']
         else:
             document = self._document(run, mode if mode != 'render' else 'create')
+            if run['stage'] == 'author':
+                self._prepare_author_operation_input(document)
         self.protocol.validate_input(document)
         identity = run['id'] + '-' + str(len(run['operation_ids']) + 1)
         operation = dict(id=identity, owner=run['owner'], experiment_id=run['id'], stage=run['stage'],
@@ -642,6 +645,9 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             run['operation_ids'].append(identity)
             self.store.put('experiments', run, db=db)
         return operation
+
+    def _prepare_author_operation_input(self, document):
+        document['source_handoff'] = SOURCE_HANDOFF
 
     def _finish_operation(self, run, operation):
         self.store.put('operations', operation)

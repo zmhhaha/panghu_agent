@@ -463,6 +463,12 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
                 extensions += (verified_read_inputs_extension(),)
             except (OSError, ValueError):
                 raise WorkerConfigError() from None
+        from .learning_source_tools import SOURCE_ENVIRONMENTS, verified_source_check_extension
+        if environment.name in SOURCE_ENVIRONMENTS:
+            try:
+                extensions += (verified_source_check_extension(),)
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
         profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
         profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),

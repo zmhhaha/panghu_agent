@@ -26,7 +26,7 @@ from uuid import UUID, uuid4
 from fastapi import Request
 
 from agent_service.contracts import (ExecutionEnvelope, InlineFile, JobRequest, ServiceError,
-    WorkerResult, canonical_bytes, digest, verify_receipt)
+    TERMINAL_STATES, WorkerResult, canonical_bytes, digest, verify_receipt)
 from agent_service.confinement import ensure_controller_confinement
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
     _read_operator_json, build_pi_runtime_settings, host_policy, PI_ADAPTER_REVISION)
@@ -454,6 +454,24 @@ def isolation_preflight(scope):
         source.cleanup()
 
 
+def _record_learning_source_check(event, observations):
+    if event.get('type') != 'tool_execution_end' or event.get('toolName') != 'write':
+        return
+    result = event.get('result')
+    details = result.get('details') if isinstance(result, dict) else None
+    check = details.get('learning_source_check') if isinstance(details, dict) else None
+    if not isinstance(check, dict) or len(observations) >= 32:
+        return
+    if check.get('source_syntax') == 'checked' and event.get('isError') is False:
+        observations.append({'source_syntax': 'checked'})
+    elif (check.get('source_syntax') == 'check_failed' and event.get('isError') is True
+            and check.get('code') == 'learning_source_javascript_syntax_invalid'
+            and check.get('path') in ('/scene.html', '/scene.js')):
+        observations.append(dict(source_syntax='check_failed', code='learning_source_javascript_syntax_invalid',
+            path=check['path'], **{key: check[key] for key in ('line', 'column')
+                if type(check.get(key)) is int and 1 <= check[key] <= 524290}))
+
+
 def build_candidate_driver(config, credentials, scope, stopper, observations):
     """Explicit admin-only factory using measured preflights, no acceptance file."""
     from agent_service.domain_runtime import DomainExecutionProfile
@@ -513,7 +531,22 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
             extensions += (verified_read_inputs_extension(),)
         except (OSError, ValueError):
             raise ServiceError('candidate_input_reader_integrity_invalid', 422) from None
-    profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
+    from agent_service.learning_source_tools import SOURCE_ENVIRONMENTS, verified_source_check_extension
+    profile_class = DomainExecutionProfile
+    if environment.name in SOURCE_ENVIRONMENTS:
+        try:
+            extensions += (verified_source_check_extension(),)
+        except (OSError, ValueError):
+            raise ServiceError('candidate_learning_source_checker_integrity_invalid', 422) from None
+        source_checks = observations['learning_source_checks'] = []
+
+        class CandidateCheckedLearningProfile(DomainExecutionProfile):
+            def observe_native_tool_event(self, event):
+                super().observe_native_tool_event(event)
+                _record_learning_source_check(event, source_checks)
+
+        profile_class = CandidateCheckedLearningProfile
+    profile = profile_class(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
@@ -709,11 +742,33 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
     return dict(apiVersion='v1', kind='List', items=items)
 
 
+def _await_candidate_result(host, envelope, renew_lease):
+    from agent_service.worker_api import LeaseRequest
+
+    attempt_id = envelope.attempt_id
+    renewed = time.monotonic()
+    while host.status(attempt_id)['state'] not in TERMINAL_STATES:
+        if time.monotonic() - renewed >= 5:
+            lease = LeaseRequest(fence=envelope.fence, **renew_lease())
+            try:
+                host.renew(attempt_id, lease)
+            except ServiceError as error:
+                # The Worker can persist its terminal result while the proxy
+                # processes the lease request. Read the stopped result below.
+                if (error.code != 'worker_lease_rejected' or error.status != 409
+                        or host.status(attempt_id)['state'] not in TERMINAL_STATES):
+                    raise
+                break
+            renewed = time.monotonic()
+        time.sleep(.1)
+    return host.result(attempt_id)
+
+
 def run_worker(origin):
     import httpx
     from agent_service.linux_stop import LinuxUidStopController
     from agent_service.stop_group import StopGroup
-    from agent_service.worker_api import LeaseRequest, WorkerHost
+    from agent_service.worker_api import WorkerHost
     from urllib.parse import urlsplit
     parsed = urlsplit(origin)
     require(parsed.scheme == 'http' and (parsed.hostname or '').endswith('.agent-service.svc.cluster.local')
@@ -765,15 +820,13 @@ def run_worker(origin):
         # This local WorkerHost admission is confined to the administrative
         # process. The operator registry and all production routes stay disabled.
         host.start(envelope)
-        renewed = time.monotonic()
-        while host.status(envelope.attempt_id)['state'] not in {'completed', 'failed', 'cancelled', 'timed_out', 'quarantined', 'needs_input'}:
-            if time.monotonic() - renewed >= 5:
-                response = client.post(origin + '/probe/lease', headers=headers, json={})
-                response.raise_for_status()
-                host.renew(envelope.attempt_id, LeaseRequest(fence=envelope.fence, **response.json()))
-                renewed = time.monotonic()
-            time.sleep(.1)
-        result = host.result(envelope.attempt_id)
+
+        def renew_lease():
+            response = client.post(origin + '/probe/lease', headers=headers, json={})
+            response.raise_for_status()
+            return response.json()
+
+        result = _await_candidate_result(host, envelope, renew_lease)
         require(len(canonical_bytes({'result': result, 'observations': observations})) <= MAX_WIRE,
             'candidate_probe_scale_exceeded')
         response = client.post(origin + '/probe/result', headers=headers,

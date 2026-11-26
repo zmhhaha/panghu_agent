@@ -910,6 +910,33 @@ def test_quarantine_releases_slot_only_after_original_pod_stop_and_discards_cand
     assert len(h.worker.puts()) == 1
 
 
+@pytest.mark.parametrize('was_scheduled', [False, True])
+def test_deleted_unscheduled_pod_recovers_without_container_status(make_harness, was_scheduled):
+    h = make_harness(cold=True, auto_terminate=False)
+    job = h.submit()
+    assert h.dispatcher.dispatch_once()['state'] == 'starting'
+    pod = h.pod(job)
+    if not was_scheduled:
+        pod['spec'].pop('nodeName')
+    h.clock.now = h.current(job)['lease_expires_at'] + 1
+    assert h.dispatcher.tick()['state'] == 'quarantined'
+    assert h.store.active()['job_id'] == job['job_id']
+
+    # The scheduler never bound the Pod. Kubernetes PodGC marks the exact
+    # deleted unscheduled Pod Failed while its observation finalizer remains.
+    pod['status'] = {'phase': 'Failed', 'conditions': [
+        {'type': 'PodScheduled', 'status': 'False', 'reason': 'Unschedulable'}]}
+    recovered = h.dispatcher.tick()
+    if was_scheduled:
+        assert recovered['state'] == 'quarantined'
+        assert h.store.active()['job_id'] == job['job_id']
+        return
+    assert recovered['state'] == 'failed'
+    assert recovered['outcome']['error_code'] == 'quarantine_stopped'
+    assert h.store.active() is None and h.allocation(job)['retired'] is True
+    assert h.worker.puts() == []
+
+
 def test_maximum_native_resource_proof_is_preserved_without_overflowing_outer_proof(make_harness):
     h = make_harness()
     job = h.submit()
