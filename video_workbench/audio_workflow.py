@@ -6,6 +6,8 @@ import threading
 
 from agent_service.contracts import ServiceError
 
+from .speech import SpeechPlanningRejected
+
 LOG = logging.getLogger(__name__)
 
 
@@ -73,9 +75,12 @@ class AudioWorkflow:
                         break
                     settings = op['input']['settings']
                     result = self.speech_client.synthesize(op['input']['spoken_text'],
-                        voice=settings['voice'], speed=settings['speed'],
+                        voice=settings['voice'], speed=op.get('provider_speed', settings['speed']),
                         cancel_event=_Cancellation(self, op['id']))
                     self.store.finish_audio(op['id'], audio=result)
+                except SpeechPlanningRejected as exc:
+                    self.store.finish_audio(op['id'], error=exc.code,
+                                            provider_rejection_sha256=exc.input_sha256)
                 except ServiceError as exc:
                     self.store.finish_audio(op['id'], error=exc.code,
                                             interrupted=self.stopping.is_set())

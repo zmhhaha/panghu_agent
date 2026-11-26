@@ -30,11 +30,38 @@ MAX_AUDIO_BYTES = 32 * 1024 * 1024
 MAX_AUDIO_SECONDS = 300.0
 MAX_TEXT_CHARACTERS = 10_000
 MAX_TEXT_BYTES = 64 * 1024
+DURATION_PROFILE_UNSUPPORTED = "speech_duration_profile_unsupported"
 _TOKEN_BYTES = 4096
 
 
 class SpeechError(ServiceError):
     """Public error codes only; never upstream bodies, headers or exceptions."""
+
+
+class SpeechPlanningRejected(SpeechError):
+    def __init__(self, input_sha256):
+        super().__init__(DURATION_PROFILE_UNSUPPORTED, 422)
+        self.input_sha256 = input_sha256
+
+
+def _speech_input_digest(payload):
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                     separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+
+
+def _planning_json(response):
+    if response.headers.get('Content-Encoding', 'identity').strip().lower() != 'identity':
+        return {}
+    body = bytearray()
+    for chunk in response.iter_bytes(chunk_size=4096):
+        body.extend(chunk)
+        if len(body) > 4096:
+            return {}
+    try:
+        value = json.loads(body)
+    except (ValueError, UnicodeError):
+        return {}
+    return value if type(value) is dict else {}
 
 
 def _plain(value, maximum):
@@ -287,8 +314,35 @@ class SpeechClient:
 
     def input_sha256(self, text, *, voice=None, speed=1.0):
         payload = self._payload(text, voice, speed)
-        return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
-                                         separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+        return _speech_input_digest(payload)
+
+    def plan(self, text, *, voice=None, speed=1.0):
+        """Check the pinned provider's plan without admitting synthesis."""
+        payload = self._payload(text, voice, speed)
+        headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity'}
+        if self.settings.token is not None:
+            headers['Authorization'] = 'Bearer ' + self.settings.token
+        timeout = httpx.Timeout(min(self.settings.read_timeout, self.settings.total_timeout),
+                                connect=min(self.settings.connect_timeout, self.settings.total_timeout))
+        request = httpx.Request('POST', self.settings.base_url + '/audio/speech/plan',
+                                headers=headers, json=payload,
+                                extensions={'timeout': timeout.as_dict()})
+        try:
+            response = self._client.send(request, stream=True, auth=None, follow_redirects=False)
+            try:
+                if response.status_code != 200:
+                    raise SpeechError('speech_planning_unavailable', 503)
+                result = _planning_json(response)
+            finally:
+                response.close()
+        except httpx.HTTPError:
+            raise SpeechError('speech_planning_unavailable', 503) from None
+        if (result.get('input_sha256') != _speech_input_digest(payload)
+                or result.get('inference_started') is not False
+                or type(result.get('admissible')) is not bool
+                or not result['admissible'] and result.get('code') != DURATION_PROFILE_UNSUPPORTED):
+            raise SpeechError('speech_planning_receipt_invalid', 502)
+        return result
 
     def synthesize(self, text, *, voice=None, speed=1.0, cancel_event=None) -> SpeechAudio:
         _cancel(cancel_event)
@@ -320,6 +374,14 @@ class SpeechClient:
                 raise SpeechError('speech_upstream_rate_limited', 503)
             if status >= 500:
                 raise SpeechError('speech_upstream_unavailable', 503)
+            if status == 422:
+                rejection = _planning_json(response).get('error')
+                input_sha256 = _speech_input_digest(payload)
+                _checkpoint(cancel_event, deadline)
+                if (type(rejection) is dict and rejection.get('code') == DURATION_PROFILE_UNSUPPORTED
+                        and rejection.get('inference_started') is False
+                        and rejection.get('input_sha256') == input_sha256):
+                    raise SpeechPlanningRejected(input_sha256)
             if not 200 <= status < 300:
                 raise SpeechError('speech_upstream_rejected', 502)
             if response.headers.get('Content-Encoding', 'identity').lower().strip() not in {'', 'identity'}:
@@ -349,8 +411,7 @@ class SpeechClient:
                                max_duration_seconds=self.settings.max_audio_seconds)
             _checkpoint(cancel_event, deadline)
             return SpeechAudio(**vars(info), data=data, sha256=hashlib.sha256(data).hexdigest(),
-                               input_sha256=hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
-                                   separators=(',', ':'), allow_nan=False).encode()).hexdigest())
+                               input_sha256=_speech_input_digest(payload))
         except httpx.TimeoutException:
             _cancel(cancel_event)
             raise SpeechError('speech_timeout', 504) from None

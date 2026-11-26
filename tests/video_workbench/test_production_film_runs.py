@@ -25,7 +25,8 @@ from video_workbench.joint_plan_store import JointPlanStore
 from video_workbench.production_run_store import ProductionRunStore
 from video_workbench.store import Store
 from test_creative_film_module_contract import raw_result, RUNTIME
-from test_production_runs import OWNER, CandidateMotion, CandidateProduction, children, finish_audio, seed
+from test_production_runs import (OWNER, CandidateMotion, CandidateProduction, NarrationPlanner,
+                                  children, finish_audio, reject_second_narration, seed)
 
 
 class CreationFacade:
@@ -92,6 +93,31 @@ def audio_phase(env, *, seconds=(1, 2)):
         assert not children(env, 'film_module_operations')
         finish_audio(env, children(env, 'audio_operations')[-1]['id'], duration)
     env.runs.tick()
+
+
+def test_narration_resume_preserves_film_inputs_and_advances_to_module(env, monkeypatch):
+    run, failed, project = reject_second_narration(env)
+    env.runs.resume_narration(OWNER, run['id'], project['revision'], 1.04, 'film-narration-resume', NarrationPlanner())
+    original_start = env.store.start_audio
+
+    def fail_before_admission(*args, **kwargs):
+        raise RuntimeError('response interrupted before local admission')
+
+    monkeypatch.setattr(env.store, 'start_audio', fail_before_admission)
+    env.runs.tick()
+    assert len(children(env, 'audio_operations')) == 2
+    monkeypatch.setattr(env.store, 'start_audio', original_start)
+    recovered = ProductionRunStore(env.store, env.joint, env.motion, env.production, film_creation=env.facade)
+    recovered.tick()
+    replacement = children(env, 'audio_operations')[-1]
+    assert replacement['id'] != failed['id']
+    assert replacement['provider_speed'] == 1.04
+    finish_audio(env, replacement['id'])
+    recovered.tick()
+    final = recovered.get(OWNER, run['id'])
+    assert final['phase'] == 'module'
+    assert final['items'][0]['audio_version_id'] == run['items'][0]['audio_version_id']
+    assert len(children(env, 'film_module_operations')) == 1
 
 
 def finish_module(env, operation_id):

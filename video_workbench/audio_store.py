@@ -175,8 +175,12 @@ class AudioStoreMixin:
             raise ServiceError('idempotency_conflict', 409)
         return json.loads(row[1]) if row else None
 
-    def start_audio(self, owner, scene_id, request, idem, *, timeout=1800):
-        fingerprint = digest(dict(kind='speech', scene_id=scene_id, request=request))
+    def start_audio(self, owner, scene_id, request, idem, *, timeout=1800, provider_speed=None):
+        binding = dict(kind='speech', scene_id=scene_id, request=request)
+        if provider_speed is not None:
+            provider_speed = speech_options(speed=provider_speed)['speed']
+            binding['provider_speed'] = provider_speed
+        fingerprint = digest(binding)
         with self.transaction() as db:
             previous = self._audio_replay(db, owner, idem, fingerprint)
             if previous:
@@ -195,13 +199,16 @@ class AudioStoreMixin:
                 raise ServiceError('audio_narration_too_long', 422)
             now = time.time()
             settings = document['settings']
+            effective_speed = settings['speed'] if provider_speed is None else provider_speed
             provider_hash = digest(dict(model=settings['model'], input=document['spoken_text'],
-                voice=settings['voice'], speed=settings['speed'], response_format='wav'))
+                voice=settings['voice'], speed=effective_speed, response_format='wav'))
             op = dict(id=_id(), owner=owner, project_id=project_id, scene_id=scene_id, kind='speech',
                 status='queued', error=None, created_at=now, deadline_at=now + timeout,
                 submit_attempted=False, cancel_requested=False, candidate_id=None,
                 upstream_stop_confirmed=None, input_sha256=narration_binding(document),
                 provider_input_sha256=provider_hash, input=document)
+            if provider_speed is not None:
+                op['provider_speed'] = provider_speed
             db.execute('INSERT INTO audio_operations VALUES (?, ?, ?, ?, ?, ?, ?)',
                        (op['id'], owner, project_id, scene_id, idem, fingerprint, json.dumps(op)))
             self._save(db, project)
@@ -222,6 +229,8 @@ class AudioStoreMixin:
             input_sha256=op['input_sha256'], narration_sha256=hashlib.sha256(op['input']['narration'].encode()).hexdigest(),
             narration=op['input']['narration'], settings=op['input']['settings'],
             sha256=hashlib.sha256(data).hexdigest(), audio_bytes=len(data), **vars(info))
+        if 'provider_speed' in op:
+            metadata['provider_speed'] = op['provider_speed']
         db.execute('INSERT INTO audio_versions VALUES (?, ?, ?, ?, ?, ?)',
                    (version_id, project['id'], scene_id, op['id'], json.dumps(metadata), data))
         return version_id
@@ -334,7 +343,7 @@ class AudioStoreMixin:
             return claimed
 
     def finish_audio(self, operation_id, *, audio=None, error=None, interrupted=False,
-                     submission_not_started=False):
+                     submission_not_started=False, provider_rejection_sha256=None):
         # This is explicit control-flow evidence from before synthesize(), not
         # an inference from an exception code or an HTTP/transport failure.
         if type(submission_not_started) is not bool or submission_not_started and audio is not None:
@@ -345,18 +354,26 @@ class AudioStoreMixin:
             if op['status'] not in AUDIO_ACTIVE:
                 return
             project = self._project(db, op['owner'], op['project_id'])
+            if provider_rejection_sha256 is not None:
+                if (audio is not None or error != 'speech_duration_profile_unsupported'
+                        or provider_rejection_sha256 != op['provider_input_sha256']):
+                    raise ValueError('Provider rejection does not match this operation')
+                op['provider_rejection'] = dict(code=error, input_sha256=provider_rejection_sha256,
+                                                  inference_started=False)
             if submission_not_started:
                 op['submission_not_started'] = True
+            stop_confirmed = submission_not_started or provider_rejection_sha256 is not None
             if op['cancel_requested']:
-                op.update(status='cancelled', error=None if submission_not_started else 'speech_upstream_stop_unconfirmed',
-                          upstream_stop_confirmed=submission_not_started)
-            elif interrupted:
-                op.update(status='failed', error='speech_interrupted_before_submission' if submission_not_started else 'speech_submission_uncertain',
-                          upstream_stop_confirmed=submission_not_started)
+                op.update(status='cancelled', error=None if stop_confirmed else 'speech_upstream_stop_unconfirmed',
+                          upstream_stop_confirmed=stop_confirmed)
+            elif interrupted and not stop_confirmed:
+                op.update(status='failed', error='speech_submission_uncertain', upstream_stop_confirmed=False)
+            elif interrupted and submission_not_started:
+                op.update(status='failed', error='speech_interrupted_before_submission', upstream_stop_confirmed=True)
             elif error:
-                op.update(status='failed', error=error, upstream_stop_confirmed=submission_not_started)
+                op.update(status='failed', error=error, upstream_stop_confirmed=stop_confirmed)
             elif time.time() >= op['deadline_at']:
-                op.update(status='timed_out', error='speech_timeout', upstream_stop_confirmed=submission_not_started)
+                op.update(status='timed_out', error='speech_timeout', upstream_stop_confirmed=stop_confirmed)
             elif audio is not None:
                 if audio.input_sha256 != op['provider_input_sha256'] or hashlib.sha256(audio.data).hexdigest() != audio.sha256:
                     raise ServiceError('speech_input_mismatch', 502)

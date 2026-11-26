@@ -316,6 +316,10 @@ class JointPlanRequest(ExplanationRequest):
     use_wikiskill: bool = Field(default=True, strict=True)
 
 
+class ProductionNarrationResume(Revision):
+    speed: float = Field(ge=0.25, le=4, allow_inf_nan=False)
+
+
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
@@ -1157,6 +1161,15 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.get('/api/production-runs/{run_id}')
     def read_production_run(run_id: str, owner=Depends(identity)):
         return production_run_store.get(owner, run_id)
+
+    @app.post('/api/production-runs/{run_id}/resume-narration', status_code=202)
+    def resume_production_narration(run_id: str, body: ProductionNarrationResume,
+                                    owner=Depends(mutation),
+                                    idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.resume_narration(
+            owner, run_id, body.expected_revision, body.speed, idempotency(idempotency_key),
+            audio_workflow.require_client())
 
     @app.post('/api/production-runs/{run_id}/cancel')
     def cancel_production_run(run_id: str, owner=Depends(mutation)):

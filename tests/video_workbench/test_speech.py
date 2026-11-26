@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from video_workbench.speech import (
-    SpeechClient, SpeechError, SpeechSettings, inspect_wav,
+    DURATION_PROFILE_UNSUPPORTED, SpeechClient, SpeechError, SpeechPlanningRejected, SpeechSettings, inspect_wav,
 )
 
 
@@ -206,6 +206,38 @@ def test_error_responses_do_not_leak_or_retry(status, code):
                 client.synthesize('text')
     assert error.value.code == code and str(error.value) == code
     assert 'token' not in str(error.value) and len(calls) == 1 and stream.closed
+
+
+@pytest.mark.parametrize('bound', [True, False])
+def test_provider_pre_inference_rejection_is_bound_to_exact_input(bound):
+    def handle(request):
+        payload = json.loads(request.content)
+        checksum = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+            separators=(',', ':')).encode()).hexdigest()
+        return httpx.Response(422, json={'error': {
+            'code': DURATION_PROFILE_UNSUPPORTED, 'inference_started': False,
+            'input_sha256': checksum if bound else '0' * 64}})
+    with SpeechClient(settings(), transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(SpeechError) as rejection:
+            client.synthesize('Test', speed=1.04)
+        assert isinstance(rejection.value, SpeechPlanningRejected) is bound
+        if bound:
+            assert rejection.value.input_sha256 == client.input_sha256('Test', speed=1.04)
+
+
+def test_planning_has_distinct_route_and_validates_receipt():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        assert request.url.path == '/v1/audio/speech/plan'
+        h = hashlib.sha256(json.dumps(json.loads(request.content), ensure_ascii=False, sort_keys=True,
+            separators=(',', ':')).encode()).hexdigest()
+        return httpx.Response(200, json={'input_sha256': h, 'admissible': True,
+            'inference_started': len(calls) != 1})
+    with SpeechClient(settings(), transport=httpx.MockTransport(handle)) as client:
+        assert client.plan('Test', speed=1.04)['admissible']
+        with pytest.raises(SpeechError, match='speech_planning_receipt_invalid'):
+            client.plan('Test', speed=1.04)
 
 
 def test_timeout_is_not_retried_and_exception_is_sanitized():

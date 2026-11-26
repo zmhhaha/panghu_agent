@@ -15,7 +15,7 @@ import time
 from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
-from .audio_store import narration_binding
+from .audio_store import narration_binding, speech_options
 from .media import MAX_PROJECT_SECONDS, MAX_SCENES
 from .production_film_context import freeze_production_inputs
 from .speech import inspect_wav
@@ -98,6 +98,8 @@ class ProductionRunStore:
         if 'audio_reuse' in run:
             result.update(audio_reuse=deepcopy(run['audio_reuse']),
                 audio_reuse_sha256=run['audio_reuse_sha256'], work_budget=deepcopy(run['work_budget']))
+        if 'narration_resumes' in run:
+            result['narration_resumes'] = deepcopy(run['narration_resumes'])
         if 'module_reuse' in run:
             result.update(module_reuse=deepcopy(run['module_reuse']),
                 module_reuse_sha256=run['module_reuse_sha256'],
@@ -551,6 +553,17 @@ class ProductionRunStore:
                 in {'awaiting_draft', 'pending', 'blocked'})
 
     @staticmethod
+    def _require_idle_project_children(db, project_id):
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for table in ('audio_operations', 'motion_operations', 'operations', 'explanation_operations',
+                      'joint_plan_operations', 'video_renders', 'video_batches',
+                      'film_module_operations', 'film_render_operations'):
+            if table in tables:
+                for row in db.execute('SELECT document FROM ' + table + ' WHERE project_id=?', (project_id,)):
+                    require(json.loads(row[0]).get('status') not in CHILD_ACTIVE | {'blocked'},
+                            'production_run_project_busy', 409)
+
+    @staticmethod
     def _reuse_audio(db, run, source_run_id):
         """Admit original WAVs, without adopting heads or reopening old work.
 
@@ -853,14 +866,7 @@ class ProductionRunStore:
             for row in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=?',
                                   (owner, project_id)):
                 require(not self._unfinished(json.loads(row[0])), 'production_run_in_progress', 409)
-            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            for table in ('audio_operations', 'motion_operations', 'operations', 'explanation_operations',
-                          'joint_plan_operations', 'video_renders', 'video_batches',
-                          'film_module_operations', 'film_render_operations'):
-                if table in tables:
-                    for row in db.execute('SELECT document FROM ' + table + ' WHERE project_id=?', (project_id,)):
-                        require(json.loads(row[0]).get('status') not in CHILD_ACTIVE | {'blocked'},
-                                'production_run_project_busy', 409)
+            self._require_idle_project_children(db, project_id)
             require(db.execute('SELECT count(*) FROM production_runs WHERE project_id=?', (project_id,))
                     .fetchone()[0] < 64 and db.execute('SELECT count(*) FROM production_runs').fetchone()[0] < 1024,
                     'production_run_storage_limit', 409)
@@ -962,6 +968,113 @@ class ProductionRunStore:
                 (run['id'], owner, project_id, idem, fingerprint, raw))
             return self.public(run, current=True)
 
+    @staticmethod
+    def _speech_request_sha256(document, speed):
+        settings = document['settings']
+        return digest(dict(model=settings['model'], input=document['spoken_text'],
+                           voice=settings['voice'], speed=speed, response_format='wav'))
+
+    @staticmethod
+    def _narration_resume_replay(run, idem, fingerprint):
+        for receipt in run.get('narration_resumes', []):
+            if receipt['request_id'] == idem:
+                require(receipt['request_sha256'] == fingerprint, 'idempotency_conflict', 409)
+                return True
+        return False
+
+    def _narration_resume_target(self, db, run, project, expected_revision):
+        self.store._revision(project, expected_revision)
+        require(self._matches(run, project, db), 'production_run_inputs_changed', 409)
+        require(run['status'] == 'failed' and run['phase'] == 'audio'
+                and run.get('audio_mode', 'narration') == 'narration'
+                and not (run.get('cancel_requested') or run.get('draining'))
+                and all(intent['phase'] == 'audio' and not intent.get('active')
+                        for intent in run['intents'].values()),
+                'production_run_narration_resume_unavailable', 409)
+        for row in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=? AND id<>?',
+                              (run['owner'], run['project_id'], run['id'])):
+            require(not self._unfinished(json.loads(row[0])), 'production_run_in_progress', 409)
+        self._require_idle_project_children(db, run['project_id'])
+
+        index = next((i for i, item in enumerate(run['items']) if not item.get('audio_version_id')), None)
+        name = 'audio:' + str(index)
+        intent = run['intents'].get(name)
+        require(index is not None and intent is not None and intent['index'] == index,
+                'production_run_narration_resume_unavailable', 409)
+        item = run['items'][index]
+        row = db.execute('SELECT document FROM audio_operations WHERE owner=? AND idem=?',
+                         (run['owner'], intent['key'])).fetchone()
+        require(row is not None, 'production_run_narration_resume_unavailable', 409)
+        child = json.loads(row[0])
+        document = run['frozen']['scenes'][index]['audio_input']
+        stop_confirmed = child.get('upstream_stop_confirmed') is True
+        require(stop_confirmed, 'speech_upstream_stop_unconfirmed', 409)
+        input_sha256 = child.get('provider_input_sha256')
+        original_speed = child.get('provider_speed', document['settings']['speed'])
+        require(child['id'] == item.get('audio_operation_id') and child['kind'] == 'speech'
+                and child['status'] == 'failed' and child.get('submit_attempted') is True
+                and child['project_id'] == run['project_id'] and child['scene_id'] == item['scene_id']
+                and child['input'] == document and child['input_sha256'] == narration_binding(document)
+                and child['error'] == run['error'] == item['error']
+                and run.get('blocked_reason') in {None, child['error']}
+                and input_sha256 == self._speech_request_sha256(document, original_speed),
+                'production_run_narration_resume_unavailable', 409)
+        new_rejection = (child.get('error') == 'speech_duration_profile_unsupported'
+            and child.get('provider_rejection') == dict(code=child['error'],
+                input_sha256=input_sha256, inference_started=False))
+        reconciliation = child.get('stop_reconciliation')
+        legacy_rejection = (child.get('error') == 'speech_upstream_unavailable'
+            and type(reconciliation) is dict
+            and reconciliation.get('kind') == 'provider_restart_and_exact_preflight'
+            and reconciliation.get('input_sha256') == input_sha256)
+        require(new_rejection or legacy_rejection, 'production_run_narration_rejection_unverified', 409)
+        evidence = child['provider_rejection'] if new_rejection else reconciliation
+        return name, index, intent, item, child, document, evidence
+
+    def resume_narration(self, owner, run_id, expected_revision, speed, idem, speech_client):
+        """Preflight and atomically replace the stopped narration child."""
+        require(type(expected_revision) is int and expected_revision >= 1)
+        require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
+        speed = speech_options(speed=speed)['speed']
+        fingerprint = digest(dict(expected_revision=expected_revision, provider_speed=speed))
+        with self.store.transaction() as db:
+            run = self._read(db, run_id, owner)
+            project = self.store._project(db, owner, run['project_id'])
+            if self._narration_resume_replay(run, idem, fingerprint):
+                return self.public(run, current=self._matches(run, project, db))
+            _, _, _, _, child, document, _ = self._narration_resume_target(db, run, project, expected_revision)
+            source = digest(dict(run=run, child=child))
+
+        require(speech_client is not None, 'speech_not_configured', 503)
+        plan = speech_client.plan(document['spoken_text'], voice=document['settings']['voice'], speed=speed)
+        provider_input_sha256 = self._speech_request_sha256(document, speed)
+        require(type(plan) is dict and plan.get('input_sha256') == provider_input_sha256
+                and plan.get('inference_started') is False, 'production_run_narration_plan_invalid', 502)
+        require(plan.get('admissible') is True, 'production_run_narration_plan_rejected', 422)
+
+        with self.store.lock, self.store.transaction() as db:
+            run = self._read(db, run_id, owner)
+            project = self.store._project(db, owner, run['project_id'])
+            if self._narration_resume_replay(run, idem, fingerprint):
+                return self.public(run, current=self._matches(run, project, db))
+            name, index, intent, item, child, _, evidence = self._narration_resume_target(
+                db, run, project, expected_revision)
+            require(digest(dict(run=run, child=child)) == source,
+                    'production_run_narration_resume_changed', 409)
+            key = 'production-run:' + run_id + ':' + name + ':resume:' + uuid4().hex
+            run.setdefault('narration_resumes', []).append(dict(request_id=idem, request_sha256=fingerprint,
+                scene_id=item['scene_id'], failed_operation_id=child['id'], failed_error=child['error'],
+                previous_provider_input_sha256=child['provider_input_sha256'], previous_intent_key=intent['key'],
+                provider_input_sha256=provider_input_sha256, provider_speed=speed, replacement_intent_key=key,
+                stop_evidence=deepcopy(evidence),
+                previous_finished_at=run['finished_at'], created_at=time.time()))
+            run['intents'][name] = dict(phase='audio', index=index, key=key, request=None, active=False,
+                provider_speed=speed, provider_input_sha256=provider_input_sha256)
+            item.update(status='queued', audio_operation_id=None, error=None)
+            run.update(status='queued', error=None, blocked_reason=None, finished_at=None)
+            self._write(db, run)
+            return self.public(run, current=True)
+
     def cancel(self, owner, run_id):
         with self.store.lock:
             with self.store.transaction() as db:
@@ -1009,6 +1122,10 @@ class ProductionRunStore:
             require(child.get('project_id') == run['project_id'] and (intent['phase'] == 'draft'
                 or child.get('scene_id') == run['items'][intent['index']]['scene_id']),
                 'production_run_child_identity_mismatch', 409)
+            if 'provider_speed' in intent:
+                require(child.get('provider_speed') == intent['provider_speed']
+                        and child.get('provider_input_sha256') == intent['provider_input_sha256'],
+                        'production_run_audio_binding_mismatch', 409)
             if intent['phase'] == 'motion' and run.get('continuity_schema'):
                 require(child.get('film_context_sha256') == intent['film_context_sha256'],
                     'production_run_continuity_binding_mismatch', 409)
@@ -1266,7 +1383,7 @@ class ProductionRunStore:
         run.update(status='running', error=None)
         self._save(run)
         if phase == 'audio':
-            self.store.start_audio(run['owner'], run['items'][index]['scene_id'], request, intent['key'])
+            self._start_narration_child(run, intent, request)
         elif phase == 'motion':
             self.motion.start_candidate(run['owner'], run['items'][index]['scene_id'], request,
                 intent['key'], audio_version_id=run['items'][index]['audio_version_id'],
@@ -1318,6 +1435,11 @@ class ProductionRunStore:
             result['source_runtime_admission_receipt'] = deepcopy(run['source_runtime_admission_receipt'])
         return result
 
+    def _start_narration_child(self, run, intent, request):
+        override = ({'provider_speed': intent['provider_speed']} if 'provider_speed' in intent else {})
+        self.store.start_audio(run['owner'], run['items'][intent['index']]['scene_id'],
+                               request, intent['key'], **override)
+
     def _step_film(self, run, project, *, admit):
         """New runs author native modules and submit exactly one full project.
 
@@ -1359,13 +1481,17 @@ class ProductionRunStore:
             index = None
         name = phase + (':' + str(index) if index is not None else '')
         intent = run['intents'].get(name)
-        revision = project['revision'] if intent is None else intent['request']['expected_revision']
+        revision = project['revision'] if intent is None or intent['request'] is None else intent['request']['expected_revision']
         request = self._film_child_request(run, phase, index, revision)
+        request_sha256 = digest(dict(request=request, provider_speed=intent['provider_speed'])
+                                if intent and 'provider_speed' in intent else request)
         if intent is None:
             intent = dict(phase=phase, index=index, key='production-run:' + run['id'] + ':' + name,
-                request=dict(expected_revision=revision), request_sha256=digest(request), active=False)
+                request=None, active=False)
             run['intents'][name] = intent
-        require(intent['request_sha256'] == digest(request), 'production_run_film_request_changed', 409)
+        if intent['request'] is None:
+            intent.update(request=dict(expected_revision=revision), request_sha256=request_sha256)
+        require(intent['request_sha256'] == request_sha256, 'production_run_film_request_changed', 409)
         child = self._lookup(run, intent)
         if child is not None:
             self._sync(run, intent, child)
@@ -1375,7 +1501,7 @@ class ProductionRunStore:
         run.update(status='running', error=None)
         self._save(run)  # Intent is durable before any local child admission.
         if phase == 'audio':
-            self.store.start_audio(run['owner'], run['items'][index]['scene_id'], request, intent['key'])
+            self._start_narration_child(run, intent, request)
         elif phase == 'module':
             self._film_service().start_module(run['owner'], run['project_id'], run['items'][index]['scene_id'],
                 request, intent['key'])

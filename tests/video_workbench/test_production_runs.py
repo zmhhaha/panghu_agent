@@ -281,6 +281,123 @@ def test_uncertain_speech_is_not_resent_on_restart(env):
     assert len(children(env, 'audio_operations')) == 1 and not children(env, 'motion_operations')
 
 
+class NarrationPlanner:
+    def __init__(self, *, admissible=True, on_plan=None):
+        self.admissible = admissible
+        self.on_plan = on_plan
+        self.calls = []
+
+    def plan(self, text, *, voice, speed):
+        self.calls.append((text, voice, speed))
+        if self.on_plan is not None:
+            self.on_plan()
+        return dict(admissible=self.admissible, inference_started=False,
+            input_sha256=digest(dict(model='kokoro-rk3588', input=text, voice=voice, speed=speed,
+                                     response_format='wav')))
+
+
+def reject_second_narration(env, *, verified=True):
+    run = begin(env)
+    env.runs.tick()
+    finish_audio(env, children(env, 'audio_operations')[0]['id'])
+    env.runs.tick()
+    failed = env.store.claim_audio(children(env, 'audio_operations')[1]['id'])
+    if verified:
+        env.store.finish_audio(failed['id'], error='speech_duration_profile_unsupported',
+                              provider_rejection_sha256=failed['provider_input_sha256'])
+    else:
+        env.store.finish_audio(failed['id'], error='speech_upstream_unavailable')
+    env.runs.tick()
+    project = env.store.project(OWNER, env.project['id'])
+    return env.runs.get(OWNER, run['id']), failed, project
+
+
+def test_narration_resume_replays_only_stopped_scene_after_restart(env, monkeypatch):
+    run, failed, project = reject_second_narration(env)
+    assert run['status'] == 'failed'
+    completed = run['items'][0]
+    revision = project['revision']
+    planner = NarrationPlanner()
+    queued = env.runs.resume_narration(OWNER, run['id'], revision, 1.04, 'narration-resume', planner)
+    assert queued['id'] == run['id'] and queued['status'] == 'queued'
+    assert queued['joint_plan_version_id'] == run['joint_plan_version_id']
+    assert queued['items'][0] == completed
+    assert queued['items'][1]['audio_operation_id'] is None
+    assert queued['narration_resumes'][0]['failed_operation_id'] == failed['id']
+    assert planner.calls == [(failed['input']['spoken_text'], 'zm_yunjian', 1.04)]
+    assert len(children(env, 'audio_operations')) == 2
+
+    original_start = env.store.start_audio
+
+    def lose_response(*args, **kwargs):
+        original_start(*args, **kwargs)
+        raise RuntimeError('response interrupted after local admission')
+
+    monkeypatch.setattr(env.store, 'start_audio', lose_response)
+    env.runs.tick()
+    monkeypatch.setattr(env.store, 'start_audio', original_start)
+    recovered = ProductionRunStore(env.store, env.joint, env.motion, env.production)
+    recovered.tick()
+    operations = children(env, 'audio_operations')
+    assert len(operations) == 3
+    replacement = operations[-1]
+    assert replacement['id'] != failed['id'] and replacement['scene_id'] == failed['scene_id']
+    assert replacement['provider_speed'] == 1.04
+    assert replacement['input_sha256'] == failed['input_sha256']
+    assert replacement['provider_input_sha256'] != failed['provider_input_sha256']
+    assert recovered.resume_narration(OWNER, run['id'], revision, 1.04, 'narration-resume', planner)['id'] == run['id']
+    assert len(planner.calls) == 1
+    with pytest.raises(ServiceError, match='idempotency_conflict'):
+        recovered.resume_narration(OWNER, run['id'], revision, 1.05, 'narration-resume', planner)
+
+    finish_audio(env, replacement['id'])
+    recovered.tick()
+    final = recovered.get(OWNER, run['id'])
+    assert final['phase'] == 'motion'
+    assert final['items'][0]['audio_version_id'] == completed['audio_version_id']
+    assert final['items'][1]['audio_version_id'] == children(env, 'audio_operations')[-1]['candidate_id']
+    current = env.store.project(OWNER, env.project['id'])
+    assert current['scenes'][1]['speech_settings'] == project['scenes'][1]['speech_settings']
+
+
+def test_narration_resume_requires_stop_and_exact_legacy_reconciliation(env):
+    run, failed, project = reject_second_narration(env, verified=False)
+    planner = NarrationPlanner()
+
+    def resume():
+        return env.runs.resume_narration(OWNER, run['id'], project['revision'], 1.04, 'narration-resume', planner)
+
+    with pytest.raises(ServiceError, match='speech_upstream_stop_unconfirmed'):
+        resume()
+    with env.store.transaction() as db:
+        op = json.loads(db.execute('SELECT document FROM audio_operations WHERE id=?', (failed['id'],)).fetchone()[0])
+        op['upstream_stop_confirmed'] = True
+        db.execute('UPDATE audio_operations SET document=? WHERE id=?', (json.dumps(op), op['id']))
+    with pytest.raises(ServiceError, match='production_run_narration_rejection_unverified'):
+        resume()
+    assert not planner.calls
+    with env.store.transaction() as db:
+        op['stop_reconciliation'] = dict(kind='provider_restart_and_exact_preflight',
+                                         input_sha256=op['provider_input_sha256'])
+        db.execute('UPDATE audio_operations SET document=? WHERE id=?', (json.dumps(op), op['id']))
+    assert resume()['status'] == 'queued'
+
+
+def test_narration_resume_rechecks_revision_after_preflight(env):
+    run, _, project = reject_second_narration(env)
+
+    def advance_revision():
+        with env.store.transaction() as db:
+            current = env.store._project(db, OWNER, project['id'])
+            env.store._save(db, current)
+
+    planner = NarrationPlanner(on_plan=advance_revision)
+    with pytest.raises(ServiceError, match='revision_conflict'):
+        env.runs.resume_narration(OWNER, run['id'], project['revision'], 1.04, 'narration-resume', planner)
+    assert env.runs.get(OWNER, run['id']) == run
+    assert len(children(env, 'audio_operations')) == 2
+
+
 def test_active_motion_unknown_submit_recovers_same_child_then_continues(env):
     run = begin(env)
     complete_audio_phase(env)
