@@ -52,21 +52,30 @@ def document():
 
 def output(context):
     from test_joint_plan_profile import result
-    return planner.validate_joint_plan_result(result(context), digest(context), context)
+    value=result(context)
+    if 'rendering_foundation' in context:
+        value['rendering_intent']=dict(schema='video.spatial-rendering-intent.v1',space_mode='planar',
+            engine='html-svg',camera_mode='static',required_features=['scale','coverage'],optional_features=[],
+            quality=dict(structural_errors='block',optional_degradation='declared'))
+    return planner.validate_joint_plan_result(value, digest(context), context)
 
 
-def capture(tmp_path):
+def capture(tmp_path, *, rendering_foundation=False):
     profile=planner.PROFILE
     _,hosts,_=prepare()
     host,policy,binding=candidate_config(hosts[profile])
     value=document()
+    if rendering_foundation:
+        from agent_service.spatial_rendering_contract import foundation_guidance
+        value['rendering_foundation']=foundation_guidance()
+    task=planner.planner_task(value,digest(value))
     files={planner.INPUT_NAME:canonical_bytes(value)}
     scenario_path,sources,scenario=write_scenario(tmp_path/'projected',profile,
-        dict(input_sha256=digest(value)),files)
+        task,files)
     pins={key:item for key,item in policy.pins().items() if key in ExecutionEnvelope.model_fields}
     envelope=ExecutionEnvelope(**pins,job_id=str(uuid4()),attempt_id=str(uuid4()),fence=1,
         deadline_at=time.time()+600,lease_expires_at=time.time()+300,
-        task=dict(input_sha256=digest(value)),inputs=[InlineFile.from_bytes(name,raw) for name,raw in files.items()])
+        task=task,inputs=[InlineFile.from_bytes(name,raw) for name,raw in files.items()])
     directory=tmp_path/'joint-plan-candidate'
     root=directory/'candidate-output'
     root.mkdir(parents=True)
@@ -146,6 +155,30 @@ def test_planner_admission_preserves_capture_and_only_creates_disabled_host(tmp_
     assert before=={path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in root.iterdir()}
     with pytest.raises(ServiceError,match='new_output_required'):
         admission.review_candidate(directory,tmp_path/'admitted')
+
+
+def test_marked_planner_capture_is_admitted_with_its_frozen_rendering_intent(tmp_path):
+    directory,root,value,artifact=capture(tmp_path,rendering_foundation=True)
+    task=read(root/'candidate-request.json')['envelope']['task']
+    assert task==dict(input_sha256=digest(value),rendering_foundation_revision=1)
+    assert artifact['rendering_intent']['camera_mode']=='static'
+    summary=admission.review_candidate(directory,tmp_path/'admitted')
+    assert summary['accepted_host'] is True and summary['enabled'] is False
+
+
+@pytest.mark.parametrize('rendering_foundation,marker',[(False,1),(True,None),(True,2),(True,True)])
+def test_planner_capture_rejects_forged_missing_or_mistyped_foundation_marker(
+        tmp_path,monkeypatch,rendering_foundation,marker):
+    directory,root,_,_=capture(tmp_path,rendering_foundation=rendering_foundation)
+    envelope,result=admission.verify_parent({name:read(root/name) for name in admission.PARENT_FILES.values()})
+    task=dict(envelope.task)
+    if marker is None:task.pop('rendering_foundation_revision',None)
+    else:task['rendering_foundation_revision']=marker
+    changed=envelope.model_copy(update=dict(task=task))
+    monkeypatch.setattr(admission,'verify_parent',lambda _: (changed,result))
+    with pytest.raises(ServiceError,match='input_mismatch|rendering_revision_invalid'):
+        admission.review_candidate(directory,tmp_path/'rejected')
+    assert not (tmp_path/'rejected').exists()
 
 
 @pytest.mark.parametrize('name,change',[

@@ -154,7 +154,9 @@ def _role_capture(root, envelope, result, raw):
         module.validate_input_files(document, inputs, compilation_revision=envelope.profile_revision)
         artifact_names = {module.RESULT_NAME}
     else:
+        from agent_service.profiles.video_joint_plan import planner_task
         document = module.validate_joint_plan_input(decode_video_json(raw[module.INPUT_NAME]))
+        module.validate_planner_task(envelope.task)
         require(document.get('skill_catalog') is not None and document['method_delivery'] is None,
                 'wikiskill_admission_skill_catalog_required')
         snapshot, packages = load_skill_bundle(root)
@@ -164,7 +166,8 @@ def _role_capture(root, envelope, result, raw):
                 'wikiskill_admission_input_mismatch')
         artifact_names = {module.RESULT_NAME, EVIDENCE_NAME}
     require(raw[module.INPUT_NAME] == canonical_bytes(document)
-        and envelope.task == {'input_sha256': digest(document)}, 'wikiskill_admission_input_mismatch')
+        and envelope.task == ({'input_sha256': digest(document)} if envelope.profile in COMPILER_PROFILES
+                              else planner_task(document,digest(document))), 'wikiskill_admission_input_mismatch')
     require(len(result.artifacts) == len(artifact_names)
         and {item.name for item in result.artifacts} == artifact_names,
         'wikiskill_admission_artifact_mismatch')

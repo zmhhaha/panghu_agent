@@ -65,11 +65,17 @@ def compiler_source():
     return document,C.input_files(snapshot,document),[InlineFile.from_bytes(C.RESULT_NAME,canonical_bytes(artifact))]
 
 
-def role_source(tmp_path,profile):
+def role_source(tmp_path,profile, *, rendering_foundation=False):
     if profile in COMPILER_PROFILES:
         return compiler_source(),None
     from test_joint_plan_skills_profile import stage,observe
-    document,packages,output,envelope,proof=stage(tmp_path/'business')
+    document,packages,output,envelope,proof=stage(tmp_path/'business',rendering_foundation=rendering_foundation)
+    if rendering_foundation:
+        from agent_service.profiles.video_joint_plan import planner_task
+        envelope.task=planner_task(document,digest(document))
+        output['rendering_intent']=dict(schema='video.spatial-rendering-intent.v1',space_mode='planar',
+            engine='html-svg',camera_mode='static',required_features=['scale','coverage'],optional_features=[],
+            quality=dict(structural_errors='block',optional_degradation='declared'))
     handler=implementation(profile)
     observer=handler.create_tool_observer(tmp_path/'business',envelope.task)
     observe(observer,'skill_search',{'query':'relationships'},'actual-search')
@@ -82,17 +88,19 @@ def role_source(tmp_path,profile):
     return (document,{row.name:row.content() for row in envelope.inputs},artifacts),envelope.attempt_id
 
 
-def capture(tmp_path,profile=PROFILES[0]):
+def capture(tmp_path,profile=PROFILES[0], *, rendering_foundation=False):
     module=profile_module(profile)
     _,hosts,_=prepare(profile)
     host,policy,binding=candidate_config(hosts[profile])
-    (value,files,artifacts),observed_attempt=role_source(tmp_path,profile)
+    (value,files,artifacts),observed_attempt=role_source(tmp_path,profile,rendering_foundation=rendering_foundation)
+    from agent_service.profiles.video_joint_plan import planner_task
+    task=({'input_sha256':digest(value)} if profile in COMPILER_PROFILES else planner_task(value,digest(value)))
     scenario_path,sources,scenario=write_scenario(tmp_path/'projected',profile,
-        dict(input_sha256=digest(value)),files)
+        task,files)
     pins={key:item for key,item in policy.pins().items() if key in ExecutionEnvelope.model_fields}
     envelope=ExecutionEnvelope(**pins,job_id=str(uuid4()),attempt_id=observed_attempt or str(uuid4()),fence=1,
         deadline_at=time.time()+600,lease_expires_at=time.time()+300,
-        task=dict(input_sha256=digest(value)),inputs=[InlineFile.from_bytes(name,raw) for name,raw in files.items()])
+        task=task,inputs=[InlineFile.from_bytes(name,raw) for name,raw in files.items()])
     directory=tmp_path/('wikiskill-compiler-candidate' if profile in COMPILER_PROFILES else 'wikiskill-planner-candidate')
     root=directory/'candidate-output'
     root.mkdir(parents=True)
@@ -186,6 +194,30 @@ def test_exact_role_report_and_disabled_admission_preserve_capture(tmp_path,prof
         for path in root.rglob('*') if path.is_file()}
     with pytest.raises(ServiceError,match='new_output_required'):
         admission.review_candidate(directory,tmp_path/'admitted')
+
+
+def test_progressive_planner_marked_capture_preserves_skill_evidence_and_rendering_intent(tmp_path):
+    directory,root,value,artifact=capture(tmp_path,PROFILES[1],rendering_foundation=True)
+    assert read(root/'candidate-request.json')['envelope']['task']==dict(
+        input_sha256=digest(value),rendering_foundation_revision=1)
+    assert artifact['rendering_intent']['camera_mode']=='static'
+    report=admission.report_candidate(directory,tmp_path/'report.json')
+    assert report['checks']['progressive_skill_tools_exercised'] is True
+    summary=admission.review_candidate(directory,tmp_path/'admitted')
+    assert summary['accepted_host'] is True and summary['enabled'] is False
+
+
+@pytest.mark.parametrize('rendering_foundation,marker',[(False,1),(True,None),(True,2),(True,True)])
+def test_progressive_planner_capture_rejects_forged_missing_or_mistyped_foundation_marker(
+        tmp_path,rendering_foundation,marker):
+    directory,root,_,_=capture(tmp_path,PROFILES[1],rendering_foundation=rendering_foundation)
+    envelope,result=admission.verify_parent({name:read(root/name) for name in admission.PARENT_FILES.values()})
+    task=dict(envelope.task)
+    if marker is None:task.pop('rendering_foundation_revision',None)
+    else:task['rendering_foundation_revision']=marker
+    envelope=envelope.model_copy(update=dict(task=task))
+    with pytest.raises(ServiceError,match='input_mismatch|rendering_revision_invalid'):
+        admission._role_capture(root,envelope,result,{})
 
 
 @pytest.mark.parametrize('profile',PROFILES)

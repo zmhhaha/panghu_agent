@@ -95,8 +95,9 @@ def assess_candidate(candidate_dir, *, source_root=None):
     require(len(inputs) == len(envelope.inputs) and planner.INPUT_NAME in inputs,
             'joint_plan_admission_input_mismatch')
     document = planner.validate_joint_plan_input(decode_video_json(inputs[planner.INPUT_NAME]))
+    planner.validate_planner_task(envelope.task)
     require(inputs[planner.INPUT_NAME] == canonical_bytes(document)
-        and envelope.task == {'input_sha256':digest(document)}
+        and envelope.task == planner.planner_task(document,digest(document))
         and set(inputs) == {planner.INPUT_NAME}, 'joint_plan_admission_input_mismatch')
     for name in (planner.INPUT_NAME, planner.RESULT_NAME):
         raw[name] = _capture(root, name, planner.OUTPUT_MAX_BYTES)
