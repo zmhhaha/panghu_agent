@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,7 @@ from video_workbench import film_appearance_context as appearance
 from video_workbench.creative_film_module_contract import predecessor_from_package
 from test_creative_film_module_contract import stage, collected, raw_result, core
 from test_film_creation_workflow import env, OWNER, start_module, module_request
+from video_workbench.formal_drawing_libraries import compact_module_runtime_guidance
 
 
 def package(tmp_path, *, source=None, states=None):
@@ -26,6 +28,17 @@ def package(tmp_path, *, source=None, states=None):
 def instruction_reference(value):
     text = value['scene']['instruction']
     return json.loads(text.split(appearance.BEGIN, 1)[1].removesuffix(appearance.END))
+
+
+def opening_counterexample():
+    value = json.loads((Path(__file__).with_name('fixtures') /
+        'ink-opening-reference-counterexample.json').read_bytes())
+    assert len(value['source']) == 11248
+    assert hashlib.sha256(value['source'].encode()).hexdigest() == value['source_sha256'] \
+        == 'bbfde7006030d539ee1e6a940c7cb85b95f2443d1e108d99faa3a35491fa4454'
+    assert value['scope'].startswith('wholly synthetic')
+    assert len(value['generated_instruction']) == 4598
+    return value
 
 
 def test_exact_original_source_exit_states_and_asset_bindings_reach_unchanged_v1_input(tmp_path):
@@ -81,6 +94,46 @@ def test_complete_oversized_source_or_cumulative_instruction_fails_without_trunc
         appearance.attach_predecessor_appearance(task, small)
 
 
+def test_synthetic_20150_character_reference_keeps_source_and_explicit_user_direction(tmp_path):
+    from video_workbench.animejs_library import descriptor as anime_descriptor
+    original = opening_counterexample()
+    first = package(tmp_path, source=original['source'], states=original['exit_states'])
+    task = core(1, predecessor_from_package(first))
+    reference = appearance.predecessor_appearance_reference(task, first)
+    full_addition = appearance.GUIDANCE + '\n' + appearance.BEGIN \
+        + canonical_bytes(reference).decode('utf-8') + appearance.END
+    assert len(original['generated_instruction']) + 2 + len(full_addition) == 20150
+    # Text resembling an application marker is still explicit user direction.
+    user = '逐字保留此意见。\r\nAPP-FROZEN-DRAWING-LIBRARIES 也是用户写下的。'
+    task['scene']['instruction'] = user + '\n\n' + original['generated_instruction']
+    before = deepcopy(task)
+    with pytest.raises(ServiceError, match='instruction_too_large'):
+        appearance.attach_predecessor_appearance(task, first)
+    enhanced = appearance.attach_predecessor_appearance(task, first, user_instruction=user,
+        compact_generated_guidance=compact_module_runtime_guidance({
+            'drawing_libraries': {'ink-landscape': {}}, 'authoring_libraries': {'animejs': anime_descriptor()}}))
+    reference = instruction_reference(enhanced)
+    assert reference == appearance.predecessor_appearance_reference(task, first)
+    assert reference['files'][reference['entry']].encode() == original['source'].encode()
+    assert reference['exit_states'] == original['exit_states']
+    assert enhanced['scene']['instruction'].startswith(user + '\n\n')
+    assert len(enhanced['scene']['instruction']) <= 16000
+    assert contract.validate_core_task(enhanced) == enhanced
+    assert task == before
+    assert {key: value for key, value in enhanced.items() if key != 'scene'} == {
+        key: value for key, value in task.items() if key != 'scene'}
+    # Compaction must neither guess a different user prefix nor truncate an
+    # original which cannot fit even when the generated explanation is tiny.
+    with pytest.raises(ServiceError, match='user_instruction_mismatch'):
+        appearance.attach_predecessor_appearance(task, first, user_instruction='substituted direction',
+            compact_generated_guidance='short guidance')
+    huge = package(tmp_path, source=original['source'] + 'x' * 5000, states=original['exit_states'])
+    huge_task = core(1, predecessor_from_package(huge))
+    with pytest.raises(ServiceError, match='instruction_too_large'):
+        appearance.attach_predecessor_appearance(huge_task, huge,
+            user_instruction='', compact_generated_guidance='short guidance')
+
+
 def test_predecessor_source_changes_frozen_task_and_skill_catalog_identity(tmp_path):
     first = package(tmp_path)
     task = core(1, predecessor_from_package(first))
@@ -106,6 +159,60 @@ def test_actual_store_freezes_previous_source_before_skill_selection_or_paid_cla
     assert instruction_reference(delivered) == reference
     assert delivered['skill_catalog']['task_sha256'] == digest(frozen['document']['core_task'])
     assert env.creation.operation('module', second['id'])['status'] == 'completed'
+
+
+def test_store_adds_all_generated_library_guidance_before_budgeting_complete_predecessor(env, monkeypatch):
+    import test_film_creation_workflow as workflow_fixture
+    from video_workbench.formal_drawing_libraries import enable_in_capabilities
+    from video_workbench.ink_landscape_library import read_assets
+    from video_workbench.animejs_library import (
+        enable_in_capabilities as enable_anime, read_assets as anime_assets,
+    )
+
+    original = opening_counterexample()
+    original_result = workflow_fixture.raw_result
+    def counterexample_result(document):
+        raw = original_result(document)
+        if document['film_context']['current_scene_index'] == 0:
+            module = raw['module']
+            module['files'][module['entry']] = original['source']
+            module['states']['exit'] = original['exit_states']
+            module['engine'] = 'canvas'
+            module['assets'] = ['assets/ink-landscape.mjs', 'assets/ink-landscape.LICENSE.txt']
+        return raw
+    monkeypatch.setattr(workflow_fixture, 'raw_result', counterexample_result)
+    caps = deepcopy(env.creation.runtime_capabilities)
+    caps['allowed_engines'].append('canvas')
+    caps = enable_in_capabilities(enable_anime(caps))
+    env.creation.runtime_capabilities = caps
+    env.creation.assets.update({'assets/' + name: raw for name, raw in read_assets().items()})
+    env.creation.assets.update({'assets/' + name: raw for name, raw in anime_assets().items()})
+    env.creation.configuration['runtime_capabilities'] = deepcopy(caps)
+    env.creation.configuration['sha256'] = digest({key: value for key, value in env.creation.configuration.items()
+        if key != 'sha256'})
+    first = start_module(env)
+    env.workflow.tick()
+    first = env.creation.operation('module', first['id'])
+    assert first['status'] == 'completed'
+    request = module_request(env, 1, first['version_id'])
+    user = '保留山脊和细小芦影。'
+    request['instruction'] = user
+    second = env.workflow.start_module(OWNER, env.project['id'], env.project['scenes'][1]['id'],
+        request, 'complete-large-original-after-library-guidance')
+    frozen = env.creation.operation('module', second['id'])
+    pending_core = frozen['document']['core_task']
+    prior = env.creation.module_package(OWNER, first['version_id'])
+    reference = instruction_reference(pending_core)
+    assert reference == appearance.predecessor_appearance_reference(pending_core, prior)
+    assert reference['files'][reference['entry']] == original['source']
+    assert reference['exit_states'] == original['exit_states']
+    assert pending_core['scene']['instruction'].startswith(user + '\n\n')
+    assert len(pending_core['scene']['instruction']) <= 16000
+    assert 'resets transforms' in pending_core['scene']['instruction']
+    assert not frozen['submit_attempted'] and ('submit', second['id']) not in env.gateway.calls
+    prepared = env.creation.prepare_module(second['id'], env.adapter)
+    assert instruction_reference(prepared['document']) == reference
+    assert prepared['document']['skill_catalog']['task_sha256'] == digest(pending_core)
 
 
 def test_oversized_combined_reference_stops_before_next_operation_or_gateway_upload(env):

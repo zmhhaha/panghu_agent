@@ -63,7 +63,9 @@ def test_formal_silent_children_have_no_recording_inputs_and_render_one_real_fro
     for item in modules:
         package = env.creation.module_package(OWNER, item['version_id'])
         document = package['input_document']
-        assert document['film_context']['schema'] == contract.EXPLICIT_CONTEXT_SCHEMA
+        assert document['film_context']['schema'] == contract.STRUCTURED_CONTEXT_SCHEMA
+        assert (document['film_context']['predecessor_appearance'] is None) is (
+            document['film_context']['current_scene_index'] == 0)
         assert document['scene']['narration'] == ''
         assert document['scene']['alignment'] is document['scene']['beats'] is document['scene']['audio_sha256'] is None
         assert package['profile']['bundle_revision'] == profile.BUNDLE_REVISION

@@ -98,7 +98,10 @@ export async function probeFilmBrowser({bundleRoot,expectedBundleSha256,chromium
  let browser;const errors=[],blocked=[],observations=[];
  try{
   browser=await chromium.launch({headless:true,executablePath,args:['--no-sandbox','--disable-setuid-sandbox',
-   '--disable-dev-shm-usage','--disable-background-networking','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+   // Cached ink canvases can stall accelerated Canvas2D screenshots. Keep
+   // Canvas2D on the CPU while retaining the admitted WebGL SwiftShader path.
+   '--disable-dev-shm-usage','--disable-background-networking','--disable-accelerated-2d-canvas',
+   '--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   const context=await browser.newContext({viewport:{width:verified.config.width,height:verified.config.height},
    deviceScaleFactor:1,acceptDownloads:false});
   // Playwright's serviceWorkers=block helper reads the accessor on opaque

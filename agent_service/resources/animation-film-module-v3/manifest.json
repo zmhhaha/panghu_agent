@@ -1,0 +1,24 @@
+{
+  "bundle_revision": "animation-film-module-v3",
+  "automatic_updates": false,
+  "upstream_content_vendored": false,
+  "license": "MIT",
+  "local_files": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "8a9b051ee7d2ac8d8ade936b3eb67a58e69a75d78e95b389395755b0ef1fcbf1"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "3c008d7b96c96dffe712c6c06b5fa410c6e34a705400078730007ceafdab10a5"
+    },
+    {
+      "path": "author-procedure/SKILL.md",
+      "sha256": "4b018fb1afaa2933ec78aa180bf93f1f0cf8dc9098fafbb3a37e5771dea46c1e"
+    },
+    {
+      "path": "foundation/SKILL.md",
+      "sha256": "66c18e19db1fb2f5ede193825d4666edf6f6a7d21f1848719161d61d72d8966f"
+    }
+  ]
+}

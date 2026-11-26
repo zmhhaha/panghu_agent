@@ -19,14 +19,16 @@ INPUT_NAME = 'animation-film-module-input.json'
 INPUT_ROLE = 'animation_film_module_input'
 RESULT_NAME = 'animation-film-module-result.json'
 EVIDENCE_NAME = 'animation-skill-tool-evidence.json'
-INSTRUCTION_REVISION = 'animation-film-module-instructions-2'
-BUNDLE_REVISION = 'animation-film-module-v2'
+INSTRUCTION_REVISION = 'animation-film-module-instructions-3'
+BUNDLE_REVISION = 'animation-film-module-v3'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})
-BUNDLE_MANIFEST_SHA256 = '53d43557bbd8e672ee2c45e536cff046f2f522b0b6086adc38d19ed5af01c414'
+BUNDLE_MANIFEST_SHA256 = '0edbd7a41993dd8cd76df31af7c80572ee71452eccea2081c5f85bd0ca2f24e3'
 HISTORICAL_BUNDLES = {
     'animation-film-module-v1': ('animation-film-module-instructions-1',
         'fc40e7b8cab8bbbefc5ede30f9001aa64f197f296e84e9113fb45880106a628f'),
+    'animation-film-module-v2': ('animation-film-module-instructions-2',
+        '53d43557bbd8e672ee2c45e536cff046f2f522b0b6086adc38d19ed5af01c414'),
     BUNDLE_REVISION: (INSTRUCTION_REVISION, BUNDLE_MANIFEST_SHA256),
 }
 

@@ -34,6 +34,7 @@ COMPACTOR_SHA256 = "7d7b158694e9b2eca70770ca657d3e945e3f2998c5f8328d4f193de1b426
 OUTPUT_STAT_KEYS = frozenset({"raw_bytes", "raw_lines", "raw_max_line_bytes", "output_bytes",
                               "output_lines", "output_max_line_bytes", "message_updates", "tool_updates"})
 MODEL_RETRY_DELAY_SECONDS = 2.0
+PROCESS_EXIT_DRAIN_SECONDS = 5.0
 
 
 class RuntimeExecutionError(RuntimeError):
@@ -726,19 +727,27 @@ class PiRuntime:
                 now = time.monotonic()
                 if process.poll() is not None and root_exited_at is None:
                     root_exited_at = now
-                if root_exited_at is not None and now - root_exited_at >= 0.2 and events.empty():
-                    break
                 if cancel.is_set():
                     raise RuntimeExecutionError("cancelled", "Execution cancelled")
                 if now >= end_time:
                     raise RuntimeExecutionError("timed_out", "Execution deadline elapsed")
+                if root_exited_at is not None:
+                    # An empty queue can coexist with a reader holding the
+                    # terminal line. Wait for both readers to finish before
+                    # accepting the drained event sequence.
+                    if not any(t.is_alive() for t in threads) and events.empty():
+                        break
+                    if events.empty() and now - max(root_exited_at, last_output) >= PROCESS_EXIT_DRAIN_SECONDS:
+                        # A descendant may retain a pipe indefinitely. Fail
+                        # closed after five seconds without output progress;
+                        # queued data still drains under the original deadline
+                        # and byte limits. Finally fences the entire owned tree.
+                        raise RuntimeExecutionError("runtime_protocol_error", "Pi output did not finish after root exit")
                 if now - last_output > s.idle_timeout_seconds:
                     raise RuntimeExecutionError("runtime_idle_timeout", "Pi produced no events within the bounded idle interval", True)
                 try:
                     kind, data = events.get(timeout=0.025)
                 except queue.Empty:
-                    if process.poll() is not None and not any(t.is_alive() for t in threads) and events.empty():
-                        break
                     continue
                 last_output = now
                 total += len(data)
@@ -796,6 +805,8 @@ class PiRuntime:
                 # results, session cwd, or untrusted progress percentages.
                 if event_type in {"agent_start", "agent_end", "turn_start", "turn_end", "message_end", "tool_execution_start", "tool_execution_end"}:
                     emit("pi_event", event=event_type)
+                # A slow durable event sink is progress, not an EOF wait.
+                last_output = time.monotonic()
             self._diagnostic_stage = 'validate_completion'
             if process.returncode:
                 raise RuntimeExecutionError("runtime_exit", "Pi exited unsuccessfully", True)

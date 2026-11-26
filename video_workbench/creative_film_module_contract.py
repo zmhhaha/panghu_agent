@@ -13,7 +13,7 @@ from agent_service.profiles.video_animation_film_module import (
     HISTORICAL_BUNDLES, build_prompt_for_bundle,
 )
 from agent_service.profiles.video_animation_film_module_contract import (
-    INPUT_SCHEMA, CONTEXT_SCHEMA, CORE_FIELDS, DECISION_SCOPE, MAX_TOOL_EVIDENCE_BYTES,
+    INPUT_SCHEMA, CONTEXT_SCHEMA, STRUCTURED_CONTEXT_SCHEMA, CORE_FIELDS, DECISION_SCOPE, MAX_TOOL_EVIDENCE_BYTES,
     require, validate_core_task, validate_input, validate_result, module_metadata, is_silent_task,
 )
 from agent_service.skill_tool_evidence import validate_tool_evidence
@@ -112,6 +112,9 @@ def collect_module_result(input_document, result, evidence, *, skill_delivery, f
     require(frozen_profile is None or frozen_profile == profile, 'creative_film_module_profile_changed', 409)
     require(not is_silent_task(document) or revision != 'animation-film-module-v1',
         'creative_film_module_silent_profile_not_admitted', 409)
+    require(document['film_context']['schema'] != STRUCTURED_CONTEXT_SCHEMA
+        or revision == 'animation-film-module-v3',
+        'creative_film_module_structured_profile_not_admitted', 409)
     package = dict(schema=CREATIVE_SCHEMA, adapter_revision=ADAPTER_REVISION,
         input_document=document, input_sha256=input_sha256, profile=profile,
         result=output, result_sha256=digest(output), engine=module['engine'],

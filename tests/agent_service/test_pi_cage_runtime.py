@@ -3,7 +3,9 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 import sys
 import threading
@@ -212,3 +214,191 @@ def test_version_probe_enforces_new_package_node_floor(monkeypatch, tmp_path, no
         with pytest.raises(RuntimeExecutionError) as failed:
             value._readiness_versions()
         assert failed.value.code == 'runtime_not_ready'
+
+
+def _offline_drain_runtime(tmp_path, mode='success', command=None):
+    fake = Path(__file__).with_name('fixtures') / 'fake_pi.py'
+    skill = tmp_path / 'SKILL.md'
+    skill.write_text('# Offline native drain fixture\n', encoding='utf-8')
+    value = runtime(fixture_mode=True, idle_timeout_seconds=10,
+                    term_grace_seconds=.1, kill_grace_seconds=1)
+    value.settings = replace(value.settings,
+        command=command or (sys.executable, str(fake), mode),
+        node_command=(sys.executable, str(fake), 'node'),
+        skill_paths=(skill,), skill_hashes=(hashlib.sha256(skill.read_bytes()).hexdigest(),))
+    return value
+
+
+def _delay_native_line(monkeypatch, marker, delay, on_delay=None):
+    """Delay a line already read from a real child's pipe, never invent it."""
+    original = subprocess.Popen
+    children, held = [], threading.Event()
+
+    class DelayedPipe:
+        def __init__(self, pipe):
+            self.pipe = pipe
+
+        def readline(self, *args):
+            data = self.pipe.readline(*args)
+            if marker in data:
+                held.set()
+                if on_delay:
+                    on_delay()
+                threading.Event().wait(delay)
+            return data
+
+        def close(self):
+            self.pipe.close()
+
+    def launch(command, *args, **kwargs):
+        process = original(command, *args, **kwargs)
+        if '--print' in command:
+            children.append(process)
+            process.stdout = DelayedPipe(process.stdout)
+        return process
+
+    monkeypatch.setattr(adapter.subprocess, 'Popen', launch)
+    return children, held
+
+
+def _drain_request(value, seconds=30):
+    request = EngineRequest(str(uuid4()), 'workspace-task.v1', {'prompt': 'Offline real subprocess event drain.'},
+        30, datetime.now(timezone.utc) + timedelta(seconds=seconds))
+    return value.profile.make_wire(request)
+
+
+def test_exited_root_waits_for_delayed_real_terminal_line(tmp_path, monkeypatch):
+    value = _offline_drain_runtime(tmp_path)
+    children, held = _delay_native_line(monkeypatch, b'"type": "agent_end"', .5)
+    events = []
+    value.execute(_drain_request(value), tmp_path / 'attempt', events.append, threading.Event())
+    assert held.is_set() and children[0].returncode == 0
+    assert any(event.get('event') == 'agent_end' for event in events)
+    assert events[-1]['type'] == 'runtime_finished'
+    assert (tmp_path / 'attempt' / 'provenance.json').is_file()
+
+
+def test_eof_without_real_terminal_event_is_still_protocol_error(tmp_path):
+    value = _offline_drain_runtime(tmp_path, 'incomplete')
+    events = []
+    with pytest.raises(RuntimeExecutionError) as failure:
+        value.execute(_drain_request(value), tmp_path / 'attempt', events.append, threading.Event())
+    assert failure.value.code == 'runtime_protocol_error'
+    assert 'complete assistant/agent' in failure.value.message
+    assert not any(event.get('event') == 'agent_end' for event in events)
+    assert not (tmp_path / 'attempt' / 'provenance.json').exists()
+
+
+def test_delayed_assistant_still_enforces_provider_model_identity(tmp_path, monkeypatch):
+    value = _offline_drain_runtime(tmp_path, 'wrong_model')
+    children, held = _delay_native_line(monkeypatch, b'"type": "message_end"', .5)
+    with pytest.raises(RuntimeExecutionError) as failure:
+        value.execute(_drain_request(value), tmp_path / 'attempt', lambda _: None, threading.Event())
+    assert held.is_set() and children[0].returncode == 0
+    assert failure.value.code == 'model_mismatch'
+    assert not (tmp_path / 'attempt' / 'provenance.json').exists()
+
+
+@pytest.mark.parametrize('stop,expected', [('cancel', 'cancelled'), ('deadline', 'timed_out')])
+def test_exited_root_drain_keeps_original_cancel_and_deadline(tmp_path, monkeypatch, stop, expected):
+    value = _offline_drain_runtime(tmp_path)
+    cancel = threading.Event()
+    timers = []
+
+    def on_delay():
+        if stop == 'cancel':
+            timer = threading.Timer(.1, cancel.set)
+            timers.append(timer)
+            timer.start()
+
+    children, held = _delay_native_line(monkeypatch, b'"type": "agent_end"', 1.0, on_delay)
+    started = time.monotonic()
+    with pytest.raises(RuntimeExecutionError) as failure:
+        value.execute(_drain_request(value, .6 if stop == 'deadline' else 30),
+                      tmp_path / 'attempt', lambda _: None, cancel)
+    for timer in timers:
+        timer.join(timeout=1)
+    assert held.is_set() and children[0].returncode == 0
+    assert failure.value.code == expected and time.monotonic() - started < 2
+    assert not (tmp_path / 'attempt' / 'provenance.json').exists()
+
+
+def test_exited_root_with_descendant_holding_pipes_has_finite_drain_and_stops_tree(tmp_path, monkeypatch):
+    cli = tmp_path / 'inherited-pipes.py'
+    cli.write_text('''import json,subprocess,sys
+from pathlib import Path
+if '--version' in sys.argv:print('0.99.2');sys.exit(0)
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
+Path('child.pid').write_text(str(child.pid))
+for event in [{'type':'agent_start'},
+ {'type':'message_end','message':{'role':'assistant','provider':'fixture','model':'fixture-model','stopReason':'stop'}},
+ {'type':'agent_end'}]:print(json.dumps(event),flush=True)
+''', encoding='utf-8')
+    value = _offline_drain_runtime(tmp_path, command=(sys.executable, str(cli)))
+    original_stop, stopped = value._stop_tree, []
+
+    def observe_stop(process, group, job_object, uid=None):
+        original_stop(process, group, job_object, uid)
+        if job_object:
+            assert not job_object.alive()
+        elif os.name != 'nt':
+            assert not value._fixture_group_processes(process.pid)
+        stopped.append(True)
+
+    monkeypatch.setattr(value, '_stop_tree', observe_stop)
+    events, started = [], time.monotonic()
+    with pytest.raises(RuntimeExecutionError) as failure:
+        value.execute(_drain_request(value), tmp_path / 'attempt', events.append, threading.Event())
+    assert failure.value.code == 'runtime_protocol_error'
+    assert failure.value.message == 'Pi output did not finish after root exit'
+    assert any(event.get('event') == 'agent_end' for event in events)
+    assert stopped == [True] and 5 <= time.monotonic() - started < 8
+    assert not (tmp_path / 'attempt' / 'provenance.json').exists()
+    assert not list((tmp_path / 'attempt' / '.home').glob('runtime-*.json'))
+
+
+def test_real_completion_does_not_hide_delayed_malformed_tail(tmp_path, monkeypatch):
+    cli = tmp_path / 'malformed-tail.py'
+    cli.write_text('''import json,sys
+if '--version' in sys.argv:print('0.99.2');sys.exit(0)
+for event in [{'type':'agent_start'},
+ {'type':'message_end','message':{'role':'assistant','provider':'fixture','model':'fixture-model','stopReason':'stop'}},
+ {'type':'agent_end'}]:print(json.dumps(event),flush=True)
+print('not-json-late-tail',flush=True)
+''', encoding='utf-8')
+    value = _offline_drain_runtime(tmp_path, command=(sys.executable, str(cli)))
+    children, held = _delay_native_line(monkeypatch, b'not-json-late-tail', .5)
+    events = []
+    with pytest.raises(RuntimeExecutionError) as failure:
+        value.execute(_drain_request(value), tmp_path / 'attempt', events.append, threading.Event())
+    assert held.is_set() and children[0].returncode == 0
+    assert any(event.get('event') == 'agent_end' for event in events)
+    assert failure.value.code == 'runtime_protocol_error'
+    assert failure.value.message == 'Pi emitted malformed JSONL'
+    assert not (tmp_path / 'attempt' / 'provenance.json').exists()
+
+
+def test_exited_root_queued_output_drains_through_slow_sink(tmp_path):
+    cli = tmp_path / 'queued-output.py'
+    cli.write_text('''import json,sys
+if '--version' in sys.argv:print('0.99.2');sys.exit(0)
+def emit(event):print(json.dumps(event),flush=True)
+emit({'type':'agent_start'})
+for index in range(80):emit({'type':'tool_execution_end','toolName':'offline'})
+emit({'type':'message_end','message':{'role':'assistant','provider':'fixture','model':'fixture-model','stopReason':'stop'}})
+emit({'type':'agent_end'})
+''', encoding='utf-8')
+    value = _offline_drain_runtime(tmp_path, command=(sys.executable, str(cli)))
+    events = []
+
+    def slow_sink(event):
+        events.append(event)
+        if event.get('event') == 'tool_execution_end':
+            threading.Event().wait(.075)
+
+    started = time.monotonic()
+    value.execute(_drain_request(value), tmp_path / 'attempt', slow_sink, threading.Event())
+    assert sum(event.get('event') == 'tool_execution_end' for event in events) == 80
+    assert events[-1]['type'] == 'runtime_finished'
+    assert time.monotonic() - started > 5
+    assert (tmp_path / 'attempt' / 'provenance.json').is_file()

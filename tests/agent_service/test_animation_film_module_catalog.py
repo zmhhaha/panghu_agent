@@ -35,7 +35,7 @@ def test_new_module_profile_is_a_distinct_disabled_candidate_with_skill_tools():
     assert not merged['routes'][-1]['enabled'] and not merged['kubernetes_workers'][-1]['enabled']
     complete = dict(hosts[P.PROFILE], execution_catalog={key: deepcopy(merged[key]) for key in CATALOG_KEYS})
     assert project_animation_worker_host(complete) == hosts[P.PROFILE]
-    assert profile_model_call_limit(P.PROFILE, 128) == 8
+    assert profile_model_call_limit(P.PROFILE, 128) == 16
     assert profile_model_call_limit(P.PROFILE, 3) == 3
 
 

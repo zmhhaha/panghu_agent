@@ -23,10 +23,14 @@ INPUT_SCHEMA = 'video.animation-film-module-input.v1'
 RESULT_SCHEMA = 'video.animation-film-module-result.v1'
 CONTEXT_SCHEMA = 'video.hyperframes-film-author-context.v1'
 EXPLICIT_CONTEXT_SCHEMA = 'video.hyperframes-film-author-context.v2'
+STRUCTURED_CONTEXT_SCHEMA = 'video.hyperframes-film-author-context.v3'
+APPEARANCE_REFERENCE_SCHEMA = 'video.film-predecessor-appearance-reference.v1'
 FILM_CLOCK_SCHEMA = 'video.hyperframes-film-clock.v1'
 MODULE_SCHEMA = 'video.hyperframes-composable-module.v1'
 BOUNDARY_SCHEMA = 'video.hyperframes-film-boundary.v1'
 INPUT_MAX_BYTES = 4 * 1024 * 1024
+STRUCTURED_INPUT_MAX_BYTES = 2 * 1024 * 1024
+MAX_PREDECESSOR_APPEARANCE_BYTES = 512 * 1024
 OUTPUT_MAX_BYTES = 6 * 1024 * 1024
 MAX_TOOL_EVIDENCE_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_FILE_BYTES = 512 * 1024
@@ -242,18 +246,54 @@ def validate_author_film(film, film_sha256, *, explicit=False):
 def is_silent_task(document):
     """Use only after core validation; absence of a recording is never a flag."""
     context = document['film_context']
-    return (context['schema'] == EXPLICIT_CONTEXT_SCHEMA
+    return (context['schema'] in {EXPLICIT_CONTEXT_SCHEMA, STRUCTURED_CONTEXT_SCHEMA}
         and context['film']['scenes'][context['current_scene_index']]['clock_source'] == 'silent')
+
+
+def validate_predecessor_appearance(reference, document):
+    """Bind complete inert source to the exact already-validated predecessor."""
+    fields = {'schema', 'film_sha256', 'scene_id', 'module_sha256', 'input_sha256',
+        'result_sha256', 'module_id', 'namespace', 'engine', 'entry', 'files',
+        'files_sha256', 'assets_sha256', 'exit_states', 'sha256'}
+    require(type(reference) is dict and set(reference) == fields
+        and reference['schema'] == APPEARANCE_REFERENCE_SCHEMA,
+        'film_module_predecessor_appearance_invalid')
+    _bounded_json(reference, MAX_PREDECESSOR_APPEARANCE_BYTES,
+        'film_module_predecessor_appearance_too_large')
+    context = document['film_context']; predecessor = context['predecessor']
+    previous = predecessor['module']
+    require(reference['sha256'] == digest({key: value for key, value in reference.items() if key != 'sha256'})
+        and all(reference[key] == predecessor[key] for key in ('module_sha256', 'input_sha256', 'result_sha256'))
+        and all(reference[key] == previous[key] for key in
+            ('film_sha256', 'scene_id', 'module_id', 'namespace', 'engine', 'entry', 'files_sha256'))
+        and canonical_bytes(reference['exit_states']) == canonical_bytes(previous['states']['exit']),
+        'film_module_predecessor_appearance_binding_mismatch', 409)
+    require(type(reference['assets_sha256']) is dict
+        and set(reference['assets_sha256']) == set(previous['assets']),
+        'film_module_predecessor_appearance_assets_changed', 409)
+    for value in reference['assets_sha256'].values():
+        checksum(value)
+    require(all(name in document['assets'] and document['assets'][name] == value
+        for name, value in reference['assets_sha256'].items()),
+        'film_module_predecessor_appearance_assets_changed', 409)
+    # Reuse the full source validator, including original file hashes, allowed
+    # namespace/extension, aggregate byte limits and unchanged metadata identity.
+    validate_module(dict(previous, files=reference['files']))
+    return deepcopy(reference)
 
 
 def validate_core_task(document):
     require(type(document) is dict and set(document) == CORE_FIELDS, 'film_module_core_invalid')
     scene, bounds, context = document['scene'], document['constraints'], document['film_context']
-    require(type(context) is dict and set(context) == {'schema', 'film', 'film_sha256',
-        'current_scene_index', 'predecessor'} and context['schema'] in {CONTEXT_SCHEMA, EXPLICIT_CONTEXT_SCHEMA},
+    context_fields = {'schema', 'film', 'film_sha256', 'current_scene_index', 'predecessor'}
+    structured = type(context) is dict and context.get('schema') == STRUCTURED_CONTEXT_SCHEMA
+    if structured:
+        context_fields.add('predecessor_appearance')
+    require(type(context) is dict and set(context) == context_fields
+        and context['schema'] in {CONTEXT_SCHEMA, EXPLICIT_CONTEXT_SCHEMA, STRUCTURED_CONTEXT_SCHEMA},
         'film_module_context_invalid')
     film = validate_author_film(context['film'], context['film_sha256'],
-        explicit=context['schema'] == EXPLICIT_CONTEXT_SCHEMA)
+        explicit=context['schema'] in {EXPLICIT_CONTEXT_SCHEMA, STRUCTURED_CONTEXT_SCHEMA})
     index = context['current_scene_index']
     require(film['total_seconds'] <= 600 and type(index) is int and 0 <= index < len(film['scenes']),
         'film_module_context_invalid')
@@ -324,9 +364,16 @@ def validate_core_task(document):
         if transition is not None:
             require(previous['module_id'] != transition['module_id']
                 and previous['namespace'] != transition['namespace'], 'film_module_target_invalid')
+    if structured:
+        if index == 0:
+            require(context['predecessor_appearance'] is None,
+                'film_module_predecessor_appearance_invalid')
+        else:
+            validate_predecessor_appearance(context['predecessor_appearance'], document)
     if document['base_module'] is not None:
         validate_module(document['base_module'], context=document)
-    _bounded_json(document, INPUT_MAX_BYTES, 'film_module_input_too_large')
+    _bounded_json(document, STRUCTURED_INPUT_MAX_BYTES if structured else INPUT_MAX_BYTES,
+        'film_module_input_too_large')
     return deepcopy(document)
 
 
@@ -338,7 +385,9 @@ def validate_input(document):
     require(catalog['task_sha256'] == digest(core)
         and catalog['allowed_engines'] == core['constraints']['allowed_engines'],
         'film_module_catalog_binding_mismatch', 409)
-    _bounded_json(document, INPUT_MAX_BYTES, 'film_module_input_too_large')
+    _bounded_json(document, STRUCTURED_INPUT_MAX_BYTES
+        if core['film_context']['schema'] == STRUCTURED_CONTEXT_SCHEMA else INPUT_MAX_BYTES,
+        'film_module_input_too_large')
     return deepcopy(document)
 
 

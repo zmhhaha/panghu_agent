@@ -98,6 +98,12 @@ class ProductionRunStore:
         if 'audio_reuse' in run:
             result.update(audio_reuse=deepcopy(run['audio_reuse']),
                 audio_reuse_sha256=run['audio_reuse_sha256'], work_budget=deepcopy(run['work_budget']))
+        if 'module_reuse' in run:
+            result.update(module_reuse=deepcopy(run['module_reuse']),
+                module_reuse_sha256=run['module_reuse_sha256'],
+                module_work_budget=deepcopy(run['module_work_budget']))
+        if 'source_runtime_admission_receipt' in run:
+            result['source_runtime_admission_receipt'] = deepcopy(run['source_runtime_admission_receipt'])
         if 'sequence_registration' in run:
             result.update(sequence_id=run['sequence_registration']['sequence_id'],
                 sequence_registration=deepcopy(run['sequence_registration']))
@@ -133,6 +139,7 @@ class ProductionRunStore:
                 'production_run_sequence_source_changed',409)
             return self._scene_space_service().verified_source(run)
         from .film_render_adapter import validate_film_render_result
+        self._require_module_reuse(run)
         require(self._uses_film(run) and run['status'] == 'completed'
             and not (run.get('cancel_requested') or run.get('draining') or run.get('blocked_reason')),
             'production_run_sequence_source_not_completed', 409)
@@ -366,6 +373,8 @@ class ProductionRunStore:
         current = self._check_film_configuration(self._film_service().readiness())
         require(current == run['film_creation_configuration'],
             'production_run_film_configuration_changed', 409)
+        if 'source_runtime_admission_receipt' in run:
+            self._film_service().source_runtime_configuration_for_child(run, 'draft')
 
     @staticmethod
     def _module_targets(run_id, count):
@@ -640,11 +649,19 @@ class ProductionRunStore:
     def start(self, owner, project_id, request, idem):
         required = {'expected_revision', 'joint_plan_version_id'}
         require(type(request) is dict and required <= set(request) <= required | {
-            'reuse_audio_from_run_id', 'resource_authoring', 'resource_plan', 'audio_mode'}
+            'reuse_audio_from_run_id', 'resource_authoring', 'resource_plan', 'audio_mode',
+            'reuse_completed_prefix_from_run_id'}
             and type(request['expected_revision']) is int and request['expected_revision'] >= 1
             and type(request['joint_plan_version_id']) is str and 1 <= len(request['joint_plan_version_id']) <= 100
             and ('reuse_audio_from_run_id' not in request or type(request['reuse_audio_from_run_id']) is str
                 and 1 <= len(request['reuse_audio_from_run_id']) <= 100))
+        if 'reuse_completed_prefix_from_run_id' in request:
+            source_id = request['reuse_completed_prefix_from_run_id']
+            require(type(source_id) is str and 1 <= len(source_id) <= 100
+                and request.get('audio_mode') == 'silent'
+                and not any(key in request for key in
+                    ('reuse_audio_from_run_id', 'resource_authoring', 'resource_plan')),
+                'production_run_module_reuse_unsupported')
         audio_mode = request.get('audio_mode', 'narration')
         require(type(audio_mode) is str and audio_mode in {'narration', 'silent'})
         if audio_mode == 'silent':
@@ -896,6 +913,9 @@ class ProductionRunStore:
                     require(self.sequence_store is not None and configuration is not None,
                         'production_run_sequence_unavailable', 503)
                 self._reuse_audio(db, run, request['reuse_audio_from_run_id'])
+            if 'reuse_completed_prefix_from_run_id' in request:
+                from .production_module_reuse import attach
+                attach(self, db, run, request['reuse_completed_prefix_from_run_id'])
             if configuration is not None and self.sequence_store is not None:
                 if 'reuse_audio_from_run_id' in request:
                     original = self._read(db, request['reuse_audio_from_run_id'], owner)
@@ -950,10 +970,14 @@ class ProductionRunStore:
                 raise
             if child is None:
                 return None
+            configuration_sha256 = run['film_creation_configuration']['configuration_sha256']
+            if 'source_runtime_admission_receipt' in run:
+                configuration_sha256 = creation.source_runtime_configuration_for_child(
+                    run, intent['phase'], intent.get('index'))
             require(child.get('project_id') == run['project_id']
                 and child.get('request_key') == intent['key']
                 and child.get('request_sha256') == intent['request_sha256']
-                and child.get('configuration_sha256') == run['film_creation_configuration']['configuration_sha256']
+                and child.get('configuration_sha256') == configuration_sha256
                 and child.get('film_sha256') == run['film_sha256']
                 and (intent['phase'] == 'draft'
                      or child.get('scene_id') == run['items'][intent['index']]['scene_id']),
@@ -1159,6 +1183,7 @@ class ProductionRunStore:
             return
         if run['status'] not in ACTIVE:
             return
+        self._require_module_reuse(run)
         self._require_audio_reuse(run)
         for intent in run['intents'].values():
             child = self._lookup(run, intent)
@@ -1235,7 +1260,16 @@ class ProductionRunStore:
         self._sync(run, intent, self._lookup(run, intent))
         self._save(run)
 
+    def _require_module_reuse(self, run):
+        if not any(key in run for key in ('module_reuse', 'module_reuse_sha256', 'module_work_budget',
+                'source_runtime_admission_receipt')):
+            return
+        from .production_module_reuse import verify
+        with self.store.transaction() as db:
+            verify(self, db, run)
+
     def _film_child_request(self, run, phase, index, revision):
+        self._require_module_reuse(run)
         configuration_sha256 = run['film_creation_configuration']['configuration_sha256']
         if phase == 'audio':
             return dict(expected_revision=revision)
@@ -1258,11 +1292,14 @@ class ProductionRunStore:
             return result
         for module_index in range(len(run['items'])):
             self._frozen_module_package(run, module_index)
-        return dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
+        result = dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
             module_version_ids=[item['module_version_id'] for item in run['items']],
             module_targets=deepcopy(run['module_targets']), production_run_id=run['id'],
             timeout_seconds=render_timeout(round(run['film']['total_seconds'] * 24)),
             configuration_sha256=configuration_sha256)
+        if 'source_runtime_admission_receipt' in run:
+            result['source_runtime_admission_receipt'] = deepcopy(run['source_runtime_admission_receipt'])
+        return result
 
     def _step_film(self, run, project, *, admit):
         """New runs author native modules and submit exactly one full project.
