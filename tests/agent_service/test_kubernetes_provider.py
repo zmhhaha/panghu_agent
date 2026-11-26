@@ -11,6 +11,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import threading
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -653,6 +654,89 @@ def test_cold_capsule_stays_starting_until_native_ready_then_admits_once(make_ha
     running = h.dispatcher.poll(cold)
     assert running['state'] == 'running' and len(h.worker.puts()) == 1
     h.dispatcher.poll(running)
+    assert len(h.worker.puts()) == 1
+
+
+def test_slow_input_preparation_and_multiple_cold_ticks_keep_one_native_admission(make_harness, monkeypatch):
+    h = make_harness(cold=True)
+    job = h.submit()
+    h.dispatcher.preparation_heartbeat_seconds = 0.01
+    original_envelope, original_renew = h.dispatcher._envelope, h.store.renew_preparing
+    refreshed = threading.Event()
+    renewals = []
+    def observed_renew(*args, **kwargs):
+        result = original_renew(*args, **kwargs)
+        if result is not None:
+            renewals.append(result['lease_expires_at'])
+            refreshed.set()
+        return result
+    def slow_envelope(claimed):
+        # Each valid preparation pulse is observed before the next 45s step.
+        # Five steps exceed three original 60s leases without any native PUT.
+        for _ in range(5):
+            refreshed.clear()
+            h.clock.now += 45
+            assert refreshed.wait(3), 'Preparation heartbeat failed to preserve a live cold admission'
+        return original_envelope(claimed)
+    monkeypatch.setattr(h.store, 'renew_preparing', observed_renew)
+    monkeypatch.setattr(h.dispatcher, '_envelope', slow_envelope)
+    cold = h.dispatcher.dispatch_once()
+    assert cold['state'] == 'starting' and h.worker.puts() == []
+    assert h.clock.now == 1225 and len(renewals) >= 6
+    expected = original_envelope(cold).request_sha256
+    monkeypatch.setattr(h.dispatcher, '_envelope', original_envelope)
+    for _ in range(3):
+        h.clock.now += 45
+        cold = h.dispatcher.poll(cold)
+        assert cold['state'] == 'starting' and h.worker.puts() == []
+        assert cold['deadline_at'] == job['deadline_at']
+    h.kube.ready_pod(h.allocation(job)['pod_name'])
+    h.worker.lose_start_response = True
+    running = h.dispatcher.poll(cold)
+    admitted = h.worker.executions[running['attempt_id']]['envelope']
+    assert running['state'] == 'running' and len(h.worker.puts()) == 1
+    assert admitted.request_sha256 == expected and admitted.lease_expires_at == h.clock.now + 60
+    assert h.dispatcher.poll(running)['state'] == 'running' and len(h.worker.puts()) == 1
+    assert len([call for call in h.kube.calls if call[:2] == ('POST', 'pods')]) == 1
+
+
+def test_native_claim_is_sent_with_fresh_lease_after_slow_ready_observation(make_harness, monkeypatch):
+    h = make_harness()
+    job = h.submit()
+    original = h.worker.request
+    def slow_ready(endpoint, request):
+        response = original(endpoint, request)
+        if request.url.path == '/v1/capabilities':
+            h.clock.now += 45
+        return response
+    monkeypatch.setattr(h.worker, 'request', slow_ready)
+    running = h.dispatcher.dispatch_once()
+    envelope = h.worker.executions[running['attempt_id']]['envelope']
+    assert running['state'] == 'running' and len(h.worker.puts()) == 1
+    assert envelope.lease_expires_at == h.clock.now + 60
+    assert envelope.deadline_at == job['deadline_at']
+    assert envelope.request_sha256 == h.store.worker_control(
+        running['job_id'], running['attempt_id'], running['fence']).request_sha256
+
+
+def test_unobserved_admitted_worker_cannot_use_preparation_heartbeat(make_harness, monkeypatch):
+    h = make_harness(cold=True)
+    job = h.submit()
+    cold = h.dispatcher.dispatch_once()
+    h.kube.ready_pod(h.allocation(job)['pod_name'])
+    running = h.dispatcher.poll(cold)
+    lease = running['lease_expires_at']
+    h.clock.now += 30
+    def unavailable(envelope):
+        raise ServiceError('worker_transport_unavailable', 503)
+    def forbidden(*args, **kwargs):
+        pytest.fail('A failed Worker observation must not renew its running lease')
+    monkeypatch.setattr(h.adapter, 'inspect', unavailable)
+    monkeypatch.setattr(h.store, 'renew', forbidden)
+    # A stale caller can still say starting, while the durable native claim
+    # already exists. The preparation-only Store guard must reject that path.
+    result = h.dispatcher.poll(cold)
+    assert result['state'] == 'running' and result['lease_expires_at'] == lease
     assert len(h.worker.puts()) == 1
 
 

@@ -362,6 +362,38 @@ class Store(FileStoreMixin):
             self._require_blob(conn, 'input', input_id)
             return _input(row, True)
 
+    def _input_files(self, conn, tenant, caller, references):
+        """Read one immutable input set without one transaction per file.
+
+        Owner, tombstone and actual byte hashes are still checked. Keep each
+        SQL parameter list bounded for both supported databases, and restore
+        request order rather than relying on database row order.
+        """
+        identifiers = [ref['input_id'] for ref in references]
+        if len(set(identifiers)) != len(identifiers):
+            raise ServiceError('invalid_inputs', 422)
+        found, removed = {}, set()
+        tombstones = self.file_tables['tombstones']
+        for offset in range(0, len(identifiers), 500):
+            batch = identifiers[offset:offset + 500]
+            found.update({row['id']: row for row in conn.execute(select(inputs).where(
+                inputs.c.id.in_(batch), inputs.c.tenant == tenant,
+                inputs.c.caller == caller)).mappings()})
+            removed.update(conn.execute(select(tombstones.c.id).where(
+                tombstones.c.kind == 'input', tombstones.c.id.in_(batch))).scalars())
+        files = []
+        for reference in references:
+            item = found.get(reference['input_id'])
+            if item is None or item['sha256'] != reference['sha256']:
+                raise ServiceError('input_integrity_invalid', 503)
+            if item['id'] in removed:
+                raise ServiceError('not_found', 404)
+            if hashlib.sha256(item['content']).hexdigest() != reference['sha256']:
+                raise ServiceError('input_integrity_invalid', 503)
+            files.append(InlineFile.from_bytes(reference.get('path') or item['name'], item['content']))
+        unique_paths(file.name for file in files)
+        return files
+
     def _check_inputs(self, conn, tenant, caller, request, pins=None):
         refs = request.get("inputs", [])
         pins = pins or {}
@@ -620,6 +652,7 @@ class Store(FileStoreMixin):
                       'pins': row['pins'], 'deadline_at': row['deadline_at'],
                       'request_hash': row['request_hash'],
                       'tenant': row['tenant'], 'caller': row['caller'],
+                      'preparation_lease_seconds': lease_seconds,
                       'provisioning': provisioning.get(row['pins']['engine'], 'external_static')}
             conn.execute(insert(attempts).values(id=attempt_id, job_id=row['id'], fence=fence,
                          state='starting', created_at=self.clock(), lease_expires_at=lease,
@@ -648,15 +681,7 @@ class Store(FileStoreMixin):
 
     def _worker_envelope(self, conn, row):
         """Measure immutable identity from authority, not a caller-supplied hash."""
-        files = []
-        for reference in row["request"].get("inputs", []):
-            item = conn.execute(select(inputs).where(inputs.c.id == reference["input_id"],
-                                inputs.c.tenant == row["tenant"], inputs.c.caller == row["caller"])).mappings().first()
-            if (item is None or item["sha256"] != reference["sha256"]
-                    or hashlib.sha256(item["content"]).hexdigest() != reference["sha256"]):
-                raise ServiceError("input_integrity_invalid", 503)
-            self._require_blob(conn, 'input', item['id'])
-            files.append(InlineFile.from_bytes(reference.get('path') or item["name"], item["content"]))
+        files = self._input_files(conn, row['tenant'], row['caller'], row['request'].get('inputs', []))
         checkpoint = self._check_checkpoint(conn, row['tenant'], row['caller'], row['request'], row['pins'])
         checkpoint_files = ([] if checkpoint is None else self._checkpoint_files(
             conn, row['tenant'], row['caller'], checkpoint, row['pins']))
@@ -668,6 +693,14 @@ class Store(FileStoreMixin):
             checkpoint_ref=row['request'].get('checkpoint_ref'), checkpoint_inputs=checkpoint_files,
             deadline_at=float(row["deadline_at"]), lease_expires_at=float(row["lease_expires_at"]),
             task=row["request"]["task"], inputs=files, **execution_fields(row['pins']))
+
+    def execution_envelope(self, job_id, attempt_id, fence):
+        """Load the exact attempt once; this grants no launch or renewal right."""
+        with self._tx() as conn:
+            row = self._find(conn, job_id)
+            if row['attempt_id'] != attempt_id or type(fence) is not int or row['fence'] != fence:
+                raise ServiceError('stale_attempt', 409)
+            return self._worker_envelope(conn, row)
 
     def _matching_worker_request(self, conn, envelope):
         if isinstance(envelope, ExecutionControl):
@@ -907,11 +940,13 @@ class Store(FileStoreMixin):
             conn.execute(update(slot).where(slot.c.id == control['id'], slot.c.job_id == row["id"]).values(job_id=None))
             return _job(row)
 
-    def claim_worker_start(self, attempt_id, request_sha256):
+    def claim_worker_start(self, attempt_id, request_sha256, *, lease_seconds=60):
         """Persist sole authority for native PUT, separately from Pod creation."""
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
+            raise ValueError('Invalid lease interval')
         with self._tx() as conn:
             allocation = self._allocation(conn, attempt_id, request_sha256)
-            self._worker_current(conn, allocation["job_id"], attempt_id, allocation["fence"], launching=True)
+            row = self._worker_current(conn, allocation["job_id"], attempt_id, allocation["fence"], launching=True)
             if (allocation["retired"] or not allocation["create_claimed"] or allocation["pod_uid"] is None
                     or allocation["candidate_result"] is not None):
                 raise ServiceError("worker_allocation_conflict", 409)
@@ -921,6 +956,12 @@ class Store(FileStoreMixin):
                 worker_allocations.c.attempt_id == attempt_id,
                 worker_allocations.c.worker_start_claimed.is_(False),
                 worker_allocations.c.retired.is_(False)).values(worker_start_claimed=True))
+            preparing = self._preparing_intent(conn, row) if changed.rowcount == 1 else None
+            if preparing is not None:
+                # The unique native admission gets a fresh bound lease, after
+                # cold preparation, without reviving an expired attempt.
+                self._set_lease(conn, row, max(row['lease_expires_at'],
+                    min(self.clock() + min(lease_seconds, preparing['preparation_lease_seconds']), row['deadline_at'])))
             return changed.rowcount == 1
 
     def bind_worker(self, attempt_id, request_sha256, pod_uid):
@@ -1132,6 +1173,59 @@ class Store(FileStoreMixin):
             conn.execute(update(jobs).where(jobs.c.id == job_id).values(lease_expires_at=lease))
             conn.execute(update(attempts).where(attempts.c.id == attempt_id).values(lease_expires_at=lease))
             return True
+
+    @staticmethod
+    def _set_lease(conn, row, lease):
+        conn.execute(update(jobs).where(jobs.c.id == row['id']).values(lease_expires_at=lease))
+        conn.execute(update(attempts).where(attempts.c.id == row['attempt_id'],
+            attempts.c.job_id == row['id'], attempts.c.fence == row['fence']).values(lease_expires_at=lease))
+        row['lease_expires_at'] = lease
+
+    @staticmethod
+    def _preparing_intent(conn, row):
+        attempt = conn.execute(select(attempts.c.dispatch_intent).where(
+            attempts.c.id == row['attempt_id'], attempts.c.job_id == row['id'],
+            attempts.c.fence == row['fence'])).first()
+        intent = None if attempt is None else attempt.dispatch_intent
+        valid = (isinstance(intent, dict)
+            and intent.get('provisioning') == 'kubernetes_per_attempt'
+            and type(intent.get('preparation_lease_seconds')) is int
+            and 1 <= intent['preparation_lease_seconds'] <= 300
+            and all(intent.get(key) == row[column] for key, column in (
+                ('job_id', 'id'), ('attempt_id', 'attempt_id'), ('fence', 'fence'),
+                ('pins', 'pins'), ('deadline_at', 'deadline_at'), ('tenant', 'tenant'),
+                ('caller', 'caller'), ('request_hash', 'request_hash')))
+            and digest(row['request']) == row['request_hash'])
+        return intent if valid else None
+
+    def renew_preparing(self, job_id, attempt_id, fence, lease_seconds=60):
+        """Keep only a provably unstarted Kubernetes admission alive.
+
+        Native-start claim and this renewal share the transaction fence. Once
+        that claim exists, observations of the actual Worker govern renewal.
+        Historical/static attempts, expiry, cancel and the final deadline never
+        gain authority from this preparation-only path.
+        """
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
+            raise ValueError('Invalid lease interval')
+        with self._tx() as conn:
+            row = self._current(conn, job_id, attempt_id, fence)
+            now = self.clock()
+            if (row is None or row['state'] != 'starting' or row['lease_expires_at'] <= now
+                    or row['cancel_requested'] or row['deadline_at'] <= now):
+                return None
+            preparing = self._preparing_intent(conn, row)
+            if preparing is None or preparing['preparation_lease_seconds'] != lease_seconds:
+                return None
+            allocation = conn.execute(select(worker_allocations).where(
+                worker_allocations.c.attempt_id == attempt_id)).mappings().first()
+            if allocation is not None and (allocation['job_id'] != job_id or allocation['fence'] != fence
+                    or allocation['engine'] != row['pins']['engine']
+                    or allocation['worker_start_claimed'] or allocation['retired']
+                    or allocation['candidate_result'] is not None):
+                return None
+            self._set_lease(conn, row, max(row['lease_expires_at'], min(now + lease_seconds, row['deadline_at'])))
+            return _job(row)
 
     def append_event(self, job_id, attempt_id, fence, event_type, payload):
         if event_type != "engine.progress":

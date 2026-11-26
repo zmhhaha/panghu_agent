@@ -392,6 +392,11 @@ class KubernetesWorkerAdapter:
                 if not remote.ready(self.pool.policy):
                     return self._status(envelope, 'preparing')
                 if self.store.claim_worker_start(envelope.attempt_id, envelope.request_sha256):
+                    # Cold preparation may span several leases. Start exactly
+                    # once with the fresh lease committed by the native claim;
+                    # lease time is excluded from immutable request identity.
+                    current = self.store.get_job(None, None, envelope.job_id)
+                    envelope = envelope.model_copy(update={'lease_expires_at': float(current['lease_expires_at'])})
                     try:
                         return remote.start(envelope)
                     except ServiceError:

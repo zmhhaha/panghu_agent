@@ -1,14 +1,17 @@
 """Deterministic single-attempt dispatcher. It never executes an Agent itself."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+import threading
 import time
 
-from .contracts import ExecutionEnvelope, InlineFile, ServiceError, TERMINAL_STATES, verify_receipt
+from .contracts import ServiceError, TERMINAL_STATES, verify_receipt
 from .event_ingestion import sync_worker_events
-from .storage import execution_fields
 
 
 class Dispatcher:
+    preparation_heartbeat_seconds = 5.0
+
     def __init__(self, store, adapters: dict, *, clock=time.time, lease_seconds=60,
                  slot_id=None):
         if not 15 <= lease_seconds <= 300:
@@ -22,22 +25,47 @@ class Dispatcher:
             raise ValueError('Shared slots require per-attempt Workers')
 
     def _envelope(self, job):
-        pins, request = job['pins'], job['request']
-        inputs = []
-        for ref in request.get('inputs', []):
-            value = self.store.get_input(job['tenant'], job['caller'], ref['input_id'])
-            if value['sha256'] != ref['sha256']:
-                raise ServiceError('input_integrity_invalid', 503)
-            inputs.append(InlineFile.from_bytes(ref.get('path') or value['name'], value['content']))
-        checkpoint = request.get('checkpoint_ref')
-        checkpoint_files = self.store.checkpoint_files(job['tenant'], job['caller'], checkpoint, pins)
-        return ExecutionEnvelope(job_id=job['job_id'], attempt_id=job['attempt_id'], fence=job['fence'],
-            engine=pins['engine'], profile=request['profile'], profile_revision=request['profile_revision'],
-            runtime_revision=pins['runtime_revision'], image_digest=pins['image_digest'],
-            execution_binding=pins.get('execution_binding'),
-            checkpoint_ref=checkpoint, checkpoint_inputs=checkpoint_files,
-            deadline_at=float(job['deadline_at']), lease_expires_at=float(job['lease_expires_at']),
-            task=request['task'], inputs=inputs, **execution_fields(pins))
+        return self.store.execution_envelope(job['job_id'], job['attempt_id'], job['fence'])
+
+    @contextmanager
+    def _preparing(self, job):
+        """Heartbeat only the fenced interval before any native-start claim.
+
+        Large immutable inputs and cold Pods are preparation, not observed
+        execution. The Store atomically refuses this authority after start,
+        cancellation, expiry or the fixed task deadline. Running Workers still
+        require an actual successful inspection before their normal renewal.
+        """
+        adapter = self.adapters.get(job['pins']['engine'])
+        if (job['state'] != 'starting'
+                or getattr(adapter, 'provisioning', None) != 'kubernetes_per_attempt'):
+            yield job
+            return
+        def pulse():
+            return self.store.renew_preparing(job['job_id'], job['attempt_id'], job['fence'], self.lease_seconds)
+        try:
+            current = pulse()
+        except Exception:
+            current = None
+        if current is None:
+            yield job
+            return
+        finished = threading.Event()
+        interval = min(self.preparation_heartbeat_seconds, self.lease_seconds / 4)
+        def heartbeat():
+            while not finished.wait(interval):
+                try:
+                    if pulse() is None:
+                        return
+                except Exception:
+                    return
+        thread = threading.Thread(target=heartbeat, name='agent-preparing-' + job['attempt_id'], daemon=True)
+        thread.start()
+        try:
+            yield current
+        finally:
+            finished.set()
+            thread.join(timeout=5)
 
     def _quarantine(self, job, code):
         return self.store.finish(job['job_id'], job['attempt_id'], job['fence'],
@@ -83,8 +111,9 @@ class Dispatcher:
             return self._quarantine(job, 'worker_unavailable')
         envelope = None
         try:
-            envelope = self._envelope(job)
-            observed = adapter.start(envelope)
+            with self._preparing(job) as preparing:
+                envelope = self._envelope(preparing)
+                observed = adapter.start(envelope)
             if (observed.get('attempt_id') != envelope.attempt_id
                     or observed.get('request_sha256') != envelope.request_sha256):
                 return self._quarantine(job, 'worker_identity_invalid')
@@ -96,8 +125,9 @@ class Dispatcher:
             # A lost PUT response is uncertain, not authorization to launch again.
             # The persisted attempt remains the only resource reconciliation key.
             try:
-                envelope = self._envelope(job)
-                observed = adapter.inspect(envelope)
+                with self._preparing(job) as preparing:
+                    envelope = self._poll_envelope(preparing)
+                    observed = adapter.inspect(envelope)
                 if (observed.get('attempt_id') != envelope.attempt_id
                         or observed.get('request_sha256') != envelope.request_sha256):
                     raise ServiceError('worker_identity_invalid', 503)
@@ -122,6 +152,10 @@ class Dispatcher:
         return self.store.get_job(job['tenant'], job['caller'], job['job_id'])
 
     def poll(self, job):
+        with self._preparing(job) as preparing:
+            return self._poll(preparing)
+
+    def _poll(self, job):
         if job['state'] == 'quarantined':
             adapter = self.adapters.get(job['pins']['engine'])
             recover = getattr(adapter, 'reconcile_quarantined', None)
