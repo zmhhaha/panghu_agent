@@ -7,6 +7,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import time
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -118,6 +119,59 @@ def test_narration_resume_preserves_film_inputs_and_advances_to_module(env, monk
     assert final['phase'] == 'module'
     assert final['items'][0]['audio_version_id'] == run['items'][0]['audio_version_id']
     assert len(children(env, 'film_module_operations')) == 1
+
+
+def test_resume_expired_unregistered_resource_plan_keeps_recordings_and_graph(env):
+    run = begin(env)
+    for duration in (1, 2):
+        env.runs.tick()
+        finish_audio(env, children(env, 'audio_operations')[-1]['id'], duration)
+    with env.store.transaction() as db:
+        stored = env.runs._read(db, run['id'], OWNER)
+        stored['resource_plan']['deadline_at'] = time.time() - 1
+        original_request = deepcopy(stored['resource_plan'])
+        stored['resource_plan_registration']['request_sha256'] = digest(original_request)
+        env.runs._write(db, stored)
+    env.runs.tick()
+    failed = env.runs.get(OWNER, run['id'])
+    assert failed['status'] == 'failed' and failed['error'] == 'resource_plan_deadline_expired'
+    assert failed['resource_plan_registration']['status'] == 'pending'
+    with pytest.raises(ServiceError, match='resource_plan_not_found'):
+        env.runs.resource_stage.ledger.get(OWNER, run['id'])
+
+    revision = env.store.project(OWNER, env.project['id'])['revision']
+    result = env.runs.resume_resources(OWNER, run['id'], revision, 'resource-resume')
+    assert result['id'] == run['id'] and result['status'] == 'queued'
+    assert result['items'] == failed['items']
+    checkpoint = result['resource_deadline_resumes'][0]
+    assert checkpoint['previous_request_sha256'] == digest(original_request)
+    assert checkpoint['deadline_at'] > time.time()
+    assert env.runs.resume_resources(OWNER, run['id'], revision, 'resource-resume') == result
+
+    env.runs.tick()
+    after = env.runs.get(OWNER, run['id'])
+    assert after['phase'] == 'module'
+    assert len(children(env, 'audio_operations')) == 2
+    ledger = env.runs.resource_stage.ledger.get(OWNER, run['id'])
+    assert ledger['request_sha256'] == checkpoint['request_sha256']
+    assert ledger['budget'] == original_request['budget']
+    assert [node['definition'] for node in ledger['nodes'].values()] == original_request['nodes']
+
+
+def test_resume_resources_rejects_existing_ledger_even_if_registration_is_pending(env):
+    run = begin(env)
+    with env.store.transaction() as db:
+        stored = env.runs._read(db, run['id'], OWNER)
+        stored.update(status='failed', error='resource_plan_deadline_expired', finished_at=time.time())
+        original_request = deepcopy(stored['resource_plan'])
+        stored['resource_plan']['deadline_at'] = time.time() - 1
+        stored['resource_plan_registration']['request_sha256'] = digest(stored['resource_plan'])
+        env.runs._write(db, stored)
+    env.runs.resource_stage.ledger.create(OWNER, env.project['id'], run['id'], original_request)
+    revision = env.store.project(OWNER, env.project['id'])['revision']
+    with pytest.raises(ServiceError, match='production_run_resources_already_started'):
+        env.runs.resume_resources(OWNER, run['id'], revision, 'resource-resume')
+    assert env.runs.get(OWNER, run['id'])['status'] == 'failed'
 
 
 def finish_module(env, operation_id):

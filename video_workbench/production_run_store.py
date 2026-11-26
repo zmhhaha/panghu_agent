@@ -31,6 +31,7 @@ PUBLIC_ITEM = ('scene_id', 'title', 'audio_operation_id', 'audio_version_id', 'a
                'module_operation_id', 'module_version_id', 'module_status', 'module_sha256', 'module_engine')
 FILM_RENDERER = 'hyperframes-film'
 SILENT_FILM_CLOCK = 'video.hyperframes-film-clock.v1'
+RESOURCE_PLAN_SECONDS = 7200
 
 
 def require(value, code='invalid_production_run_request', status=422):
@@ -121,6 +122,8 @@ class ProductionRunStore:
                 public_item.update(world_source_sha256=item.get('world_source_sha256'),
                     scene_space_plan_sha256=item.get('scene_space_plan_sha256'))
             result['progress']['done'] = sum(bool(item.get('world_source_sha256')) for item in raw_items) + int(run['status']=='completed')
+        if 'resource_deadline_resumes' in run:
+            result['resource_deadline_resumes'] = deepcopy(run['resource_deadline_resumes'])
         return result
 
     @staticmethod
@@ -816,7 +819,7 @@ class ProductionRunStore:
                         adoption_source=deepcopy(planning_project.get('joint_plan', {}).get('resource_plan_source')))
                 from .production_resource_stage import production_plan
                 resource_plan = production_plan(selected_plan, self._freeze(planning_project, film_aware=True),
-                    deadline_at=time.time() + 7200,
+                    deadline_at=time.time() + RESOURCE_PLAN_SECONDS,
                     library_binding=planning_project.get('joint_plan', {}).get('library_binding'),
                     audio_mode=audio_mode)
                 if resource_plan is not None:
@@ -1074,6 +1077,90 @@ class ProductionRunStore:
             run.update(status='queued', error=None, blocked_reason=None, finished_at=None)
             self._write(db, run)
             return self.public(run, current=True)
+
+    def _require_unstarted_resource_plan(self, run):
+        registration = run.get('resource_plan_registration') or {}
+        plan = run.get('resource_plan')
+        require(self.resource_stage is not None and type(plan) is dict
+                and registration.get('status') == 'pending'
+                and registration.get('operation_id') == run['id']
+                and registration.get('request_sha256') == digest(plan)
+                and not (run.get('resource_progress') or run.get('prepared_resource_references')),
+                'production_run_resources_already_started', 409)
+        try:
+            self.resource_stage.ledger.get(run['owner'], run['id'])
+        except ServiceError as error:
+            if error.code == 'resource_plan_not_found' and error.status == 404:
+                return
+            raise
+        raise ServiceError('production_run_resources_already_started', 409)
+
+    def resume_resources(self, owner, run_id, expected_revision, idem):
+        """Admit a fresh time window for a resource plan with no admitted work."""
+        require(type(expected_revision) is int and expected_revision >= 1)
+        require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
+        with self.store.lock, self.store.transaction() as db:
+            run = self._read(db, run_id, owner)
+            project = self.store._project(db, owner, run['project_id'])
+            for receipt in run.get('resource_deadline_resumes', []):
+                if receipt['request_id'] == idem:
+                    require(receipt['expected_revision'] == expected_revision, 'idempotency_conflict', 409)
+                    return self.public(run, current=self._matches(run, project, db))
+
+            self.store._revision(project, expected_revision)
+            require(self._matches(run, project, db), 'production_run_inputs_changed', 409)
+            require(run['status'] == 'failed' and run['phase'] == 'audio'
+                    and run['error'] == 'resource_plan_deadline_expired'
+                    and self._uses_film(run) and run.get('audio_mode', 'narration') == 'narration'
+                    and not (run.get('cancel_requested') or run.get('blocked_reason') or run.get('draft_render_id'))
+                    and all(intent['phase'] == 'audio' and not intent.get('active')
+                            for intent in run['intents'].values()),
+                    'production_run_resource_resume_unavailable', 409)
+            self._require_unstarted_resource_plan(run)
+            self._require_idle_project_children(db, run['project_id'])
+            self._require_recovery_recordings(db, run)
+            self._freeze_film(run)
+
+            plan, registration = run['resource_plan'], run['resource_plan_registration']
+            now = time.time()
+            previous_deadline = plan['deadline_at']
+            require(previous_deadline <= now, 'production_run_resource_resume_unavailable', 409)
+            previous_sha256 = registration['request_sha256']
+            plan['deadline_at'] = now + RESOURCE_PLAN_SECONDS
+            registration['request_sha256'] = digest(plan)
+            run.setdefault('resource_deadline_resumes', []).append(dict(
+                request_id=idem, expected_revision=expected_revision, created_at=now,
+                previous_deadline_at=previous_deadline, deadline_at=plan['deadline_at'],
+                previous_request_sha256=previous_sha256, request_sha256=registration['request_sha256'],
+                previous_finished_at=run['finished_at']))
+            run.update(status='queued', error=None, draining=False, finished_at=None)
+            self._write(db, run)
+            return self.public(run, current=True)
+
+    @staticmethod
+    def _require_recovery_recordings(db, run):
+        require(len(run['items']) == len(run['frozen']['scenes'])
+                and all(item.get('audio_version_id') for item in run['items']),
+                'production_run_resource_resume_unavailable', 409)
+        for index, (item, scene) in enumerate(zip(run['items'], run['frozen']['scenes'])):
+            audio = db.execute('SELECT document,data,scene_id,project_id,operation_id FROM audio_versions WHERE id=?',
+                               (item['audio_version_id'],)).fetchone()
+            intent = run['intents'].get('audio:' + str(index))
+            require(audio is not None and intent is not None, 'production_run_audio_binding_mismatch', 409)
+            child = db.execute('SELECT document FROM audio_operations WHERE owner=? AND idem=?',
+                               (run['owner'], intent['key'])).fetchone()
+            require(child is not None, 'production_run_audio_binding_mismatch', 409)
+            child = json.loads(child[0])
+            metadata, data = json.loads(audio['document']), audio['data']
+            require(child['status'] == 'completed' and child['upstream_stop_confirmed'] is True
+                    and child['id'] == audio['operation_id'] == item['audio_operation_id']
+                    and child['candidate_id'] == metadata['id'] == item['audio_version_id']
+                    and child['input_sha256'] == metadata['input_sha256'] == narration_binding(scene['audio_input'])
+                    and child['project_id'] == audio['project_id'] == run['project_id']
+                    and child['scene_id'] == audio['scene_id'] == scene['id'] == item['scene_id']
+                    and hashlib.sha256(data).hexdigest() == metadata['sha256'] == item['audio_sha256']
+                    and inspect_wav(data).duration_seconds == metadata['duration_seconds'] == item['audio_seconds'],
+                    'production_run_audio_binding_mismatch', 409)
 
     def cancel(self, owner, run_id):
         with self.store.lock:
