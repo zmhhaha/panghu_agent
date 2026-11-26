@@ -26,7 +26,7 @@ from uuid import UUID, uuid4
 from fastapi import Request
 
 from agent_service.contracts import (ExecutionEnvelope, InlineFile, JobRequest, ServiceError,
-    WorkerResult, canonical_bytes, digest, verify_receipt)
+    TERMINAL_STATES, WorkerResult, canonical_bytes, digest, verify_receipt)
 from agent_service.confinement import ensure_controller_confinement
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
     _read_operator_json, build_pi_runtime_settings, host_policy, PI_ADAPTER_REVISION)
@@ -742,11 +742,33 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
     return dict(apiVersion='v1', kind='List', items=items)
 
 
+def _await_candidate_result(host, envelope, renew_lease):
+    from agent_service.worker_api import LeaseRequest
+
+    attempt_id = envelope.attempt_id
+    renewed = time.monotonic()
+    while host.status(attempt_id)['state'] not in TERMINAL_STATES:
+        if time.monotonic() - renewed >= 5:
+            lease = LeaseRequest(fence=envelope.fence, **renew_lease())
+            try:
+                host.renew(attempt_id, lease)
+            except ServiceError as error:
+                # The Worker can persist its terminal result while the proxy
+                # processes the lease request. Read the stopped result below.
+                if (error.code != 'worker_lease_rejected' or error.status != 409
+                        or host.status(attempt_id)['state'] not in TERMINAL_STATES):
+                    raise
+                break
+            renewed = time.monotonic()
+        time.sleep(.1)
+    return host.result(attempt_id)
+
+
 def run_worker(origin):
     import httpx
     from agent_service.linux_stop import LinuxUidStopController
     from agent_service.stop_group import StopGroup
-    from agent_service.worker_api import LeaseRequest, WorkerHost
+    from agent_service.worker_api import WorkerHost
     from urllib.parse import urlsplit
     parsed = urlsplit(origin)
     require(parsed.scheme == 'http' and (parsed.hostname or '').endswith('.agent-service.svc.cluster.local')
@@ -798,15 +820,13 @@ def run_worker(origin):
         # This local WorkerHost admission is confined to the administrative
         # process. The operator registry and all production routes stay disabled.
         host.start(envelope)
-        renewed = time.monotonic()
-        while host.status(envelope.attempt_id)['state'] not in {'completed', 'failed', 'cancelled', 'timed_out', 'quarantined', 'needs_input'}:
-            if time.monotonic() - renewed >= 5:
-                response = client.post(origin + '/probe/lease', headers=headers, json={})
-                response.raise_for_status()
-                host.renew(envelope.attempt_id, LeaseRequest(fence=envelope.fence, **response.json()))
-                renewed = time.monotonic()
-            time.sleep(.1)
-        result = host.result(envelope.attempt_id)
+
+        def renew_lease():
+            response = client.post(origin + '/probe/lease', headers=headers, json={})
+            response.raise_for_status()
+            return response.json()
+
+        result = _await_candidate_result(host, envelope, renew_lease)
         require(len(canonical_bytes({'result': result, 'observations': observations})) <= MAX_WIRE,
             'candidate_probe_scale_exceeded')
         response = client.post(origin + '/probe/result', headers=headers,

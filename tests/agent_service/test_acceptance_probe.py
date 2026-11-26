@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -24,6 +25,35 @@ from test_catalog import image_packages  # Explicit synthetic image fixture.
 
 IMAGE = 'registry.invalid/agent-pi@sha256:' + 'a' * 64
 BOOTSTRAP = 'offline-administrator-token-' + 'a' * 32
+
+
+@pytest.mark.parametrize('state_after_renew', ['completed', 'running'])
+def test_candidate_lease_rejection_rechecks_to_recover_racing_terminal_result(monkeypatch, state_after_renew):
+    clocks = iter((0.0, 5.0))
+    monkeypatch.setattr(probe.time, 'monotonic', lambda: next(clocks))
+    envelope = SimpleNamespace(attempt_id='fixture-attempt', fence=1)
+    states = iter(('running', state_after_renew))
+    expected = {'state': 'completed', 'stop_receipt': 'signed fixture result'}
+    result_reads = []
+
+    def renew(attempt_id, lease):
+        assert attempt_id == envelope.attempt_id
+        assert lease.fence == envelope.fence
+        raise ServiceError('worker_lease_rejected', 409)
+
+    def result(attempt_id):
+        result_reads.append(attempt_id)
+        return expected
+
+    host = SimpleNamespace(status=lambda attempt_id: {'state': next(states)}, renew=renew, result=result)
+    renew_lease = lambda: {'lease_expires_at': 300.0}
+    if state_after_renew == 'completed':
+        assert probe._await_candidate_result(host, envelope, renew_lease) == expected
+        assert result_reads == [envelope.attempt_id]
+    else:
+        with pytest.raises(ServiceError, match='worker_lease_rejected'):
+            probe._await_candidate_result(host, envelope, renew_lease)
+        assert result_reads == []
 
 
 def config(profile='ppt.plan_initial.v1', engine='pi'):
