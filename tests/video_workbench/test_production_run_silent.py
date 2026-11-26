@@ -207,7 +207,7 @@ def test_http_audio_mode_is_explicit_and_omission_preserves_old_request(tmp_path
         return dict(id='captured')
     monkeypatch.setattr(app.state.production_run_store, 'start', capture)
     request = dict(expected_revision=project['revision'], joint_plan_version_id='adopted-plan-1')
-    with TestClient(app) as client:
+    with TestClient(app, headers={'origin': 'http://testserver'}) as client:
         client.headers.update({'x-csrf-token': client.get('/api/session').json()['csrf_token'],
             'Idempotency-Key': 'silent-http-contract'})
         url = f'/api/projects/{project["id"]}/production-runs'

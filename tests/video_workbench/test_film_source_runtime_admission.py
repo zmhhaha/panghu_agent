@@ -306,6 +306,7 @@ def test_real_http_bridge_reuses_twelve_a_packages_and_renders_once_with_target_
         raise AssertionError('The exact-runtime bridge grants no new author or audio admissions')
 
     monkeypatch.setattr(env.facade, 'start_module', no_new_authors_or_audio)
+    monkeypatch.setenv('SERVICE_AUTH_ISSUER', 'https://login.example.test')
     app = create_app(db_path=env.store.path, local_mode=False, background=False,
         production_runs_enabled=True, trusted_hosts={'testserver'}, film_creation=env.facade)
     monkeypatch.setattr(app.state.production_run_store.store, 'start_audio', no_new_authors_or_audio)
@@ -314,7 +315,7 @@ def test_real_http_bridge_reuses_twelve_a_packages_and_renders_once_with_target_
         audio_mode='silent', reuse_completed_prefix_from_run_id=source['id'])
     url = '/api/projects/' + project['id'] + '/production-runs'
     headers = {'Idempotency-Key': 'exact-a-to-b-http-render'}
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'origin': 'https://testserver'}) as client:
         client.headers['x-forwarded-user'] = OWNER
         session = client.get('/api/session').json()
         assert client.post(url, json=body, headers=headers).status_code == 403
@@ -324,7 +325,7 @@ def test_real_http_bridge_reuses_twelve_a_packages_and_renders_once_with_target_
         client.headers['x-csrf-token'] = foreign_session['csrf_token']
         assert client.post(url, json=body, headers=headers).status_code == 404
         client.headers['x-forwarded-user'] = OWNER
-        client.headers['x-csrf-token'] = session['csrf_token']
+        client.headers['x-csrf-token'] = client.get('/api/session').json()['csrf_token']
         for field in ('source_runtime_admission', 'source_runtime_admission_file', 'source_runtime_admission_receipt'):
             response = client.post(url, json=dict(body, **{field: bridge.policy}), headers=headers)
             assert response.status_code == 422, (field, response.text)

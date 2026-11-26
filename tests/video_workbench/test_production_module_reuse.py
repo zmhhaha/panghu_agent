@@ -280,7 +280,7 @@ def test_wrong_owner_and_audio_or_resource_reuse_cannot_select_prefix(env):
             env.runs.start(OWNER, env.project['id'], bad, 'unsupported-prefix-' + field)
 
 
-def test_http_api_keeps_explicit_reuse_field_and_original_owner_csrf_rules(env):
+def test_http_api_keeps_explicit_reuse_field_and_original_owner_csrf_rules(env, monkeypatch):
     # Exercise the production facade's private-name barrier, not the permissive
     # local fixture facade used by older store-only orchestration tests.
     gateway = SimpleNamespace(profile=PROFILE, profile_revision='1', preflight=lambda deadline: None)
@@ -290,13 +290,14 @@ def test_http_api_keeps_explicit_reuse_field_and_original_owner_csrf_rules(env):
     source = failed_prefix(env)
     with pytest.raises(AttributeError):getattr(env.facade, '_version')
     with pytest.raises(AttributeError):getattr(env.facade, '_assets_for_operations')
+    monkeypatch.setenv('SERVICE_AUTH_ISSUER', 'https://login.example.test')
     app = create_app(db_path=env.store.path, local_mode=False, background=False,
         production_runs_enabled=True, trusted_hosts={'testserver'}, film_creation=env.facade)
     project = env.store.project(OWNER, env.project['id'])
     body = dict(expected_revision=project['revision'], joint_plan_version_id='adopted-plan-1',
         audio_mode='silent', reuse_completed_prefix_from_run_id=source['id'])
     url = '/api/projects/' + project['id'] + '/production-runs'
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'origin': 'https://testserver'}) as client:
         client.headers['x-forwarded-user'] = OWNER
         session = client.get('/api/session').json()
         assert client.post(url, json=body, headers={'Idempotency-Key': 'http-prefix-admission'}).status_code == 403
@@ -436,6 +437,7 @@ def test_http_full_twelve_scene_reuse_creates_one_render_without_new_authors_or_
 
     monkeypatch.setattr(env.facade, 'start_module', no_new_work)
     monkeypatch.setattr(env.store, 'start_audio', no_new_work)
+    monkeypatch.setenv('SERVICE_AUTH_ISSUER', 'https://login.example.test')
     app = create_app(db_path=env.store.path, local_mode=False, background=False,
         production_runs_enabled=True, trusted_hosts={'testserver'}, film_creation=env.facade)
     monkeypatch.setattr(app.state.production_run_store.store, 'start_audio', no_new_work)
@@ -444,7 +446,7 @@ def test_http_full_twelve_scene_reuse_creates_one_render_without_new_authors_or_
         audio_mode='silent', reuse_completed_prefix_from_run_id=source['id'])
     url = '/api/projects/' + project['id'] + '/production-runs'
     headers = {'Idempotency-Key': 'http-retry-stopped-whole-film'}
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'origin': 'https://testserver'}) as client:
         client.headers['x-forwarded-user'] = OWNER
         session = client.get('/api/session').json()
         assert client.post(url, json=body, headers=headers).status_code == 403
@@ -454,7 +456,7 @@ def test_http_full_twelve_scene_reuse_creates_one_render_without_new_authors_or_
         client.headers['x-csrf-token'] = foreign_session['csrf_token']
         assert client.post(url, json=body, headers=headers).status_code == 404
         client.headers['x-forwarded-user'] = OWNER
-        client.headers['x-csrf-token'] = session['csrf_token']
+        client.headers['x-csrf-token'] = client.get('/api/session').json()['csrf_token']
         response = client.post(url, json=body, headers=headers)
         assert response.status_code == 202, response.text
         run = response.json()
