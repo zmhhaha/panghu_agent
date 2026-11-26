@@ -21,7 +21,7 @@ EXAMPLE = Path(__file__).resolve().parent
 REPO = EXAMPLE.parents[2]
 sys.path.insert(0, str(REPO))
 
-from agent_service.contracts import canonical_bytes
+from agent_service.contracts import canonical_bytes, digest
 from agent_service.profiles.video_animation_create import source_sha256
 from video_workbench.ink_landscape_library import descriptor
 from video_workbench.scene_space_plan import compile_evaluator
@@ -41,7 +41,7 @@ def save(path, value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', required=True, type=Path)
-    parser.add_argument('--only', choices=['stills', 'film', 'all'], default='all')
+    parser.add_argument('--only', choices=['stills', 'film', 'budget', 'all'], default='all')
     parser.add_argument('--chrome', default='C:/Program Files/Google/Chrome/Application/chrome.exe')
     parser.add_argument('--playwright-package', default='C:/Users/4770_2070super/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright-core/package.json')
     parser.add_argument('--hyperframes-dist', default='D:/codex-work/operations/scene-space-adaptation-20261122/render-npm/node_modules/hyperframes/dist')
@@ -96,10 +96,12 @@ def main():
         'normal':dict(lighting=True, material=True, atmosphere=True, diagnostic='normal'),
         'light-guide':dict(lighting=True, material=True, atmosphere=True, diagnostic='light'),
     }
-    def add(name, src, movie=False):
+    def add(name, src, movie=False, appearance_budget=None):
         d = deepcopy(doc)
         if movie:
             d['constraints']['duration_seconds'] = 10
+        if appearance_budget is not None:
+            d['constraints']['scene_space_quality'] = appearance_budget
         binding = renderer.validate_request('spatial-foundation-'+name, src, d, scene_space=plan,
             frame_range=None if movie else dict(start_frame=120, end_frame=121))
         path = out/(name+'-binding.json')
@@ -119,6 +121,19 @@ def main():
             variant['source_sha256'] = source_sha256(variant)
             save(out/(name+'-source.json'), variant)
             add(name, variant)
+    if args.only in {'stills','budget','all'}:
+        # The original artistic source is unchanged: the host must actually
+        # enforce the declared downgrade, rather than ask the author to do it.
+        budget = dict(intent=dict(schema='video.spatial-rendering-intent.v1',
+            space_mode='layered',engine='canvas',camera_mode='animated',
+            required_features=['form','scale','coverage'],optional_features=['texture'],
+            quality=dict(structural_errors='block',optional_degradation='declared')),
+            configuration_sha256=digest(dict(scope='local-budget-study',material_noise_limit=20000)),
+            usage_lineage='spatial-foundation-study-budget-1',
+            usage_sha256=digest(dict(model_calls=0,model_tokens=0,render_seconds=0)),
+            estimated_material_samples=20000,material_noise_limit=20000,usage_known=True)
+        save(out/'coarse-budget-input.json', budget)
+        add('coarse-budget', source, appearance_budget=budget)
     film_binding = None
     if args.only in {'film','all'}:
         film_binding = add('film', source, movie=True)
@@ -157,6 +172,13 @@ def main():
         assert metrics['geometry_helper_calls']['createTerrainMesh'] == 2
         assert metrics['geometry_helper_calls']['projectMesh'] == 2
         assert metrics['coverage_objects'] == 2
+        if row['name'] == 'coarse-budget':
+            appearance = metrics['appearance_observation']
+            assert appearance['requested_parameters']['material_quality'] == 'full'
+            assert appearance['actual_parameters']['material_quality'] == 'coarse'
+            assert 0 < appearance['material_noise_evaluations'] <= 20000
+            assert appearance['material_noise_evaluations'] == appearance['material_samples']
+            assert appearance['material_derivative_evaluations'] == 0
     evidence = dict(schema='video.spatial-foundation-study-evidence.v1',
         source_sha256=source['source_sha256'],baseline_source_sha256=base['source_sha256'],
         native_summary='native-summary.json',actual_native_host=True,container_run=False,
@@ -215,9 +237,26 @@ def main():
             d.text((x+12,y+3),name,font=font,fill='#253327')
             diagnostic.paste(Image.open(out/name/'output.png').convert('RGB').resize((640,360),Image.Resampling.LANCZOS),(x,y+24))
         diagnostic.save(out/'diagnostics.png')
-        evidence['static_output_hashes']={name:sha(out/name/'output.png') for name in ['baseline-35',*switches]}
+        quality = Image.new('RGB',(1280,384),'#eee9dc')
+        qtext = ImageDraw.Draw(quality)
+        for i,(name,label) in enumerate([
+            ('combined','完整三频材质 / 无降级策略'),
+            ('coarse-budget','请求 full → 实际 coarse / 预算 20000 次')]):
+            qtext.text((i*640+12,3),label,font=font,fill='#253327')
+            quality.paste(Image.open(out/name/'output.png').convert('RGB').resize((640,360),Image.Resampling.LANCZOS),(i*640,24))
+        quality.save(out/'quality-budget-comparison.png')
+        evidence['static_output_hashes']={name:sha(out/name/'output.png') for name in ['baseline-35',*switches,'coarse-budget']}
+        coarse = next(row for row in summary['results'] if row['name']=='coarse-budget')
+        full = next(row for row in summary['results'] if row['name']=='combined')
+        evidence['appearance_budget_case'] = dict(
+            source_identical_to_full=coarse['source_sha256']==source['source_sha256'],
+            observation=coarse['scene_space_observation']['appearance_observation'],
+            baseline_material_sample_calls=full['scene_space_observation']['surface_helper_calls']['sampleMaterial'],
+            baseline_noise_work_without_policy='Three active bands per call, as implemented by sampleMaterial; legacy observation shape retained.',
+            configuration_and_usage_scope='Local reproducibility records, not a production billing ledger.')
         if args.publish_artifacts:
-            for name in ['comparison.png','diagnostics.png']:
+            save(EXAMPLE/'quality-policy.json',coarse['scene_space_observation']['appearance_observation']['policy'])
+            for name in ['comparison.png','diagnostics.png','quality-budget-comparison.png']:
                 shutil.copyfile(out/name,EXAMPLE/name)
             shutil.copyfile(out/'combined/output.png',EXAMPLE/'preview.png')
     save(out/'evidence.json',evidence)

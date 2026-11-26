@@ -172,8 +172,11 @@ class SceneSpaceProductionAdapter:
     Its start/get/lookup/cancel calls never borrow the historical film host.
     """
     def __init__(self,root,*,space_store,author,renderer,reviewer=None,library_adapter=None,
-                 enabled=False,budget=None,clock=time.time):
+                 enabled=False,budget=None,clock=time.time,material_noise_limit=64*1024*1024):
         _require(type(enabled) is bool)
+        _require(type(material_noise_limit) is int and 1<=material_noise_limit<=64*1024*1024,
+            'scene_appearance_policy_invalid')
+        self.material_noise_limit=material_noise_limit
         self.root=Path(root).absolute();self.root.mkdir(parents=True,exist_ok=True)
         self.path=self.root/'scene-production.sqlite3'
         self.space_store,self.author,self.renderer=space_store,author,renderer
@@ -240,6 +243,8 @@ class SceneSpaceProductionAdapter:
             plan_repair_revision=1,
             model_job_reserve_calls=8,model_job_reserve_tokens=262144,
             visual_gate_scope='actual_static_and_clip_samples_not_continuous_playback_or_user_acceptance')
+        if caps.get('appearance',{}).get('quality_policy_schema')=='video.scene-appearance-policy.v1':
+            value['material_noise_limit']=self.material_noise_limit
         value['configuration_sha256']=digest(value)
         return value
 
@@ -442,7 +447,7 @@ class SceneSpaceProductionAdapter:
         if preview['request'] is None:
             if not admit:return row
             window=self._render_window(row,preview=True)
-            document=deepcopy(row['author_document'])
+            document=self._render_document(row,saved)
             document['constraints'].pop('duration_seconds',None)
             preview['reserved_render_seconds']=window['seconds']
             preview['request']=dict(source=deepcopy(row['source']),document=document,scene_space=saved['frozen'],
@@ -534,7 +539,7 @@ class SceneSpaceProductionAdapter:
         if clip['request'] is None:
             if not admit:return row
             window=self._render_window(row,preview=True)
-            document=deepcopy(row['author_document'])
+            document=self._render_document(row,saved)
             document['constraints']['duration_seconds']=(clip['end_frame']-clip['start_frame'])/24
             clip['reserved_render_seconds']=window['seconds']
             clip['request']=dict(source=deepcopy(row['source']),document=document,scene_space=saved['frozen'],
@@ -792,7 +797,7 @@ class SceneSpaceProductionAdapter:
         if row['render_request'] is None:
             if not admit:return row
             window=self._render_window(row,preview=False)
-            document=deepcopy(row['author_document'])
+            document=self._render_document(row,saved)
             document['constraints']['duration_seconds']=saved['frozen']['plan']['duration_frames']/24
             row['reserved_render_seconds']=window['seconds']
             row['render_request']=dict(source=deepcopy(row['source']),document=document,
@@ -851,6 +856,21 @@ class SceneSpaceProductionAdapter:
             'scene_space_production_render_binding_changed',409)
         row.update(status='completed',stop_proven=True,render_result=deepcopy(result),error=None)
         return self._write(row)
+
+    def _render_document(self,row,saved):
+        document=deepcopy(row['author_document'])
+        intent=document['constraints']['scene_space_production'].get('rendering_intent')
+        limit=row['configuration'].get('material_noise_limit')
+        if intent is not None and limit is not None:
+            status=saved['usage_status']
+            _require(status['status']=='within_budget'
+                and status['remaining']['model_tokens'] is not None,
+                'scene_appearance_usage_unknown',409)
+            document['constraints']['scene_space_quality']=dict(intent=deepcopy(intent),
+                configuration_sha256=row['configuration']['configuration_sha256'],
+                usage_lineage=saved['usage']['lineage_id'],usage_sha256=digest(saved['usage']),
+                material_noise_limit=limit,usage_known=True)
+        return document
 
     def _render_window(self,row,*,preview):
         """Freeze an execution ceiling from resource capacity, never the model clock.

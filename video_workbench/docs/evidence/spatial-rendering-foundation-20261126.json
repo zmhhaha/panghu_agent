@@ -1,49 +1,69 @@
 {
   "schema": "video.spatial-foundation-validation.v1",
   "branch": "codex/video-spatial-foundation-20261126",
-  "base_before_final_commit": "67e367b266dfaa49b604cbe5639c177955e1f898",
+  "base_before_final_commit": "9ae31eff5f540f0fade850e6b3fcef13efbcf5e2",
   "primary_python": {
-    "passed": 264,
+    "passed": 327,
     "failed": 0,
     "skipped": 0,
     "reports": [
       {
         "file": "core-tests.xml",
+        "sha256": "1766399ca2402e198dbdfac084d7e9e664d80083f826983abc99515e24ea61dc",
         "passed": 201,
         "failed": 0,
         "skipped": 4
       },
       {
         "file": "integration-tests.xml",
+        "sha256": "b040c68b56b2afe556be1cc26ac35e5d8ca223fd6415ea8fa6402698f8bfbb92",
         "passed": 59,
         "failed": 0,
         "skipped": 0
       },
       {
         "file": "native-tests.xml",
+        "sha256": "f9baf575c56ffc504f7d7bc16463ff0348da95024d7ab200e67b7577fff0aadc",
         "passed": 4,
         "failed": 0,
         "skipped": 0
       },
       {
         "file": "route-tests.xml",
+        "sha256": "6365395f4445e0b094f897b4382fbdbc3a29a9fea8248572273055d7ec8b25a4",
         "passed": 7,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "file": "budget-tests.xml",
+        "sha256": "71e231bd4971a145cef14776ebfd57e260bd55f311d551c056a8c67877836bfc",
+        "passed": 98,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "file": "authority-tests.xml",
+        "sha256": "e04aea9c567b95875a365f6e97b70d0c16f095938da2cafacd1e60910cfc5406",
+        "passed": 3,
         "failed": 0,
         "skipped": 0
       }
     ]
   },
   "node": {
-    "passed": 48,
+    "passed": 63,
     "failed": 0,
     "skipped": 0,
-    "scope": "appearance_surface_coverage_geometry"
+    "scope": "appearance_policy_canonical_authority_surface_coverage_geometry",
+    "report": "node-tests.xml",
+    "sha256": "db38a1786bc9d8c97a559547f1edec40b837cf181cb81d40e4ead8e573d3dd74"
   },
   "native_preview": {
     "frames": 240,
     "fps": 24,
     "seconds": 10,
-    "case_count": 10,
+    "case_count": 11,
     "sha256": "c91fe784be8784166a8038fe8a4490f113b8e9e46ed9836d7bf1ef816522746a",
     "model_review": "not_run",
     "artistic_acceptance": false
@@ -54,7 +74,19 @@
     "wikiskill_published": false,
     "effect_adopted": false
   },
+  "appearance_budget": {
+    "scope": "per_page_canonical_admitted_material_helper_including_direct_imports",
+    "policy_sha256": "1ed2095f6417d578fb7bee62a8cab4a702cdbc53c6a106363ff27b60bb23b20f",
+    "actual_noise_evaluations": 19004,
+    "noise_limit": 20000,
+    "actual_lattice_evaluations": 152032,
+    "actual_derivative_evaluations": 0,
+    "full_noise_evaluations_derived_from_verified_calls": 56835,
+    "same_source_and_plan": true,
+    "original_stills_and_video_unchanged": true
+  },
   "openspec_change": "improve-video-spatial-rendering-foundation",
+  "source_hash_scope": "Task diff from 9ae31ef parent plus untracked files; excludes this manifest to avoid self-reference.",
   "tested_source_files_sha256": {
     "agent_service/profiles/video_animation_film_module_contract.py": "ec909774eec3eee3d30be7fa30cfcc48fbe2ec70ace0e18718ed2206a2634f84",
     "agent_service/profiles/video_animation_film_module_spatial.py": "e8cc4e8bf25ed39bf9cce70b1fb751d711947e596ddf455864401b37b0d9ba46",
@@ -65,8 +97,13 @@
     "tests/agent_service/test_joint_plan_skills_profile.py": "a6211bc722ec1ccc5dfa7d3cd2aef608da9c521682fdf8cc4eaaeb9cf34dd051",
     "tests/agent_service/test_spatial_joint_plan_prompt.py": "70977e784faf7923dfe789efa5ff7c051550092598a416e8691c7e072a8d0329",
     "tests/agent_service/test_spatial_rendering_contract.py": "8c599b55dec7754ae0b24d59b670250e1c482f327024f86adbf5be2667b86dc1",
-    "tests/video_workbench/scene-space-appearance.test.mjs": "90f43f6732432e8f22e287d46e290fb40edac31475681ce53665b34dce2f1cf9",
+    "tests/video_workbench/scene-space-appearance-policy.test.mjs": "67df595c7d5b8e13cbf6df6029ebd48c13e5112f9024717276fc8eabd86ab21a",
+    "tests/video_workbench/scene-space-appearance.test.mjs": "f94dbaad7ec359bcaa9b7d4c5cccdbe726a0ef6e55feb5e194c9dad8e227f058",
+    "tests/video_workbench/scene-space-material-budget.test.mjs": "20c31b8bcbf26e9729fc7e19fe891cdd8131f362726920e01a7fc60bb954ccaa",
     "tests/video_workbench/test_film_spatial_requirements.py": "ff7c41eecae612299cd930e9d9aa800aa1003807d611b63f3eede8e4435f2a91",
+    "tests/video_workbench/test_scene_space_material_authority.py": "320dbf49bb98771ae422f41b3a5d4f43291360774b2d337da6dedac31a682441",
+    "tests/video_workbench/test_scene_space_quality.py": "f4af9a025e832c2539295cc510cbe98e3d83af1eead37ec2e072c9e89ca73473",
+    "tests/video_workbench/test_scene_space_quality_integration.py": "5432458d9e096a90a30005a033d41a2d48edb01c5b8a84a0f4b30ef74000f938",
     "tests/video_workbench/test_spatial_joint_plan_adoption.py": "72c2072db7acab146da06862935413ec413ac4f44b2804e54ca86c48c8a61576",
     "tests/video_workbench/test_spatial_joint_plan_gateway.py": "b9e23d62799457ccfee882191f3a84a92d9380c40db46e0096ab1567a4987a79",
     "tests/video_workbench/test_spatial_plan_repair.py": "a755113c223c83601ea111b21746459049181358550aa7cde5c0aa30bb6dbab0",
@@ -76,21 +113,26 @@
     "video_workbench/creative_film_module_contract.py": "8f5ff711511d770281c6d798d791403189e095ae675d551d12d6ccce4066682c",
     "video_workbench/examples/spatial-foundation-study/baseline-plan.json": "21ef5296f64ce8bce2993e2a16cfa591714608bcee3bee04646338343e2162ae",
     "video_workbench/examples/spatial-foundation-study/baseline-source.json": "2e811bba83f7b8a6187dcac791353501ea03ce5f69ac5d05ba5facc1d7489492",
-    "video_workbench/examples/spatial-foundation-study/evidence.json": "a211837a620aabfaa7f60a88f486dcbae0cae201ff9cee1625882f3a40f257b4",
+    "video_workbench/examples/spatial-foundation-study/evidence.json": "533711fa251041d980d031815155a41d651c47ba46a2e25115c0443ddaed60d2",
     "video_workbench/examples/spatial-foundation-study/plan.json": "e847b0f9db5ae4f6cae85eb385f4d33f95fabc5855dbbd533aa3bb4756dcdf7f",
-    "video_workbench/examples/spatial-foundation-study/render_preview.py": "452960ecf9223c96d4775abb398a1f9b7647e7bf690b2dca25b7365d08890bab",
+    "video_workbench/examples/spatial-foundation-study/quality-policy.json": "1addf99a422ad11ee67f256ecc27d4a82cde6decb558eec1589f45c619eb27df",
+    "video_workbench/examples/spatial-foundation-study/render_preview.py": "feff18bf4298c2876eafa14c39178cee1a83f8cb38864255fb2aac4021d7a4fd",
     "video_workbench/examples/spatial-foundation-study/scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
     "video_workbench/examples/spatial-foundation-study/scene.js": "5966ef5206b588a26b6743849985adc21ab37c6694cd265697ae3d73dbabf0f0",
     "video_workbench/film_creation_store.py": "fea43bdace601d1cddbfe63038b5bb3de4b74af68af47a98abc04f00cc312f1f",
     "video_workbench/joint_plan_gateway.py": "79488bc4339764b3389b6c3e482fe46c86d7845b4ad80bd2a6ab750e3f59d6b5",
     "video_workbench/joint_plan_store.py": "92c35eb5081862aa49124cfdd83436c36e9a62e42f28b75f40946b4668166255",
-    "video_workbench/motion_renderer/scene_space_surface.mjs": "5ef05a298fe411fca04a1c4b0d8e635bf27a1fa759523ffd5dc376197e1bf7d1",
+    "video_workbench/motion_renderer/scene_space_runtime.mjs": "a38383fe19448cbb1d4af60b4ebf194de9703c012853a684c25abbefad9bea26",
+    "video_workbench/motion_renderer/scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+    "video_workbench/motion_renderer/scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
     "video_workbench/production_run_store.py": "77e56f16d83e0dea73576559b8c395d74cb89774703db0911042971ac010f94a",
     "video_workbench/scene_space_effects.py": "fae06ca63369d826a99466b4bb61d2587b9dec738931ac9cb628982fff7d13f3",
+    "video_workbench/scene_space_host.mjs": "3c25f000e9b56e6347a855d439c41ee1fb93dd8b5b388e95499d2b405e17f95c",
     "video_workbench/scene_space_learning.py": "f95119b5c668243d400413dfb2e457a7c6a92a4060f8fe48b58510656003ec95",
     "video_workbench/scene_space_learning_service.py": "f19e0d124f08fd8b415cb8aab2f3f1a5b20d81d017749d4fac2091bedd871308",
-    "video_workbench/scene_space_production.py": "33ddea8be6fd39c507fd22fc1d46942722fbbb01e4263bf791ba85688cba797d",
-    "video_workbench/scene_space_renderer.py": "d849899ed618923110a46e930b9d8ce2ef806beb86ae6210ed691b28f47c1aa8",
+    "video_workbench/scene_space_production.py": "d80b1ae6bc17aeff0f0e5bd51e0f189b2a798cf4a5ec977ee61ddda3249d1458",
+    "video_workbench/scene_space_quality.py": "e57ac06d266a44a43c4cdbe8a1520fcc3203a3db7ba45e1c05e93618eeff9a17",
+    "video_workbench/scene_space_renderer.py": "68c07760e1d3cb3824fb1d71364c8b0305c5b70f0c084780a713fc6a58a338ae",
     "video_workbench/skill_production_gateway.py": "095f52d8b700002962c95ab8dcc590d806c9b05d93d6f515a24b0b2312574625",
     "video_workbench/spatial_plan_repair.py": "7ecf16ea888ddba309da46f2b78f04360214267fb3d16b129080c4671f98df87",
     "video_workbench/spatial_rendering_route.py": "b0e88619bcf94e621002d8d473f4858eef404948334943934d326533809d59ca"

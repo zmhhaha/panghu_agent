@@ -99,6 +99,9 @@ def render_capability(*, admitted_engines=('canvas',)):
         appearance=dict(schema='video.scene-appearance-capability.v1',revision='scene-appearance-cues-1',
             surface_runtime_sha256=_hash(_surface_runtime_bytes()),
             helpers=['evaluateLighting','sampleMaterial','sampleAtmosphere'],
+            quality_policy_schema='video.scene-appearance-policy.v1',
+            material_quality_profiles=['full','coarse'],
+            material_noise_limit_max=64*1024*1024,
             features=['lighting','texture','atmosphere'],execution='bounded_cpu_pure_functions',
             coverage='independent_unchanged',scope='surface_cues_not_pbr_or_visual_acceptance'),
         artwork_api='window.__sceneSpaceArtwork',source_files=['scene.html','scene.js','scene.css'],
@@ -125,7 +128,8 @@ def _magnification(matrix):
     return math.sqrt(max(0,(left+right+math.sqrt((left-right)**2+4*cross*cross))/2))
 
 
-def prepare_scene_render(plan, *, source_sha256, engine='canvas', frame_range=None, background=None):
+def prepare_scene_render(plan, *, source_sha256, engine='canvas', frame_range=None, background=None,
+                         appearance_budget=None):
     """Freeze artwork scope and resolution before any authored painter runs."""
     _require(engine=='canvas','scene_space_backend_not_admitted')
     _require(type(source_sha256) is str and len(source_sha256)==64
@@ -190,6 +194,17 @@ def prepare_scene_render(plan, *, source_sha256, engine='canvas', frame_range=No
         geometry_work_bytes=GEOMETRY_WORK_BYTES,geometry_retained_bytes=GEOMETRY_RETAINED_BYTES,
         geometry_max_handles=MAX_GEOMETRY_HANDLES,
         evidence_scope='render_inputs_not_visual_acceptance')
+    if appearance_budget is not None:
+        from .scene_space_quality import select_appearance_policy
+        required={'intent','configuration_sha256','usage_lineage','usage_sha256','material_noise_limit','usage_known'}
+        _require(type(appearance_budget) is dict and required<=set(appearance_budget)
+            <=required|{'estimated_material_samples'},'scene_appearance_policy_invalid')
+        policy=dict(appearance_budget)
+        intent=policy.pop('intent',None)
+        policy.setdefault('estimated_material_samples',pixels)
+        body['appearance_policy']=select_appearance_policy(intent,
+            source_sha256=source_sha256,plan_sha256=frozen['plan_sha256'],
+            surface_runtime_sha256=body['surface_runtime_sha256'],**policy)
     _require(len(canonical_bytes(body))<=MAX_SIDECAR_BYTES,'scene_space_sidecar_size_exceeded')
     return dict(body,sha256=digest(body))
 
@@ -277,7 +292,8 @@ class SceneSpaceRenderer:
         static='duration_seconds' not in bounds
         if static and frame_range is None:
             frame_range=dict(start_frame=0,end_frame=1)
-        render=prepare_scene_render(plan,source_sha256=source_hash,engine=payload['engine'],frame_range=frame_range)
+        render=prepare_scene_render(plan,source_sha256=source_hash,engine=payload['engine'],frame_range=frame_range,
+            appearance_budget=bounds.get('scene_space_quality'))
         viewport=render['frozen']['plan']['viewport']
         _require(all(bounds.get(key)==viewport[key] for key in ('width','height')),
             'scene_space_viewport_changed',409)
@@ -315,6 +331,8 @@ class SceneSpaceRenderer:
             project_runtime_sha256=_hash(PROJECT_RUNTIME.read_bytes()),
             hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256,image_digest=self.owner.image_digest,
             max_media_bytes=32*1024*1024,max_frame_bytes=512*1024*1024)
+        if 'appearance_policy' in render:
+            request['appearance_policy_sha256']=render['appearance_policy']['sha256']
         if selected:request['drawing_libraries']=selected
         project_duration=1 if static else duration
         request['project']=dict(schema='video.hyperframes-project.v1',project_id='space-'+digest(dict(
@@ -591,6 +609,19 @@ class SceneSpaceRenderer:
             and type(project.get('core_seek_count')) is int and project['core_seek_count']>=1,
             'scene_space_hyperframes_unproven',409)
         observation=receipt.get('scene_space_observation',{})
+        policy=binding['scene_space'].get('appearance_policy')
+        if policy is not None:
+            from .scene_space_quality import validate_appearance_policy
+            validate_appearance_policy(policy,source_sha256=request['source_sha256'],
+                plan_sha256=binding['scene_space']['frozen']['plan_sha256'],
+                surface_runtime_sha256=request['surface_runtime_sha256'])
+            appearance=observation.get('appearance_observation',{})
+            _require(type(appearance) is dict and appearance.get('policy')==policy
+                and appearance.get('actual_parameters')==policy['actual_parameters']
+                and type(appearance.get('material_noise_evaluations')) is int
+                and 0<=appearance['material_noise_evaluations']<=policy['material_noise_limit']
+                and appearance.get('scope')=='per_page_cache_initialization',
+                'scene_space_appearance_consumption_unproven',409)
         _require(observation.get('plan_sha256')==binding['scene_space']['frozen']['plan_sha256']
             and observation.get('recipes_executed')==0 and observation.get('objects_painted')==
             len(binding['scene_space']['object_caches']),'scene_space_consumption_unproven',409)
@@ -664,6 +695,10 @@ class SceneSpaceRenderer:
             evidence_sha256=_hash(raw),runtime=dict(scene_space=observation),
             scene_space=dict(plan_sha256=observation['plan_sha256'],runtime_sha256=request['scene_runtime_sha256']))
         result['picture_path' if request['static'] else 'media_path']=result['artifact_path']
+        if policy is not None:
+            result['appearance_quality']=dict(policy=deepcopy(policy),
+                observation=deepcopy(appearance),output_sha256=result['sha256'],
+                source_sha256=request['source_sha256'],plan_sha256=observation['plan_sha256'])
         proof=digest(dict(binding=digest(binding),outcome=_hash(outcome_raw),receipt=_hash(raw)))
         result.update(source_path=str(directory/'source.json'),frame_count=receipt['captured_frames'],
             media=dict(sha256=_hash(media),duration_seconds=request['constraints']['duration_seconds'],audio_sha256=None),

@@ -1,8 +1,9 @@
 // Authored object-local 2.5D form cues. This is not observed or calibrated depth.
 // No Canvas is created here; painters retain the host's transform and clip.
 import {reserveFieldBytes,MAX_FIELDS,MAX_TOTAL_FIELD_BYTES,
- surfaceResourceUsage} from './scene_space_surface_budget.mjs';
-export {MAX_FIELDS,MAX_TOTAL_FIELD_BYTES,surfaceResourceUsage};
+ surfaceResourceUsage,appearancePolicy,appearanceObservation,applyMaterialPolicy,chargeMaterialWork}
+ from './scene_space_surface_budget.mjs';
+export {MAX_FIELDS,MAX_TOTAL_FIELD_BYTES,surfaceResourceUsage,appearancePolicy,appearanceObservation};
 export const SURFACE_FIELD_REVISION='scene-local-surface-1';
 export const APPEARANCE_REVISION='scene-appearance-cues-1';
 export const APPEARANCE_LIMITS=Object.freeze({coordinate:1000000,material_scales:3,
@@ -275,28 +276,36 @@ function latticeValue(x,y,z,seed){
  hash=Math.imul(hash,0x85ebca6b);hash^=hash>>>13;
  return(hash>>>0)/4294967295;
 }
-function materialNoise(position,frequency,seed){
+function materialNoise(position,frequency,seed,withGradient){
  const scaled=position.map(v=>v*frequency),cell=scaled.map(Math.floor),fraction=scaled.map((v,i)=>v-cell[i]),
-  blend=fraction.map(smooth),derivative=fraction.map(t=>6*t*(1-t)),values=[];
+  blend=fraction.map(smooth),values=[];
  for(let z=0;z<2;z++)for(let y=0;y<2;y++)for(let x=0;x<2;x++)
   values.push(latticeValue(cell[0]+x,cell[1]+y,cell[2]+z,seed));
  const lerp=(a,b,t)=>a+(b-a)*t,
   x00=lerp(values[0],values[1],blend[0]),x10=lerp(values[2],values[3],blend[0]),
   x01=lerp(values[4],values[5],blend[0]),x11=lerp(values[6],values[7],blend[0]),
-  y0=lerp(x00,x10,blend[1]),y1=lerp(x01,x11,blend[1]),
+  y0=lerp(x00,x10,blend[1]),y1=lerp(x01,x11,blend[1]),value=lerp(y0,y1,blend[2])*2-1;
+ // Color-only material evaluation has no need for derivative interpolation.
+ // Retain the same corner values and arithmetic order for the full response.
+ if(!withGradient)return{value,gradient:null,lattice_evaluations:values.length};
+ const derivative=fraction.map(t=>6*t*(1-t)),
   dx=lerp(lerp(values[1]-values[0],values[3]-values[2],blend[1]),
    lerp(values[5]-values[4],values[7]-values[6],blend[1]),blend[2])*derivative[0]*frequency,
   dy=lerp(x10-x00,x11-x01,blend[2])*derivative[1]*frequency,
   dz=(y1-y0)*derivative[2]*frequency;
- return{value:lerp(y0,y1,blend[2])*2-1,gradient:[dx*2,dy*2,dz*2]};
+ return{value,gradient:[dx*2,dy*2,dz*2],lattice_evaluations:values.length};
 }
 
 /** Three bounded spatial frequencies anchored to supplied coordinates. For a
  * moving object, supply its local coordinates to keep the material attached.
  * space labels that caller-owned basis; this function never transforms it.
  * value/roughness/normal_delta are variation cues, not a finished BRDF or alpha.
+ * Zero-weight bands are not evaluated. normalStrength=0 skips analytic
+ * derivatives. work counts the operations actually taken by this invocation,
+ * not elapsed CPU time, native allocations or total scene-render cost.
  */
 export function sampleMaterial(position,options){
+ options=applyMaterialPolicy(options);
  fields(options,['seed'],['space','scales','weights','base','amplitude','roughness','roughnessVariation','normalStrength']);
  const P=point(position,3),seed=integer(options.seed,0,APPEARANCE_LIMITS.seed_max),space=option(options,'space','object'),
   scales=option(options,'scales',[.25,1,4]),weights=option(options,'weights',[.5,.3,.2]);
@@ -308,15 +317,31 @@ export function sampleMaterial(position,options){
  const base=number(option(options,'base',.5),0,1),amplitude=number(option(options,'amplitude',.15),0,1),
   roughness=number(option(options,'roughness',.6),0,1),roughnessVariation=number(option(options,'roughnessVariation',.15),0,1),
   normalStrength=number(option(options,'normalStrength',.1),0,1);
- let variation=0;const gradient=[0,0,0];
+ const bands=W.filter(value=>value>0).length,derivatives=normalStrength>0?bands:0,
+  work=Object.freeze({evaluated_bands:bands,noise_evaluations:bands,lattice_evaluations:bands*8,
+   derivative_evaluations:derivatives,gradient_components:derivatives*3,
+   scope:'actual_helper_operations_not_wall_time_or_total_render_cost'});
+ chargeMaterialWork(work);
+ let variation=0,evaluatedBands=0,latticeEvaluations=0,derivativeEvaluations=0,gradientComponents=0;
+ const gradient=[0,0,0];
  for(let i=0;i<3;i++){
-  const sample=materialNoise(P,frequencies[i],(seed+Math.imul(i,0x9e3779b9))>>>0),weight=W[i]/total;
-  variation+=sample.value*weight;for(let axis=0;axis<3;axis++)gradient[axis]+=sample.gradient[axis]*weight;
+  if(W[i]===0)continue;
+  const sample=materialNoise(P,frequencies[i],(seed+Math.imul(i,0x9e3779b9))>>>0,normalStrength>0),weight=W[i]/total;
+  evaluatedBands++;latticeEvaluations+=sample.lattice_evaluations;
+  variation+=sample.value*weight;
+  if(sample.gradient){
+   derivativeEvaluations++;gradientComponents+=sample.gradient.length;
+   for(let axis=0;axis<3;axis++)gradient[axis]+=sample.gradient[axis]*weight;
+  }
  }
+ check(evaluatedBands===work.evaluated_bands&&latticeEvaluations===work.lattice_evaluations
+  &&derivativeEvaluations===work.derivative_evaluations&&gradientComponents===work.gradient_components,
+  'scene_space_material_work_invalid');
  variation=clamp(variation,-1,1);
  return Object.freeze({schema:'video.scene-material-cue.v1',revision:APPEARANCE_REVISION,space,seed,
   variation,value:clamp(base+amplitude*variation,0,1),roughness:clamp(roughness+roughnessVariation*variation,0,1),
   normal_delta:Object.freeze(gradient.map(v=>clamp(v,-1,1)*normalStrength||0)),
+  work,
   scope:'anchored_three_scale_variation_not_brdf_geometry_or_coverage'});
 }
 

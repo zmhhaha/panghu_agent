@@ -96,6 +96,59 @@ test('material normal cues agree with spatial finite differences rather than amb
  }
 });
 
+test('default full material keeps the pre-quality numeric response exactly',()=>{
+ const references=[
+  {position:[-.3,1.7,4.2],variation:-.11491941022334337,value:.4827620884664985,roughness:.5827620884664985,
+   normal_delta:[-.07108117012129891,.006846843381128925,-.02633583024204374]},
+  {position:[.37,.91,1.43],variation:.05744966479584121,value:.5086174497193762,roughness:.6086174497193761,
+   normal_delta:[-.009619373655168715,-.01460063825104723,.0899564499458573]},
+  {position:[0,0,0],variation:.4001082132105036,value:.5600162319815756,roughness:.6600162319815756,normal_delta:[0,0,0]},
+  {position:[1000000,-1000000,1000000],variation:-.5534140811658962,value:.4169878878251156,
+   roughness:.5169878878251155,normal_delta:[0,0,0]},
+ ];
+ for(const {position,...expected}of references){
+  const actual=material(position);
+  assert.deepEqual({variation:actual.variation,value:actual.value,roughness:actual.roughness,normal_delta:actual.normal_delta},expected);
+ }
+});
+
+test('coarse material genuinely skips two bands and derivative work with an explicit operation receipt',()=>{
+ const position=[.37,.91,1.43],full=material(position),colorOnly=material(position,{normalStrength:0}),
+  coarse=material(position,{weights:[1,0,0],normalStrength:0});
+ const scope='actual_helper_operations_not_wall_time_or_total_render_cost';
+ assert.deepEqual(full.work,{evaluated_bands:3,noise_evaluations:3,lattice_evaluations:24,
+  derivative_evaluations:3,gradient_components:9,scope});
+ assert.deepEqual(colorOnly.work,{evaluated_bands:3,noise_evaluations:3,lattice_evaluations:24,
+  derivative_evaluations:0,gradient_components:0,scope});
+ assert.deepEqual(coarse.work,{evaluated_bands:1,noise_evaluations:1,lattice_evaluations:8,
+  derivative_evaluations:0,gradient_components:0,scope});
+ assert.equal(colorOnly.variation,full.variation);assert.equal(colorOnly.value,full.value);
+ assert.deepEqual(colorOnly.normal_delta,[0,0,0]);assert.deepEqual(coarse.normal_delta,[0,0,0]);
+ // Independently count primitive integer hashes: inactive bands must really
+ // avoid their corner computations, not merely report a cheaper quality tier.
+ const imul=Math.imul;let count=0;
+ try{
+  Math.imul=(...values)=>{count++;return imul(...values);};
+  material(position);const fullHashes=count;count=0;
+  material(position,{weights:[1,0,0],normalStrength:0});const coarseHashes=count;
+  assert.ok(coarseHashes>0&&coarseHashes<fullHashes);assert.equal(coarseHashes*3,fullHashes);
+ }finally{Math.imul=imul;}
+ assert.ok(Object.isFrozen(coarse.work));
+ assert.equal('coverage' in coarse,false);assert.equal('alpha' in coarse,false);
+});
+
+test('sparse-band evaluation retains the original band index, seed and random-access response',()=>{
+ const points=[[.37,.91,1.43],[-2.5,8.1,.1],[1.25,-.83,4.77]],options={weights:[0,0,1],normalStrength:0},
+  first=points.map(point=>material(point,options));
+ for(let i=points.length-1;i>=0;i--){
+  const repeat=material(points[i],options),withNormal=material(points[i],{weights:[0,0,1]});
+  assert.deepEqual(repeat,first[i]);assert.equal(repeat.variation,withNormal.variation);
+  assert.equal(repeat.work.noise_evaluations,1);assert.equal(withNormal.work.derivative_evaluations,1);
+ }
+ const changed=material(points[0],{...options,seed:631908});
+ assert.notEqual(changed.variation,first[0].variation);
+});
+
 test('atmosphere increases monotonically with distance at fixed height and never changes solid coverage',()=>{
  const config={near:5,far:105,density:3,maxAmount:.7,color:[230,235,241]},samples=[0,5,15,30,60,105,500].map(d=>sampleAtmosphere(d,config));
  assert.equal(samples[0].amount,0);assert.equal(samples[1].amount,0);

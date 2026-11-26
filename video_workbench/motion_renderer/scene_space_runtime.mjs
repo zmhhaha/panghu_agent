@@ -72,10 +72,27 @@ export function createSceneSpaceRenderer({canvas,binding,paintObject,paintCovera
   objects_painted:0,frames_composited:0,cache_hits:0,cache_pixels:0,peak_work_pixels:binding.scratch.pixels+viewport.width*viewport.height,
   coverage_callbacks:0,coverage_objects:0,coverage_peak_pixels:0,coverage_contexts:0,surface_helper_calls:{},geometry_helper_calls:{},
   recipes_executed:0,scope:'host_compositor_execution_not_visual_acceptance',runtime_revision:SCENE_SPACE_RUNTIME_REVISION};
+ // The host installs an immutable policy before any authored module executes.
+ // Canonical surface authority enforces it for tools and direct/fragment
+ // imports alike. Creating another compositor cannot reset the page's count.
+ const appearancePolicy=binding.appearance_policy===undefined?null:copy(binding.appearance_policy);
+ if(appearancePolicy){
+  const quality=appearancePolicy.actual_parameters?.material_quality;
+  check(appearancePolicy.schema==='video.scene-appearance-policy.v1'
+   &&['full','coarse'].includes(quality)
+   &&['full','coarse'].includes(appearancePolicy.requested_parameters?.material_quality)
+   &&Number.isSafeInteger(appearancePolicy.material_noise_limit)&&appearancePolicy.material_noise_limit>=1
+   &&appearancePolicy.material_noise_limit<=64*1024*1024
+   &&Number.isSafeInteger(appearancePolicy.estimated_material_samples)&&appearancePolicy.estimated_material_samples>=0,
+   'scene_space_appearance_policy_invalid');
+ }
+ check(JSON.stringify(appearancePolicy)===JSON.stringify(surfaceTools.appearancePolicy()),
+  'scene_space_appearance_policy_host_binding_missing_or_changed');
  const helperApi=Object.freeze(Object.fromEntries(Object.entries(surfaceTools).map(([name,value])=>[name,
   typeof value==='function'?(...args)=>{const count=(metrics.surface_helper_calls[name]??0)+1;
    check(Number.isSafeInteger(count),'scene_space_surface_call_count_exceeded');metrics.surface_helper_calls[name]=count;
-   return value(...args);}:value])));
+   return value(...args);
+  }:value])));
  const geometryApi=Object.freeze(Object.fromEntries(Object.entries(geometryTools).map(([name,value])=>[name,
   typeof value==='function'?(...args)=>{const count=(metrics.geometry_helper_calls[name]??0)+1;
    check(Number.isSafeInteger(count),'scene_space_geometry_call_count_exceeded');metrics.geometry_helper_calls[name]=count;
@@ -145,7 +162,8 @@ export function createSceneSpaceRenderer({canvas,binding,paintObject,paintCovera
   caches.clear();scratch.width=0;scratch.height=0;metrics.cache_pixels=0;}
  return Object.freeze({renderFrame,seek:seconds=>{check(finite(seconds));return renderFrame(binding.frame_range.start_frame+Math.round(seconds*24));},
   get observation(){return copy({...metrics,surface_field_usage:surfaceTools.surfaceResourceUsage(),
-   geometry_resource_usage:geometryTools.geometryResourceUsage()});},dispose});
+   geometry_resource_usage:geometryTools.geometryResourceUsage(),
+   ...(appearancePolicy?{appearance_observation:surfaceTools.appearanceObservation()}:{})});},dispose});
 }
 
 // Same upper semantics for adapters. These helpers grant no engine, native

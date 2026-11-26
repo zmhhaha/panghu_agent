@@ -18,6 +18,29 @@
 runner为每种条件生成新的source与binding，不修改旧例/旧binding。诊断模式coverage、
 depth、normal、light独立成图；它们不进入最终ink画稿的合成。
 
+## 真实材质资源降级
+
+额外`coarse-budget`条件使用与完整样片逐字节相同的作者source、相同计划和第120帧。
+区别只在宿主冻结预算：估计20,000次材质查询、预算20,000次noise evaluation，完整
+三频需要60,000次，且只有texture被明确声明为可降级。selector据此记录requested full、
+actual coarse和预期损失。宿主在任何作者模块运行前注入不可修改的深冻结策略，
+canonical材质primitive实际覆写weights为[1,0,0]、normalStrength为0，
+保留坐标、尺度、base和seed；不是仅在metadata写coarse。
+
+材质helper低档只计算低频的8个噪声格点，跳过两个高频和法线导数。primitive在噪声
+执行前向canonical预算扣记本次确定的noise/lattice/derivative工作项，超限即停止；
+runtime只读取共享观察，不存在可退费或重置的作者入口。直接导入原helper或fragment
+也共享同一策略和计数，不能绕过tools路径获得完整高档或新额度。几何、coverage、相机、帧率和输出
+尺寸均不因降级而改变。`quality-budget-comparison.png`和证据中的
+`appearance_budget_case`保留实际画面、请求/实际参数、策略身份和真实计数。
+
+计数范围是每次页面缓存初始化；页面重载重新构建缓存，仍消耗外层任务的渲染时间
+预算，不表示整个任务只支付一次初始化。此本地验证的config/usage身份是复现记录，
+不冒充生产计费账本。没有policy的历史binding保持原调用路径和原观察字段形状。
+最终原生复验重新冻结了host/runtime/helper/budget全部新SHA，并对旧无policy的
+9张静帧和240帧视频做逐字节回归。独立3项原生权限测试另有JUnit记录，其pytest
+全套耗时与样片native probe耗时分开记录，不把不同统计范围混为一个渲染时长。
+
 ## 镜头计划
 
 1280×720、24fps、240帧、10秒，无旁白/音乐。0–0.75秒保持起幅，0.75–9秒缓慢推进，
@@ -44,7 +67,7 @@ FFmpeg、ffprobe在PATH中。Pillow用于结果拼图；Windows默认字体为�
 本地请求能力身份，不代表新代码已在该镜像中。
 
 `--only stills`输出第120帧相同取景/相同时间的35版、全开、分别关闭一种引导的对照，
-以及四张独立诊断。`--only film`导出240帧真实逐帧样片。每个case均执行重复、逆序、
+四张独立诊断，以及预算强制coarse的真实静帧。`--only film`导出240帧真实逐帧样片。每个case均执行重复、逆序、
 重载检查，记录实际对象绘制次数、缓存命中和geometry/surface helper调用。
 
 `evidence.json`记录实际验证范围与结果。没有调用生产模型、没有运行独立模型视觉

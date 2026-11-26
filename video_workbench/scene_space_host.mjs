@@ -38,6 +38,8 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
   &&binding.surface_budget_sha256===request.surface_budget_sha256
   &&binding.geometry_runtime_sha256===request.geometry_runtime_sha256
   &&binding.geometry_budget_sha256===request.geometry_budget_sha256);
+ if(binding.appearance_policy)requireValue(binding.appearance_policy.sha256===request.appearance_policy_sha256,
+  'scene_space_appearance_policy_changed');
  const surfaceRuntime=resources.get('/runtime/scene_space_surface.mjs');
  const surfaceBudget=resources.get('/runtime/scene_space_surface_budget.mjs');
  requireValue(surfaceRuntime&&hash(surfaceRuntime)===request.surface_runtime_sha256,'scene_space_surface_runtime_changed');
@@ -64,6 +66,12 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
   const context=await browser.newContext({viewport:{width:c.width,height:c.height},deviceScaleFactor:1,
    serviceWorkers:'block',acceptDownloads:false});
   await engineRuntime.installEngineGuard(context,'canvas');
+  if(binding.appearance_policy)await context.addInitScript(policy=>{
+   const freeze=value=>{if(value&&typeof value==='object'){
+    for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
+   Object.defineProperty(globalThis,'__trustedSceneAppearancePolicy',{
+    value:freeze(policy),writable:false,configurable:false});
+  },binding.appearance_policy);
   await context.route('**/*',async route=>{const u=new URL(route.request().url());
    if(u.origin===origin&&resources.has(u.pathname)&&!u.search&&route.request().method()==='GET'){
     if(route.request().resourceType()==='script')scripts.add(u.pathname);await route.continue();
