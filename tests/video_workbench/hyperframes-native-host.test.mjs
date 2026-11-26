@@ -7,8 +7,11 @@ import {createHash} from 'node:crypto';
 import {existsSync,readFileSync,mkdirSync,mkdtempSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {captureMethodFrames} from '../../video_workbench/animation_method_host.mjs';
+import {capturePicture} from '../../video_workbench/picture_learning_host.mjs';
 import * as engineRuntime from '../../video_workbench/motion_renderer/engine_runtime.mjs';
-import {HYPERFRAMES_CORE_SHA256} from '../../video_workbench/motion_renderer/hyperframes_project.mjs';
+import * as projectRuntime from '../../video_workbench/motion_renderer/hyperframes_project.mjs';
+
+const {HYPERFRAMES_CORE_SHA256}=projectRuntime;
 
 const require=createRequire(import.meta.url);
 let chromium;
@@ -117,4 +120,40 @@ test('real core seeded random state survives forward/reverse/nonmonotonic/repeat
 test('real core rejects unfrozen random state before accepting encoded media',
  {skip:!available},async()=>{
  await assert.rejects(capture('canvas',unseededCanvas),/method_(reverse|absolute)_seek_mismatch/);
+});
+
+function captureStill(html, options = {}) {
+ const project={schema:'video.hyperframes-project.v1',project_id:'real-core-picture',
+  width:320,height:180,fps:24,duration_seconds:1,entry:'scene.html',scenes:[
+   {id:'scene',start_seconds:0,duration_seconds:1,entry:'scene.html',source_sha256:sha(html),engine:'html-svg'}]};
+ const request={engine:'html-svg',project,project_sha256:sha(JSON.stringify(project)),
+  constraints:{width:320,height:180}};
+ return capturePicture({chromium,request,resources:new Map([['/scene.html',Buffer.from(html)]]),
+  engineRuntime,projectRuntime,executablePath,hyperFramesDist,...options});
+}
+
+test('picture learning waits for declared scene readiness and preserves exact repeat and reload frames',
+ {skip:!available},async()=>{
+ const html=`<!doctype html><body><svg width="320" height="180"><rect width="320" height="180" fill="white"/></svg>
+ <script>
+ const rect=document.querySelector('rect');
+ window.__animationExperiment={
+  ready:new Promise(resolve=>setTimeout(resolve,80)),
+  seek(){rect.setAttribute('fill','green');}
+ };
+ </script></body>`;
+ const result=await captureStill(html);
+ assert.equal(result.bytes.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
+ assert.equal(result.checks.repeat_sha256,sha(result.bytes));
+ assert.equal(result.checks.reload_sha256,sha(result.bytes));
+ assert.equal(result.project_runtime.actual_seconds,0);
+ assert.equal(result.project_runtime.core_sha256,HYPERFRAMES_CORE_SHA256);
+});
+
+test('picture learning cannot wait past its original deadline for a never-ready scene',
+ {skip:!available},async()=>{
+ const html=`<!doctype html><body><script>
+ window.__animationExperiment={ready:new Promise(()=>{}),seek(){}};
+ </script></body>`;
+ await assert.rejects(captureStill(html,{deadlineAtMs:Date.now()+3000}),/picture_render_deadline_exceeded/);
 });
