@@ -6,7 +6,7 @@ const LABEL={automatic:'默认打磨',user_requested:'用户追加打磨',requir
 const validSource=value=>Boolean(value&&typeof value.run_id==='string'&&value.run_id
   &&typeof value.version_id==='string'&&value.version_id&&typeof value.sha256==='string'&&/^[0-9a-f]{64}$/.test(value.sha256));
 const sameSource=(a,b)=>validSource(a)&&validSource(b)&&a.run_id===b.run_id&&a.version_id===b.version_id&&a.sha256===b.sha256;
-const pathFor=id=>`/api/projects/${encodeURIComponent(id)}/refinements`;
+const pathFor=id=>`/api/v1/projects/${encodeURIComponent(id)}/refinements`;
 export function refinementErrorLabel(code) {
   return ({production_refinement_disabled:'整片打磨尚未开放，已有草稿仍可查看。',
     film_review_unavailable:'画面检查服务暂未就绪，没有开始本轮打磨。',
@@ -126,7 +126,7 @@ export function createRefinementsPanel({document,getContext,request,refresh,onEr
     if(chosen){selected.set(id,chosen.source.version_id);chooser.value=chosen.source.version_id;}
     sourceLabel.hidden=!chosen;player.hidden=download.hidden=!chosen;
     const next=chosen?`${id}:${chosen.source.version_id}`:null;
-    if(next!==mediaKey){pause();mediaKey=next;if(chosen){player.src=`/api/renders/${encodeURIComponent(chosen.source.version_id)}/video`;download.href=player.src;download.setAttribute('download',`draft-${chosen.source.version_id}.mp4`);}else{player.removeAttribute('src');download.removeAttribute('href');}}
+    if(next!==mediaKey){pause();mediaKey=next;if(chosen){player.src=`/api/v1/renders/${encodeURIComponent(chosen.source.version_id)}/video`;download.href=player.src;download.setAttribute('download',`draft-${chosen.source.version_id}.mp4`);}else{player.removeAttribute('src');download.removeAttribute('href');}}
     const line=data?.sequences?.find(row=>row.sources.some(source=>sameSource(source,chosen?.source)));
     const remaining=line?.remaining?.user_requested??0;
     const blocked=!data?.enabled||!chosen||!line||line.id!==value.run?.sequence_id||value.run?.current!==true
@@ -197,7 +197,7 @@ export function createRefinementsPanel({document,getContext,request,refresh,onEr
   async function cancelRound(row) {
     const value=context(),id=value.project?.id;if(!id||busy.has(id)||TERMINAL.has(row.status))return;
     busy.add(id);render();onChange();
-    try{await request(`/api/refinements/${encodeURIComponent(row.id)}/cancel`,{method:'POST',body:{}});if(same(value))onSuccess('已申请取消，将继续等待本轮真实停止。');}
+    try{await request(`/api/v1/refinements/${encodeURIComponent(row.id)}/cancel`,{method:'POST',body:{}});if(same(value))onSuccess('已申请取消，将继续等待本轮真实停止。');}
     catch(error){if(same(value))onError(error);}
     finally{busy.delete(id);if(same(value)){try{await refresh();}catch(error){onError(error);}render();onChange();}}
   }

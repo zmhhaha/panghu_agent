@@ -11,8 +11,8 @@ const LABELS = { completed: '已完成', partial_failed: '部分未完成', stal
 const batchStatus = status => LABELS[status] ?? statusLabel(status);
 const unresolved = batch => Boolean(batch?.id && !TERMINAL.has(batch.status));
 const successful = item => Boolean(item?.version_id && ['completed', 'reused', 'skipped'].includes(item.status));
-const projectPath = id => `/api/projects/${encodeURIComponent(id)}`;
-const batchPath = id => `/api/batches/${encodeURIComponent(id)}`;
+const projectPath = id => `/api/v1/projects/${encodeURIComponent(id)}`;
+const batchPath = id => `/api/v1/batches/${encodeURIComponent(id)}`;
 const keyFor = value => `${value.project?.id}:${value.epoch}`;
 class BatchInputError extends Error {}
 
@@ -241,7 +241,7 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
       const actions = text('div', undefined, 'batch-review-actions');
       if (row.audio_version_id) actions.append(button(`试听配音${info.audio?.number ? ` A${info.audio.number}` : ''}`, async () => {
         onMediaPlay(); const player = $('batch-audio-preview'); player.pause();
-        player.src = `/api/audio-versions/${encodeURIComponent(row.audio_version_id)}/audio`; player.hidden = false;
+        player.src = `/api/v1/audio-versions/${encodeURIComponent(row.audio_version_id)}/audio`; player.hidden = false;
         $('batch-audio-label').textContent = `${row.title ?? '镜头'} · 当前审阅配音`;
         try { await player.play(); } catch { onInputError('请在音频播放器中点击播放。'); }
       }));
@@ -338,7 +338,7 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
         lists.set(projectId, batches(projectId).map(batch => batch.id === id ? detail : batch));
         const ids = [...new Set(batchSceneResults(detail).map(row => row.motion_version_id).filter(Boolean))];
         const results = await Promise.allSettled(ids.map(async id => {
-          const version = await request(`/api/motion-versions/${encodeURIComponent(id)}`);
+          const version = await request(`/api/v1/motion-versions/${encodeURIComponent(id)}`);
           if (same(value) && read === latestRead) candidates.set(`${projectId}:${value.project.revision}:${id}`, version);
         }));
         if (!same(value) || read !== latestRead) return;

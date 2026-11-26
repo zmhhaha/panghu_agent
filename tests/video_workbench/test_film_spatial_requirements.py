@@ -204,7 +204,12 @@ def test_legacy_requests_retain_original_constraint_fields_and_package_protocol(
         'width', 'height', 'fps', 'duration_seconds', 'allowed_engines', 'runtime_identity'}
     assert 'spatial_rendering' not in env.creation.operation('module', done['id'])
     assert 'APP-FROZEN-SPATIAL-RENDERING' not in package['input_document']['scene']['instruction']
-    assert package['profile']['bundle_manifest_sha256'] == '53d43557bbd8e672ee2c45e536cff046f2f522b0b6086adc38d19ed5af01c414'
+    # A new unmarked request follows the already serving module-v3 binding;
+    # historical module-v2 bytes remain separately available for frozen jobs.
+    assert package['profile']['bundle_manifest_sha256'] == fixtures.P.BUNDLE_MANIFEST_SHA256
+    assert fixtures.P.HISTORICAL_BUNDLES['animation-film-module-v2'][1] == (
+        '53d43557bbd8e672ee2c45e536cff046f2f522b0b6086adc38d19ed5af01c414')
+    fixtures.P.verified_bundle('animation-film-module-v2')
 
 
 def test_worker_offer_rejects_mutation_broad_engine_lists_and_extra_fields(env):

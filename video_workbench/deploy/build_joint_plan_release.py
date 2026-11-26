@@ -21,7 +21,7 @@ else:  # Also support python video_workbench/deploy/build_joint_plan_release.py.
 
 
 DOCKERFILE = 'video_workbench/Dockerfile'
-CONTEXT_ROOTS = {'agent_service', 'video_workbench'}
+CONTEXT_ROOTS = {'agent_service', 'video_workbench', 'service_auth'}
 
 
 def _workbench_context(output, source):

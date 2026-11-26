@@ -52,7 +52,7 @@ export function createJointPlanRequest(project, draft) {
   if (draft.library_release_id != null && (typeof draft.library_release_id !== 'string' || draft.library_release_id.length > 200)) throw new Error('请选择有效的技能版本。');
   if (draft.use_wikiskill !== undefined && typeof draft.use_wikiskill !== 'boolean') throw new Error('请明确是否加载动效 WikiSkill。');
   if (draft.use_wikiskill === false && draft.library_release_id) throw new Error('关闭动效 WikiSkill 时不能同时指定技能版本。');
-  return Object.freeze({ path: `/api/projects/${encodeURIComponent(project.id)}/joint-plan`,
+  return Object.freeze({ path: `/api/v1/projects/${encodeURIComponent(project.id)}/joint-plan`,
     body: Object.freeze({ expected_revision: project.revision,
       brief: Object.freeze({ audience: draft.audience.trim(), goal: draft.goal.trim(), tone: draft.tone }),
       instruction: draft.instruction.trim(), preserve_script: draft.preserve_script, use_wikiskill: draft.use_wikiskill !== false,
@@ -66,7 +66,7 @@ export function createJointPlanAdoption(project, data, version, { unsaved = fals
       || version.adoptable !== true || version.id === data.head_version_id) {
     throw new Error('这份方案当前不能采用，请重新读取或生成匹配当前文稿的方案。');
   }
-  return Object.freeze({ path: `/api/projects/${encodeURIComponent(project.id)}/joint-plan/adopt`,
+  return Object.freeze({ path: `/api/v1/projects/${encodeURIComponent(project.id)}/joint-plan/adopt`,
     body: Object.freeze({ expected_revision: project.revision, version_id: version.id,
       expected_head_version_id: data.head_version_id ?? null }) });
 }
@@ -292,7 +292,7 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
     if (context.project?.id !== projectId || context.epoch !== epoch) return;
     const read = ++sequence; readSequences.set(projectId, read);
     try {
-      const result = await request(`/api/projects/${encodeURIComponent(projectId)}/joint-plan`);
+      const result = await request(`/api/v1/projects/${encodeURIComponent(projectId)}/joint-plan`);
       if (!same(context) || readSequences.get(projectId) !== read) return;
       cache.set(projectId, result); revisions.set(projectId, context.project.revision); readErrors.delete(projectId);
       if (!restored.has(projectId)) {
@@ -375,7 +375,7 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
   async function cancel() {
     const context = current(), operation = dataFor(context.project?.id)?.operation;
     if (!context.project || !isActiveOperation(operation) || ['cancelling', 'cancel_requested'].includes(operation.status)) return;
-    await mutate(context, () => request(`/api/joint-plan-operations/${encodeURIComponent(operation.id)}/cancel`, { method: 'POST', body: {} }), result => {
+    await mutate(context, () => request(`/api/v1/joint-plan-operations/${encodeURIComponent(operation.id)}/cancel`, { method: 'POST', body: {} }), result => {
       cache.set(context.project.id, { ...dataFor(context.project.id), operation: result });
       onSuccess('已申请取消，将继续查询真实任务状态。');
     });
@@ -404,7 +404,7 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
     if (!$('joint-plan-library-options').open) return;
     const context = current();
     try {
-      const catalogue = await request('/api/wikiskill/releases');
+      const catalogue = await request('/api/v1/wikiskill/releases');
       if (!same(context)) return;
       library = catalogue; libraryUnavailable = false;
     } catch {

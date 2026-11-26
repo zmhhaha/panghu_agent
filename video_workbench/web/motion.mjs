@@ -146,7 +146,7 @@ export function createDynamicProjectRequest(project, { unsaved = false, busy = f
   const operations = [project.storyboard_operation, ...(project.scenes ?? []).flatMap(scene =>
     [scene.operation, scene.audio_operation, scene.motion?.operation])];
   if (busy || operations.some(isUnresolvedProductionOperation)) throw new Error('请等待当前制作任务结束，再切换制作方式。');
-  return { path: `/api/projects/${encodeURIComponent(project.id)}/production-mode`,
+  return { path: `/api/v1/projects/${encodeURIComponent(project.id)}/production-mode`,
     body: { mode: 'motion', expected_revision: project.revision } };
 }
 export const motionMetadata = scene => scene?.motion ?? {
@@ -181,7 +181,7 @@ export function createMotionRequest(project, scene, instruction = '', base = nul
   if (diagramKind === 'creative' && !currentMotionAudio(scene)) {
     throw new Error(ERRORS.creative_audio_required);
   }
-  return { path: `/api/scenes/${encodeURIComponent(scene.id)}/motion`, body: {
+  return { path: `/api/v1/scenes/${encodeURIComponent(scene.id)}/motion`, body: {
     expected_revision: project.revision, instruction: instruction.trim(), ...(base ? { base_version_id: base.id } : {}),
     ...(/^[0-9a-f]{64}$/.test(scene.motion?.semantic_binding_sha256 ?? '')
       ? { expected_semantic_binding_sha256: scene.motion.semantic_binding_sha256 } : {}),
@@ -195,7 +195,7 @@ export function createMotionAdoption(project, scene, candidate, { unsaved = fals
   if (!candidate?.id || candidate.stale || !motionMetadata(scene).versions?.some(row => row.id === candidate.id)) {
     throw new Error('请选择匹配当前镜头的动态图解方案。');
   }
-  return { path: `/api/scenes/${encodeURIComponent(scene.id)}/motion/adopt`, body: {
+  return { path: `/api/v1/scenes/${encodeURIComponent(scene.id)}/motion/adopt`, body: {
     expected_revision: project.revision, version_id: candidate.id,
     expected_head_version_id: motionMetadata(scene).head_version_id ?? null,
   } };
@@ -231,12 +231,12 @@ export function createMotionRenderRequest(project, { purpose = 'draft', scene, c
     }
     Object.assign(body, { scene_id: scene.id, motion_version_id: candidate.id, audio_version_id: audio.id });
   }
-  return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`, body };
+  return { path: `/api/v1/projects/${encodeURIComponent(project.id)}/motion-renders`, body };
 }
 
 export function createProjectMotionDraftRequest(project, { endHoldSeconds = 0 } = {}) {
   if (!project?.id || !Number.isInteger(project.revision)) throw new Error('请先读取项目。');
-  return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`,
+  return { path: `/api/v1/projects/${encodeURIComponent(project.id)}/motion-renders`,
     body: { expected_revision: project.revision, purpose: 'draft', subtitles: false,
       ...(endHoldSeconds ? { end_hold_seconds: endHoldSeconds } : {}) } };
 }
@@ -482,7 +482,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     $('preview-motion').disabled = !value.renderConfigured || blocked || !selected || selected.stale || !audio || !timing || draft?.dirty;
     onPreviewStateChange(!$('preview-motion').disabled);
     const player = $('motion-timing-audio');
-    const audioPath = audio ? `/api/audio-versions/${encodeURIComponent(audio.id)}/audio` : null;
+    const audioPath = audio ? `/api/v1/audio-versions/${encodeURIComponent(audio.id)}/audio` : null;
     if (player.dataset?.audioId !== (audio?.id ?? '')) {
       player.pause(); auditionEnd = null; if (audioPath) player.src = audioPath; else player.removeAttribute('src');
       if (player.dataset) player.dataset.audioId = audio?.id ?? '';
@@ -494,11 +494,11 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   async function readSelected(value, read) {
     const selected = motionSelection(value.scene, selections.get(keyFor(value))), audio = currentMotionAudio(value.scene);
     if (!selected) return;
-    const candidate = await request(`/api/motion-versions/${encodeURIComponent(selected.id)}`);
+    const candidate = await request(`/api/v1/motion-versions/${encodeURIComponent(selected.id)}`);
     if (!same(value) || read !== latestRead) return;
     versions.set(selected.id, candidate);
     if (audio && !selected.stale) {
-      const timing = await request(`/api/motion-versions/${encodeURIComponent(selected.id)}/timing?audio_version_id=${encodeURIComponent(audio.id)}`);
+      const timing = await request(`/api/v1/motion-versions/${encodeURIComponent(selected.id)}/timing?audio_version_id=${encodeURIComponent(audio.id)}`);
       if (!same(value) || read !== latestRead) return;
       const key = timingKey(selected.id, audio.id);
       timings.set(key, timing);
@@ -512,7 +512,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     if (!value.project || value.project.id !== projectId || value.epoch !== epoch) return;
     const read = ++sequence; latestRead = read;
     try {
-      const project = await request(`/api/projects/${encodeURIComponent(projectId)}/motion`);
+      const project = await request(`/api/v1/projects/${encodeURIComponent(projectId)}/motion`);
       if (!same(value) || read !== latestRead) return;
       metadata.set(projectId, project);
       const scene = project.scenes.find(row => row.id === value.scene?.id);
@@ -572,13 +572,13 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
         || (!value.enabled && mode !== 'static')) return;
     const data = motionMetadata(value.scene);
     if (data.mode === mode || (mode === 'motion' && (!data.head_version_id || data.head_stale))) return;
-    await mutate(value, () => request(`/api/scenes/${encodeURIComponent(value.scene.id)}/visual-mode`,
+    await mutate(value, () => request(`/api/v1/scenes/${encodeURIComponent(value.scene.id)}/visual-mode`,
       { method: 'POST', body: { expected_revision: value.project.revision, mode } }), () => onSuccess(mode === 'static' ? '本镜头将复用静态素材，动态图解历史仍保留。' : '本镜头已切换为已采用的动态图解。'));
   }
   async function cancel() {
     const value = current(), op = motionMetadata(value.scene).operation;
     if (!isActiveOperation(op) || op.status === 'cancelling') return;
-    await mutate(value, () => request(`/api/motion-operations/${encodeURIComponent(op.id)}/cancel`, { method: 'POST', body: {} }),
+    await mutate(value, () => request(`/api/v1/motion-operations/${encodeURIComponent(op.id)}/cancel`, { method: 'POST', body: {} }),
       operation => {
         const scene = metadata.get(value.project.id)?.scenes.find(row => row.id === value.scene.id);
         if (scene) scene.motion.operation = operation;
@@ -595,7 +595,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const body = { expected_revision: draft.expected_revision, audio_version_id: draft.audio_version_id,
       expected_alignment_sha256: draft.expected_alignment_sha256 };
     if (!verify) Object.assign(body, { segments: draft.segments.map(row => ({ ...row })), correction_reason: draft.correction_reason || '结合实际旁白手动校正' });
-    await mutate(value, () => request(`/api/motion-versions/${encodeURIComponent(value.selected.id)}/timing${verify ? '/verify' : ''}`,
+    await mutate(value, () => request(`/api/v1/motion-versions/${encodeURIComponent(value.selected.id)}/timing${verify ? '/verify' : ''}`,
       { method: verify ? 'POST' : 'PATCH', body }), () => {
       drafts.delete(value.timingId); renderedTiming = null;
       onSuccess(verify ? '已记录这条实际配音的人工时序核对。' : '手工时序已保存，试听核对后再明确确认。');

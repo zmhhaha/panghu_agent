@@ -68,7 +68,7 @@ export function createProjectManagement({ document, request, getContext, onChang
     const sequence = ++readSequence;
     loading = true; onChange();
     try {
-      const result = await request('/api/projects?deleted=true');
+      const result = await request('/api/v1/projects?deleted=true');
       if (sequence !== readSequence) return;
       trash = result.projects ?? []; loaded = true;
     } catch (failure) { if (sequence === readSequence) onError(failure); }
@@ -105,7 +105,7 @@ export function createProjectManagement({ document, request, getContext, onChang
 
   async function reconcile(operation) {
     const [activeResult, trashResult] = await Promise.all([
-      request('/api/projects'), request('/api/projects?deleted=true'),
+      request('/api/v1/projects'), request('/api/v1/projects?deleted=true'),
     ]);
     trash = trashResult.projects ?? []; loaded = true;
     const expected = operation.action === 'trash' ? trash : activeResult.projects ?? [];
@@ -117,7 +117,7 @@ export function createProjectManagement({ document, request, getContext, onChang
     writing = true; onPending?.(operation.projectId, true); onChange();
     let accepted = false;
     try {
-      await request(`/api/projects/${encodeURIComponent(operation.projectId)}/${operation.action}`,
+      await request(`/api/v1/projects/${encodeURIComponent(operation.projectId)}/${operation.action}`,
         { method: 'POST', body: { expected_revision: operation.revision } });
       accepted = true;
     } catch (failure) {

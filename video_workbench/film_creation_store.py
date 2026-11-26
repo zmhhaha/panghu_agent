@@ -710,7 +710,7 @@ class FilmCreationStore:
                 allowed_engines=[spatial_offer['intent']['engine']] if spatial_offer else caps['allowed_engines'],
                 assets={name: hashlib.sha256(raw).hexdigest() for name, raw in
                     self._assets_for_operations(db, owner, resource_dependencies).items()}, style=film['style'],
-                predecessor_package=predecessor_package, base_module=base_module, spatial_rendering=spatial_offer)
+                base_module=base_module, spatial_rendering=spatial_offer)
             from .film_authoring_resources import attach_authoring_libraries
             core = attach_authoring_libraries(core, caps)
             from .formal_drawing_libraries import attach_drawing_libraries

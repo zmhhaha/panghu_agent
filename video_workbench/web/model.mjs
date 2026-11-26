@@ -204,7 +204,7 @@ export function createStoryboardRequest(project, maxScenes = 12) {
     throw new Error('Invalid storyboard limit');
   }
   return Object.freeze({
-    path: `/api/projects/${encodeURIComponent(project.id)}/storyboard`,
+    path: `/api/v1/projects/${encodeURIComponent(project.id)}/storyboard`,
     body: Object.freeze({ expected_revision: project.revision, max_scenes: maxScenes }),
   });
 }
@@ -248,7 +248,7 @@ export function createIntentKeys(makeKey = randomIntentKey) {
 
 export function versionPath(versionId, action = 'preview') {
   if (!['preview', 'source'].includes(action)) throw new Error('Unsupported version action');
-  return `/api/versions/${encodeURIComponent(versionId)}/${action}`;
+  return `/api/v1/versions/${encodeURIComponent(versionId)}/${action}`;
 }
 
 export function orderedAudioVersions(scene) {
@@ -276,7 +276,7 @@ export function chooseAudioVersion(state, sceneId, versionId) {
 }
 
 export function audioPath(versionId) {
-  return `/api/audio-versions/${encodeURIComponent(versionId)}/audio`;
+  return `/api/v1/audio-versions/${encodeURIComponent(versionId)}/audio`;
 }
 
 /** The operator's verified catalog is the only source of selectable voices. */

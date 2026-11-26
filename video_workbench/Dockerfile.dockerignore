@@ -3,6 +3,8 @@
 !agent_service/**
 !video_workbench/
 !video_workbench/**
+!service_auth/
+!service_auth/**
 **/__pycache__/
 **/*.pyc
 **/.pytest_cache/

@@ -3,7 +3,7 @@ const MODES = new Set(['retain', 'copy']);
 const PROCESS_COMPILER = 'motion-process-continuity-compiler-1';
 const PROCESS_SOURCE_COMPILER = 'motion-process-compiler-2';
 const STATES = { idle: '待命', waiting: '等待', running: '处理中', completed: '完成', failed: '失败' };
-const projectPath = id => `/api/projects/${encodeURIComponent(id)}/continuity`;
+const projectPath = id => `/api/v1/projects/${encodeURIComponent(id)}/continuity`;
 const keyOf = link => JSON.stringify([link.from_scene_id, link.from_element_id, link.to_scene_id, link.to_element_id]);
 const copyLinks = links => links.map(link => ({ from_scene_id: link.from_scene_id,
   from_element_id: link.from_element_id, to_scene_id: link.to_scene_id,
@@ -124,7 +124,7 @@ export function createContinuityDraftRequest(project, version, { endHoldSeconds 
   if (!version?.id || version.stale || continuityIssues(project, { audio: true }).length) {
     throw new Error('请先补齐有效图解和已采用录音，再制作连续草稿。');
   }
-  return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`, body: {
+  return { path: `/api/v1/projects/${encodeURIComponent(project.id)}/motion-renders`, body: {
     expected_revision: project.revision, purpose: 'draft', subtitles: false,
     continuity_version_id: version.id, ...(endHoldSeconds ? { end_hold_seconds: endHoldSeconds } : {}),
   } };

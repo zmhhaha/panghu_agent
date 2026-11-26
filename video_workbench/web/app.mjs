@@ -976,12 +976,12 @@ function renderDelivery(project) {
       const play = node('button', '播放 MP4', 'button secondary'); play.type = 'button';
       play.addEventListener('click', () => openMotionRender(item)); row.append(play);
       const button = node('button', '下载 MP4 ↓', 'button secondary'); button.type = 'button';
-      button.addEventListener('click', () => download(`/api/renders/${encodeURIComponent(item.id)}/video`,
+      button.addEventListener('click', () => download(`/api/v1/renders/${encodeURIComponent(item.id)}/video`,
         `video-${item.id}.mp4`, `render-download:${item.id}`)); row.append(button);
     } else if (isActiveOperation(item)) {
       const button = node('button', '申请取消', 'text-button'); button.type = 'button';
       button.disabled = pending.has(`render-cancel:${item.id}`) || cancelRequests.has(item.id) || item.status === 'cancelling';
-      button.addEventListener('click', () => perform(`render-cancel:${item.id}`, () => request(`/api/renders/${encodeURIComponent(item.id)}/cancel`,
+      button.addEventListener('click', () => perform(`render-cancel:${item.id}`, () => request(`/api/v1/renders/${encodeURIComponent(item.id)}/cancel`,
         { method: 'POST', body: {} }), () => { cancelRequests.add(item.id); success('已申请取消导出。'); })); row.append(button);
     }
     fragment.append(row);
@@ -1111,7 +1111,7 @@ function schedulePolling() {
 
 async function loadProjects() {
   const sequence = ++listSequence;
-  const result = await request('/api/projects');
+  const result = await request('/api/v1/projects');
   if (sequence !== listSequence) return;
   projects = result.projects ?? [];
   renderProjects();
@@ -1119,13 +1119,13 @@ async function loadProjects() {
 
 async function loadRenders(projectId, epoch) {
   const sequence = ++renderReadSequence;
-  const result = await request(`/api/projects/${encodeURIComponent(projectId)}/renders`);
+  const result = await request(`/api/v1/projects/${encodeURIComponent(projectId)}/renders`);
   if (state.projectId !== projectId || state.epoch !== epoch || sequence !== renderReadSequence) return;
   renderHistories.set(projectId, result.renders ?? []);
   renderDelivery(state.project);
   const ids = [...new Set((result.renders ?? []).map(motionFailureSource).filter(Boolean).map(source => source.visual_version_id))];
   await Promise.allSettled(ids.filter(id => !renderFailureVersions.has(`${projectId}:${id}`)).map(async id => {
-    const version = await request(`/api/motion-versions/${encodeURIComponent(id)}`);
+    const version = await request(`/api/v1/motion-versions/${encodeURIComponent(id)}`);
     if (state.projectId === projectId && state.epoch === epoch && sequence === renderReadSequence) renderFailureVersions.set(`${projectId}:${id}`, version);
   }));
   if (state.projectId === projectId && state.epoch === epoch && sequence === renderReadSequence) renderDelivery(state.project);
@@ -1137,7 +1137,7 @@ async function loadProject() {
   readController?.abort();
   readController = new AbortController();
   try {
-    const project = await request(`/api/projects/${encodeURIComponent(ticket.projectId)}`, { signal: readController.signal });
+    const project = await request(`/api/v1/projects/${encodeURIComponent(ticket.projectId)}`, { signal: readController.signal });
     if (acceptProjectRead(state, ticket, project)) {
       projects = updateProjectSummary(projects, project);
       loading = false;
@@ -1273,8 +1273,8 @@ async function saveScene(event) {
   const draft = drafts.get(key);
   const { expected_revision, base_fields, dirty, ...fields } = draft;
   const payload = sceneId ? { ...fields, expected_revision, base_fields } : fields;
-  await perform(`save:${projectId}`, () => request(sceneId ? `/api/scenes/${encodeURIComponent(sceneId)}`
-    : `/api/projects/${encodeURIComponent(projectId)}/scenes`, { method: sceneId ? 'PATCH' : 'POST', body: payload }), result => {
+  await perform(`save:${projectId}`, () => request(sceneId ? `/api/v1/scenes/${encodeURIComponent(sceneId)}`
+    : `/api/v1/projects/${encodeURIComponent(projectId)}/scenes`, { method: sceneId ? 'PATCH' : 'POST', body: payload }), result => {
     drafts.delete(key);
     editor = null;
     if (!sceneId) state.sceneId = result?.scenes?.at(-1)?.id ?? result?.id ?? state.sceneId;
@@ -1290,13 +1290,13 @@ async function generate(kind) {
   if (kind === 'revise' && (!base || !instruction)) return;
   const payload = { base_version_id: kind === 'revise' ? base?.id ?? null : null,
     instruction, expected_revision: state.project.revision };
-  await perform(`${kind}:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/${kind}`,
+  await perform(`${kind}:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/${kind}`,
     { method: 'POST', body: payload }), () => success('任务已提交，可以继续查看其他镜头。'));
 }
 
 async function cancelOperation(operation) {
   if (!isActiveOperation(operation)) return;
-  await perform(`cancel:${operation.id}`, () => request(`/api/operations/${encodeURIComponent(operation.id)}/cancel`,
+  await perform(`cancel:${operation.id}`, () => request(`/api/v1/operations/${encodeURIComponent(operation.id)}/cancel`,
     { method: 'POST', body: {} }), () => {
     cancelRequests.add(operation.id);
     success('取消请求已提交，任务状态将继续更新。');
@@ -1378,7 +1378,7 @@ async function openMotionRender(item) {
     const projectId = state.projectId, epoch = state.epoch;
     try {
       const recorded = (renderHistories.get(projectId) ?? []).find(row => row.id === item.id);
-      const rows = recorded ? null : (await request(`/api/projects/${encodeURIComponent(projectId)}/renders`)).renders;
+      const rows = recorded ? null : (await request(`/api/v1/projects/${encodeURIComponent(projectId)}/renders`)).renders;
       if (state.projectId !== projectId || state.epoch !== epoch || sequence !== motionRenderSequence) return;
       if (rows) renderHistories.set(projectId, rows);
       item = recorded ?? rows?.find(row => row.id === item.id);
@@ -1390,7 +1390,7 @@ async function openMotionRender(item) {
   $('motion-render-note').textContent = item.purpose === 'draft'
     ? `${renderSourceLabel(item)} · 文稿版本 ${item.project_revision ?? '未记录'} 的候选草稿。画面变化可能基于待核对的估算时序；播放不代表采用或已核对。`
     : `${renderSourceLabel(item)} · 文稿版本 ${item.project_revision ?? '未记录'} 的采用版本快照。项目后续修改不会改变这条成片。`;
-  $('motion-render-video').src = `/api/renders/${encodeURIComponent(item.id)}/video`;
+  $('motion-render-video').src = `/api/v1/renders/${encodeURIComponent(item.id)}/video`;
   $('motion-render-dialog').showModal();
 }
 
@@ -1450,7 +1450,7 @@ async function openProjectPlayer() {
   const epoch = state.epoch;
   const silent = $('render-silent').checked;
   const subtitles = $('render-subtitles').checked;
-  await perform(`preview:${projectId}`, () => request(`/api/projects/${encodeURIComponent(projectId)}/timeline?silent=${silent}&subtitles=${subtitles}`), timeline => {
+  await perform(`preview:${projectId}`, () => request(`/api/v1/projects/${encodeURIComponent(projectId)}/timeline?silent=${silent}&subtitles=${subtitles}`), timeline => {
     if (state.projectId !== projectId || state.epoch !== epoch) return;
     closeProjectPlayer();
     closeMotionRender(); motionPanel.pause();
@@ -1505,7 +1505,7 @@ $('create-project-form').addEventListener('submit', async event => {
   const body = { title: $('new-title').value.trim(), script: $('new-script').value.trim(), style: $('new-style').value.trim(),
     production_mode: 'motion' };
   try {
-    const project = await request('/api/projects', { method: 'POST', body });
+    const project = await request('/api/v1/projects', { method: 'POST', body });
     $('create-project-dialog').close();
     $('create-project-form').reset();
     await loadProjects();
@@ -1589,7 +1589,7 @@ $('adopt-version').addEventListener('click', () => {
   const scene = selectedScene(state);
   const version = selectedVersion(state, scene);
   if (!scene || !version || version.id === scene.head_version_id) return;
-  perform(`adopt:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/adopt`, {
+  perform(`adopt:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/adopt`, {
     method: 'POST', body: { version_id: version.id, expected_head_version_id: scene.head_version_id },
   }), () => success(`已采用 V${version.number}。`));
 });
@@ -1598,7 +1598,7 @@ $('download-source').addEventListener('click', () => {
   if (version) download(versionPath(version.id, 'source'), `scene-v${version.number}.${version.format === 'html' ? 'html' : 'svg'}`, `source:${version.id}`);
 });
 $('export-project').addEventListener('click', () => {
-  if (state.projectId) download(`/api/projects/${encodeURIComponent(state.projectId)}/export`, 'video-workbench-project.zip', `export:${state.projectId}`);
+  if (state.projectId) download(`/api/v1/projects/${encodeURIComponent(state.projectId)}/export`, 'video-workbench-project.zip', `export:${state.projectId}`);
 });
 
 $('project-speech-voice').addEventListener('change', () => {
@@ -1614,7 +1614,7 @@ $('save-project-speech').addEventListener('click', () => {
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || !speechVoices(sessionSettings).some(voice => voice.id === draft.voice)) return;
   const body = { expected_revision: draft.expected_revision, voice: draft.voice };
-  perform(`project-speech:${project.id}`, () => request(`/api/projects/${encodeURIComponent(project.id)}/speech`,
+  perform(`project-speech:${project.id}`, () => request(`/api/v1/projects/${encodeURIComponent(project.id)}/speech`,
     { method: 'PATCH', body }), () => { projectSpeechDrafts.delete(project.id);
     success('项目音色已保存。有效的动态图解可继续使用；请重新生成并试听采用配音，再核对画面时序。'); });
 });
@@ -1633,7 +1633,7 @@ $('save-speech-settings').addEventListener('click', () => {
   try { pronunciation = parsePronunciation(draft.pronunciation); }
   catch (error) { showInputError(error.message); return; }
   const body = { expected_revision: draft.expected_revision, speed: Number(draft.speed), pronunciation };
-  perform(`speech:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/speech`, { method: 'PATCH', body }),
+  perform(`speech:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/speech`, { method: 'PATCH', body }),
     () => { speechDrafts.delete(key); success('配音设置已保存，已有配音的适用状态会同步更新。'); });
 });
 for (const [id, map] of [['reset-speech-settings', speechDrafts], ['reset-timing', timingDrafts], ['reset-captions', captionDrafts]]) {
@@ -1651,13 +1651,13 @@ $('generate-audio').addEventListener('click', () => {
   if (!projectSpeechCanGenerate(state.project, sessionSettings, projectSpeechDraft())
       || pending.has(`project-speech:${state.projectId}`)) return;
   const body = { expected_revision: state.project.revision };
-  perform(`audio-generate:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/audio/generate`,
+  perform(`audio-generate:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/audio/generate`,
     { method: 'POST', body }), () => success('配音任务已提交，完成后会保存为候选。'));
 });
 $('cancel-audio-operation').addEventListener('click', () => {
   const operation = selectedScene(state)?.audio_operation;
   if (!isActiveOperation(operation)) return;
-  perform(`audio-cancel:${operation.id}`, () => request(`/api/audio-operations/${encodeURIComponent(operation.id)}/cancel`,
+  perform(`audio-cancel:${operation.id}`, () => request(`/api/v1/audio-operations/${encodeURIComponent(operation.id)}/cancel`,
     { method: 'POST', body: {} }), () => { cancelRequests.add(operation.id); success('配音取消请求已提交。'); });
 });
 $('audio-version-select').addEventListener('change', event => {
@@ -1683,7 +1683,7 @@ $('adopt-audio').addEventListener('click', () => {
   const scene = selectedScene(state); const version = selectedAudioVersion(state, scene);
   if (!scene || !version || version.stale || version.id === scene.head_audio_version_id) return;
   const body = { version_id: version.id, expected_head_audio_version_id: scene.head_audio_version_id ?? null };
-  perform(`audio-adopt:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/audio/adopt`,
+  perform(`audio-adopt:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/audio/adopt`,
     { method: 'POST', body }), () => success(`已采用配音 A${version.number}，请检查时长与字幕。`));
 });
 $('download-audio').addEventListener('click', () => {
@@ -1702,7 +1702,7 @@ $('upload-audio').addEventListener('click', () => {
   const selection = uploadSelection; const scene = selectedScene(state);
   if (!selection || !scene || selection.projectId !== state.projectId || selection.sceneId !== scene.id) return;
   const revision = state.project.revision;
-  const path = `/api/scenes/${encodeURIComponent(scene.id)}/audio/upload?expected_revision=${revision}`;
+  const path = `/api/v1/scenes/${encodeURIComponent(scene.id)}/audio/upload?expected_revision=${revision}`;
   perform(`audio-upload:${scene.id}`, async () => {
     const bytes = await selection.file.arrayBuffer();
     const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(value => value.toString(16).padStart(2, '0')).join('');
@@ -1723,14 +1723,14 @@ $('save-timing').addEventListener('click', () => {
   const scene = selectedScene(state);
   if (!scene || !$('leading-seconds').reportValidity() || !$('trailing-seconds').reportValidity()) return;
   const key = draftKey(scene.id); const { dirty, ...body } = timingDrafts.get(key);
-  perform(`timing:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/timing`, { method: 'PATCH', body }),
+  perform(`timing:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/timing`, { method: 'PATCH', body }),
     () => { timingDrafts.delete(key); success('镜头留白已保存。'); });
 });
 $('estimate-captions').addEventListener('click', () => {
   const scene = selectedScene(state); if (!scene) return;
   const key = draftKey(scene.id); const body = { expected_revision: state.project.revision };
   if (captionDrafts.get(key)?.dirty && !window.confirm('重新估算会替换这里尚未保存的字幕校正，继续吗？')) return;
-  perform(`captions:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/captions/estimate`,
+  perform(`captions:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/captions/estimate`,
     { method: 'POST', body }), () => { captionDrafts.delete(key); renderedCaptionDraft = null; success('已生成估算时间，请试听并校正。'); });
 });
 $('add-caption').addEventListener('click', () => {
@@ -1749,11 +1749,11 @@ $('save-captions').addEventListener('click', () => {
   const key = draftKey(scene.id);
   const body = { expected_revision: draft.expected_revision, audio_version_id: draft.audio_version_id,
     cues: draft.cues.map(cue => ({ ...cue })) };
-  perform(`captions:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/captions`,
+  perform(`captions:${scene.id}`, () => request(`/api/v1/scenes/${encodeURIComponent(scene.id)}/captions`,
     { method: 'PUT', body }), () => { captionDrafts.delete(key); renderedCaptionDraft = null; success('校正字幕已保存。'); });
 });
 $('download-subtitles').addEventListener('click', () => {
-  if (state.projectId) download(`/api/projects/${encodeURIComponent(state.projectId)}/subtitles`,
+  if (state.projectId) download(`/api/v1/projects/${encodeURIComponent(state.projectId)}/subtitles`,
     'video-subtitles.srt', `subtitles:${state.projectId}`);
 });
 $('render-project').addEventListener('click', () => {
@@ -1761,7 +1761,7 @@ $('render-project').addEventListener('click', () => {
   const id = state.projectId;
   const body = { expected_revision: state.project.revision, silent: $('render-silent').checked,
     subtitles: $('render-subtitles').checked };
-  perform(`render:${id}`, () => request(`/api/projects/${encodeURIComponent(id)}/renders`, { method: 'POST', body }),
+  perform(`render:${id}`, () => request(`/api/v1/projects/${encodeURIComponent(id)}/renders`, { method: 'POST', body }),
     () => success('成片导出已开始，可在项目预览与成片中查看进度。'));
 });
 $('render-motion-project').addEventListener('click', () => {
@@ -1815,7 +1815,7 @@ $('dismiss-error').addEventListener('click', () => { $('global-error').hidden = 
 async function refresh() {
   $('global-error').hidden = true;
   try {
-    const session = await request('/api/session');
+    const session = await request('/api/v1/session');
     csrfToken = session.csrf_token;
     sessionSettings = session;
     $('session-label').textContent = session.user_id ? '已连接工作台' : '已连接';

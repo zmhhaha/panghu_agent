@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE_ROOTS = ('agent_service', 'video_workbench', 'scientific_agent', 'pi_worker', 'tools', 'scientific_skills')
+SOURCE_ROOTS = ('agent_service', 'video_workbench', 'service_auth', 'scientific_agent', 'pi_worker', 'tools', 'scientific_skills')
 EXECUTOR_DOCKERFILE = 'video_workbench/Dockerfile.animation-creation-executor'
 IMAGE = re.compile(r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}\Z')
 

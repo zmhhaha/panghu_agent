@@ -14,7 +14,7 @@ const animationReady = (run, item) => run.renderer_mode === 'scene-space'
 const uncertain = error => typeof error === 'string' && /uncertain|unconfirmed/.test(error);
 export const productionRunUnresolved = run => Boolean(run?.id && (!TERMINAL.has(run.status)
   || run.blocked_reason || run.draining === true || uncertain(run.error) || run.items?.some(item => uncertain(item.error))));
-const pathFor = id => `/api/projects/${encodeURIComponent(id)}/production-runs`;
+const pathFor = id => `/api/v1/projects/${encodeURIComponent(id)}/production-runs`;
 const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
 const seconds = value => Math.round(value * 1000) / 1000;
 
@@ -197,12 +197,20 @@ export function createProductionRunsPanel({ document, getContext, request, refre
       ? '本次制作仍在等待上游停止或结果确认，已暂停后续任务；请继续读取状态，不要重复制作。'
       : run.error ? productionRunErrorLabel(run.error) : '';
     const previewPrefix=`/api/production-runs/${encodeURIComponent(run.id)}/scene-previews/`;
-    const previews=(run.scene_space?.previews ?? []).filter(item=>item.status==='completed'
-      && typeof item.url==='string' && item.url.startsWith(previewPrefix));
-    const clips=(run.scene_space?.preview_clips ?? []).filter(item=>item.status==='completed'
-      && typeof item.url==='string' && item.url.startsWith(previewPrefix));
+    const publicPreview=item=>{
+      if(typeof item.url!=='string' || !item.url.startsWith(previewPrefix)) return null;
+      const renderId=item.url.slice(previewPrefix.length);
+      // Accept exactly one internal identifier before exposing the public route.
+      if(!renderId || renderId.length>200 || !/^[A-Za-z0-9]/.test(renderId)
+        || /[^A-Za-z0-9_.:-]/.test(renderId)) return null;
+      return {...item,url:`/api/v1/production-runs/${encodeURIComponent(run.id)}/scene-previews/${renderId}`};
+    };
+    const previews=(run.scene_space?.previews ?? []).filter(item=>item.status==='completed')
+      .map(publicPreview).filter(Boolean);
+    const clips=(run.scene_space?.preview_clips ?? []).filter(item=>item.status==='completed')
+      .map(publicPreview).filter(Boolean);
     const history=(run.scene_space?.retained_attempts ?? []).flatMap(attempt=>(attempt.previews ?? [])
-      .filter(item=>typeof item.url==='string' && item.url.startsWith(previewPrefix))
+      .map(publicPreview).filter(Boolean)
       .map(item=>({...item,attempt:attempt.attempt})));
     $('production-run-previews').hidden=!previews.length&&!clips.length&&!history.length;
     $('production-run-preview-images').replaceChildren(...previews.map((item,index)=>{
@@ -242,7 +250,7 @@ export function createProductionRunsPanel({ document, getContext, request, refre
       const key = JSON.stringify([id, run.id, run.draft_render_id]);
       if (mediaKey !== key) {
         pause(); mediaKey = key;
-        const url = `/api/renders/${encodeURIComponent(run.draft_render_id)}/video`;
+        const url = `/api/v1/renders/${encodeURIComponent(run.draft_render_id)}/video`;
         $('production-run-video').src = url;
         $('download-production-run').href = url;
         $('download-production-run').setAttribute('download', `draft-${run.draft_render_id}.mp4`);
@@ -315,7 +323,7 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     if (!run || !['queued', 'running'].includes(run.status) || cancelPending.has(run.id)) return;
     cancelPending.add(run.id); notify();
     try {
-      const result = await request(`/api/production-runs/${encodeURIComponent(run.id)}/cancel`, { method:'POST', body:{} });
+      const result = await request(`/api/v1/production-runs/${encodeURIComponent(run.id)}/cancel`, { method:'POST', body:{} });
       lists.set(id, rowsFor(id).map(row => row.id === result.id ? result : row));
       if (same(value)) onSuccess('已申请取消，将继续查询本次制作的真实状态。');
     } catch (error) {

@@ -52,7 +52,7 @@ export function createExplanationRequest(project, draft) {
     throw new Error('请选择有效的讲述方式。');
   }
   return Object.freeze({
-    path: `/api/projects/${encodeURIComponent(project.id)}/explanation`,
+    path: `/api/v1/projects/${encodeURIComponent(project.id)}/explanation`,
     body: Object.freeze({ expected_revision: project.revision,
       brief: Object.freeze({ audience: draft.audience.trim(), goal: draft.goal.trim(), tone: draft.tone }),
       instruction: draft.instruction.trim() }),
@@ -66,7 +66,7 @@ export function createExplanationAdoption(project, data, version, { unsaved = fa
       || version.adoptable !== true || version.id === data.head_version_id) {
     throw new Error('这份方案当前不能采用，请重新读取或生成匹配当前项目的方案。');
   }
-  return Object.freeze({ path: `/api/projects/${encodeURIComponent(project.id)}/explanation/adopt`,
+  return Object.freeze({ path: `/api/v1/projects/${encodeURIComponent(project.id)}/explanation/adopt`,
     body: Object.freeze({ expected_revision: project.revision, version_id: version.id,
       expected_head_version_id: data.head_version_id ?? null }) });
 }
@@ -283,7 +283,7 @@ export function createExplanationPanel({ document, getContext, request, refresh,
     const read = ++sequence;
     readSequences.set(projectId, read);
     try {
-      const result = await request(`/api/projects/${encodeURIComponent(projectId)}/explanation`);
+      const result = await request(`/api/v1/projects/${encodeURIComponent(projectId)}/explanation`);
       if (!same(context) || readSequences.get(projectId) !== read) return;
       cache.set(projectId, result);
       revisions.set(projectId, context.project.revision);
@@ -370,7 +370,7 @@ export function createExplanationPanel({ document, getContext, request, refresh,
   async function cancel() {
     const context = current(), operation = dataFor(context.project?.id)?.operation;
     if (!context.project || !isActiveOperation(operation) || ['cancelling', 'cancel_requested'].includes(operation.status)) return;
-    await mutate(context, () => request(`/api/explanation-operations/${encodeURIComponent(operation.id)}/cancel`,
+    await mutate(context, () => request(`/api/v1/explanation-operations/${encodeURIComponent(operation.id)}/cancel`,
       { method: 'POST', body: {} }), result => {
       cache.set(context.project.id, { ...dataFor(context.project.id), operation: result });
       onSuccess('已申请取消方案任务，将继续查询真实状态。');

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import html
 import io
 import json
@@ -13,9 +12,9 @@ import zipfile
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, Request, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Query
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
+from service_auth import authenticate, issue_csrf, require_write
 from .agent import VideoAgentGateway
 from .config import (AgentSettings, ExplanationSettings, MotionSettings,
                      ProductionMethodSettings, ProductionAgentSettings, SkillProductionAgentSettings, JointPlanAgentSettings,
@@ -118,6 +118,7 @@ MESSAGES = {
     'unadopted_scenes': '请先为每个镜头采用一个版本，再导出素材。',
     'authentication_required': '请通过已配置身份认证的入口访问。',
     'csrf_rejected': '会话校验失败，请刷新页面后重试。',
+    'origin_rejected': '会话来源校验失败，请刷新页面后重试。',
     'speech_not_configured': '尚未配置配音服务，可以先上传 WAV 录音。',
     'missing_current_audio': '请为每个镜头采用与当前旁白一致的配音。',
     'audio_stale': '这条配音对应旧版旁白或设置，请重新生成或上传。',
@@ -871,38 +872,31 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
-    def csrf(owner):
-        return hmac.new(bytes.fromhex(store.csrf_secret), owner.encode(), 'sha256').hexdigest()
+    def principal(request: Request):
+        return authenticate(request, service='video-service',
+                            local_subject='local-developer' if local_mode else None)
 
-    def identity(request: Request):
-        if local_mode:
-            # The local CLI additionally binds only to loopback.
-            if request.client is None or request.client.host not in {'127.0.0.1', '::1', 'testclient'}:
-                raise ServiceError('authentication_required', 401)
-            return 'local-developer'
-        owner = request.headers.get('x-forwarded-user', '')
-        if not 1 <= len(owner) <= 200 or any(ord(c) < 33 or ord(c) == 127 for c in owner):
-            raise ServiceError('authentication_required', 401)
-        return owner
+    def identity(authenticated=Depends(principal)):
+        return authenticated.subject
 
-    def mutation(request: Request, owner=Depends(identity)):
-        supplied = request.headers.get('x-csrf-token', '')
-        if not re.fullmatch(r'[0-9a-f]{64}', supplied) or not hmac.compare_digest(supplied, csrf(owner)):
-            raise ServiceError('csrf_rejected', 403)
-        origin = request.headers.get('origin')
-        if origin:
-            try:
-                parsed = urlsplit(origin)
-            except ValueError:
-                raise ServiceError('csrf_rejected', 403) from None
-            if origin == 'null' or parsed.scheme not in {'http', 'https'} or parsed.netloc != request.headers.get('host'):
-                raise ServiceError('csrf_rejected', 403)
-        return owner
+    def mutation(request: Request, authenticated=Depends(principal)):
+        origins = None if local_mode else (f'https://{request.headers["host"]}',)
+        require_write(request, authenticated, allowed_origins=origins, local_mode=local_mode)
+        return authenticated.subject
 
     def idempotency(value):
         if value is None or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', value):
             raise ServiceError('idempotency_key_required', 422)
         return value
+
+    learning_owner = os.environ.get('VIDEO_LEARNING_OWNER')
+    if learning_owner:
+        from .animation_method_http import MethodLabClient
+        from .machine_learning_http import register_machine_learning_routes
+        learning_settings = ProductionMethodSettings.from_env()
+        learning_client = (MethodLabClient(learning_settings.base_url, learning_settings.token, timeout=150)
+                           if learning_settings else None)
+        register_machine_learning_routes(app, principal=principal, client=learning_client, owner=learning_owner)
 
     from .production_refinement_http import register_refinement_routes
     register_refinement_routes(app, store=store, sequences=production_sequence_store,
@@ -926,8 +920,16 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         return response
 
     @app.exception_handler(ServiceError)
+    @app.exception_handler(HTTPException)
     async def service_error(request, exc):
-        return JSONResponse({'detail': {'code': exc.code, 'message': MESSAGES.get(exc.code, exc.code)}}, status_code=exc.status)
+        if isinstance(exc, ServiceError):
+            code, status, headers = exc.code, exc.status, None
+        elif isinstance(exc.detail, dict) and isinstance(exc.detail.get('code'), str):
+            code, status, headers = exc.detail['code'], exc.status_code, exc.headers
+        else:
+            return await http_exception_handler(request, exc)
+        return JSONResponse({'detail': {'code': code, 'message': MESSAGES.get(code, code)}},
+                            status_code=status, headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request, exc):
@@ -954,8 +956,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         return {'status': 'ready'}
 
     @app.get('/api/session')
-    def session(owner=Depends(identity)):
-        return dict(user_id=owner, csrf_token=csrf(owner), agent_configured=gateway is not None,
+    def session(request: Request, response: Response, authenticated=Depends(principal)):
+        return dict(user_id=authenticated.subject, csrf_token=issue_csrf(request, response, local_mode=local_mode),
+                    agent_configured=gateway is not None,
                     speech_configured=speech_client is not None,
                     speech_model=speech_client.settings.model if speech_client else None,
                     speech_voice=speech_client.settings.voice if speech_client else None,
