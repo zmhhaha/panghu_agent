@@ -28,8 +28,8 @@ time and stays unchanged. Lost responses inspect the same attempt; they do not
 authorize another PUT. Running workers still require successful observation for
 their existing renewal path.
 
-The final task deadline is independent of a renewable lease. WikiSkill currently
-allows at most 900 seconds of native compilation and 1,200 seconds for publication,
+The final task deadline is independent of a renewable lease. At this repair's
+delivery, WikiSkill revisions 1/2 allowed at most 900 seconds of native compilation and 1,200 seconds for publication,
 with a 250-second collection reserve. Upload and admission consume part of the
 available window. This repair does not extend frozen deadlines or fabricate a
 release from a failed attempt.
@@ -53,6 +53,11 @@ identity hashes each cost about 0.87 seconds and reproduced the original
 `9119ddcce5c8b8035d161bff8c59329575b5bb818cd208fac60c63ce29517a3c`.
 The read-only timing omits advisory lock contention and is not a native authoring
 acceptance test.
+
+The subsequent separately admitted revision 3 gives new publications a 3,600-second
+native maximum and 4,200-second outer window. See
+`wikiskill-hour-budget-validation-20261126.md`. The older clocks described here
+remain frozen for their original revisions and requests.
 
 ## Delivered verification and rollout
 
