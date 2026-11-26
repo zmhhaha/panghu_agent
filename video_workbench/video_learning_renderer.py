@@ -11,12 +11,13 @@ from pathlib import Path
 from agent_service.contracts import digest
 from agent_service.profiles import video_reference_learning as protocol
 from agent_service.profiles import video_animation_method as method
-from .animation_method_renderer import MethodAnimationRenderer, ASSET_SHA256, _require, _read, _json
+from .animation_method_renderer import MethodAnimationRenderer, ASSET_SHA256, MAX_CANVAS_CONTEXTS, _require, _read, _json
 from .learning_drawing_libraries import drawing_libraries, validate_observation
 
 
 HOST = Path(__file__).with_name('video_learning_host.mjs')
 DEFAULT_RENDER_TIMEOUT_SECONDS = 3600
+CANVAS_FRAME_STATE = 'reset-visible-canvas-2d-v1'
 
 
 class VideoLearningRenderer(MethodAnimationRenderer):
@@ -108,9 +109,12 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         binding = super()._snapshot(operation_id, payload, adapter, events,
             deadline_at=deadline_at)
         libraries = adapter['constraints'].get('drawing_libraries')
+        request = binding['request']
         if libraries:
-            request = binding['request']
             request['drawing_libraries'] = libraries
+        if payload['engine'] == 'canvas':
+            request['canvas_frame_state'] = CANVAS_FRAME_STATE
+        if libraries or payload['engine'] == 'canvas':
             request.pop('identity')
             request['identity'] = digest(request)
             binding['request_sha256'] = digest(request)
@@ -132,7 +136,19 @@ class VideoLearningRenderer(MethodAnimationRenderer):
 
     def _outputs(self, root, binding, outcome):
         receipt, raw, audio = super()._outputs(root, binding, outcome)
-        libraries = binding['request'].get('drawing_libraries')
+        request = binding['request']
+        if 'canvas_frame_state' in request:
+            proof = receipt.get('canvas_frame_state')
+            # The idle probe does not seek. The initial reverse check is
+            # recorded separately from the named seek probes.
+            seeks = receipt['frame_count'] + 1 + sum(
+                row.get('kind') != 'idle' for row in receipt['seek_checks']['probes'])
+            _require(type(proof) is dict and set(proof) == {'policy', 'seek_count', 'reset_contexts'}
+                and proof['policy'] == request['canvas_frame_state'] == CANVAS_FRAME_STATE
+                and type(proof['seek_count']) is int and proof['seek_count'] == seeks
+                and type(proof['reset_contexts']) is int and 0 <= proof['reset_contexts'] <= seeks * MAX_CANVAS_CONTEXTS,
+                'video_learning_canvas_frame_state_evidence_invalid', 409)
+        libraries = request.get('drawing_libraries')
         if libraries is not None:
             validate_observation(receipt.get('drawing_library_observation'), libraries)
         else:
@@ -156,12 +172,14 @@ class VideoLearningRenderer(MethodAnimationRenderer):
                 receipt_path=str(root/'work/render-receipt.json'), sha256=result['media']['sha256'],
                 width=binding['request']['constraints']['width'], height=binding['request']['constraints']['height'],
                 duration_seconds=binding['request']['constraints']['duration_seconds'], fps=24)
-            if 'drawing_libraries' in binding['request']:
-                from .animation_method_renderer import _json
+            if 'drawing_libraries' in binding['request'] or 'canvas_frame_state' in binding['request']:
                 receipt, _ = _json(root / 'work/render-receipt.json')
+            if 'drawing_libraries' in binding['request']:
                 value['runtime'].update(
                     drawing_libraries=deepcopy(binding['request']['drawing_libraries']),
                     drawing_library_observation=deepcopy(receipt['drawing_library_observation']))
+            if 'canvas_frame_state' in binding['request']:
+                value['runtime']['canvas_frame_state'] = deepcopy(receipt['canvas_frame_state'])
         return value
 
     def render(self, operation_id, source, document, sound_events=None, *, deadline_at=None, scene_space=None,

@@ -247,14 +247,60 @@ export async function readyLearningHyperFramesProject(page,{projectRuntime,proje
  });
 }
 
-export async function seekLearningHyperFramesProject(page,seconds,{budget}){
+export const CANVAS_FRAME_STATE = 'reset-visible-canvas-2d-v1';
+
+// This setup runs before the measured engine guard captures getContext, so it
+// only records contexts the scene actually creates, with its original options.
+function trackCanvasFrameState() {
+ const contexts=new Map();
+ const getContext=HTMLCanvasElement.prototype.getContext;
+ const reset=CanvasRenderingContext2D.prototype.reset;
+ const boxOf=Element.prototype.getBoundingClientRect;
+ const visible=Element.prototype.checkVisibility;
+ if(typeof reset!=='function'||typeof visible!=='function')throw Error('video_learning_canvas_reset_unavailable');
+ HTMLCanvasElement.prototype.getContext=function(kind,...options){
+  const context=getContext.call(this,kind,...options);
+  if(kind==='2d'&&context)contexts.set(this,context);
+  return context;
+ };
+ Object.defineProperty(window,'__trustedLearningResetCanvasFrame',{
+  value:()=>{
+   let resetCount=0;
+   for(const [canvas,context] of contexts){
+    if(!canvas.isConnected||!visible.call(canvas,{opacityProperty:true,visibilityProperty:true}))continue;
+    const bounds=boxOf.call(canvas);
+    if(bounds.width<=0||bounds.height<=0)continue;
+    reset.call(context);
+    resetCount++;
+   }
+   return resetCount;
+  }
+ });
+}
+
+async function installCaptureGuard(context,engineRuntime,engine,resetCanvas){
+ if(!resetCanvas)return await engineRuntime.installEngineGuard(context,engine);
+ // Compose both initializers into one script. Playwright does not guarantee
+ // the order of independently registered init scripts.
+ await engineRuntime.installEngineGuard({addInitScript:(guard,args)=>
+  context.addInitScript({content:'('+trackCanvasFrameState.toString()+')();\n('+
+   guard.toString()+')('+JSON.stringify(args)+');'})},engine);
+}
+
+export async function seekLearningHyperFramesProject(page,seconds,{budget,resetCanvas=false}){
  if(!finite(seconds)||seconds<0)throw Error('hyperframes_seek_time_invalid');
- return await budget.run('seek',METHOD_STAGE_TIMEOUTS.seek,()=>page.evaluate(async time=>{
+ return await budget.run('seek',METHOD_STAGE_TIMEOUTS.seek,()=>page.evaluate(async ({time,resetCanvas})=>{
   const trusted=window.__trustedHyperFramesProject;
   if(!trusted||time>trusted.project.duration_seconds||typeof window.__trustedHyperFramesSeek!=='function')
    throw Error('hyperframes_project_seek_invalid');
-  return await window.__trustedHyperFramesSeek(time);
- },seconds));
+  let resetContexts;
+  if(resetCanvas){
+   if(typeof window.__trustedLearningResetCanvasFrame!=='function')throw Error('video_learning_canvas_reset_unavailable');
+   resetContexts=window.__trustedLearningResetCanvasFrame();
+  }
+  const result=await window.__trustedHyperFramesSeek(time);
+  return resetCanvas?{...result,reset_contexts:resetContexts}:result;
+ },{time:seconds,resetCanvas}));
 }
 
 // Only trusted callers supply the browser and measured engine-runtime module.
@@ -271,6 +317,9 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
  if(resourceAware)validateGeneratedResources(request,resources);
  const c=request.constraints,count=c.duration_seconds*24,extended=projectAware||request.schema==='video.animation-method-render-request.v2';
  const engine=extended?request.engine:'html-svg';
+ const resetCanvas=request.canvas_frame_state===CANVAS_FRAME_STATE;
+ if(request.canvas_frame_state!==undefined&&(!resetCanvas||!projectAware||engine!=='canvas'))
+  throw Error('video_learning_canvas_frame_state_invalid');
  let projectRuntime,coreRuntime,project;
  if(projectAware){
   const adjacent=new URL('./hyperframes_project.mjs',import.meta.url);
@@ -303,7 +352,7 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-background-networking']}));
   const context=await stage('browser_setup',()=>browser.newContext({viewport:{width:c.width,height:c.height},
    deviceScaleFactor:1,serviceWorkers:'block',acceptDownloads:false}));
-  if(extended)await stage('browser_setup',()=>engineRuntime.installEngineGuard(context,engine));
+  if(extended)await stage('browser_setup',()=>installCaptureGuard(context,engineRuntime,engine,resetCanvas));
   const blocked=budget.state.blocked,errors=budget.state.page_errors,scripts=new Set(),loadedPNG=new Set();
   const assertScene=()=>{if(errors.length||blocked.length)throw Error('method_scene_failed_or_blocked');};
   await stage('browser_setup',()=>context.route('**/*',async route=>{
@@ -366,11 +415,17 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
    };
   }
   mkdirSync(join(root,'frames'));
-  const frames=[];let evidenceBytes=0;
+  const frames=[];let evidenceBytes=0,canvasSeeks=0,resetContexts=0;
   const capture=async(time,name,{seek=true}={})=>{
    budget.state.frame={index:Math.round(time*24),timestamp_seconds:time,name};
    if(seek){
-    if(projectAware)await seekLearningHyperFramesProject(page,time,{budget});
+    if(projectAware){
+     const result=await seekLearningHyperFramesProject(page,time,{budget,resetCanvas});
+     if(resetCanvas){
+      canvasSeeks++;
+      resetContexts+=result.reset_contexts;
+     }
+    }
     else await stage('seek',()=>page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time));
    }
    assertScene();await stage('engine_check',checkRuntime);assertScene();
@@ -423,6 +478,7 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   }
   if (drawingLibraries) drawingFunctions = await stage('coverage',()=>collectDrawingExecution(security, origin, drawingFunctions));
   return {frames,frame_count:count,reverse_seek_verified:true,
+   ...(resetCanvas?{canvas_frame_state:{policy:CANVAS_FRAME_STATE,seek_count:canvasSeeks,reset_contexts:resetContexts}}:{}),
    ...(drawingLibraries?{drawing_library_observation:{schema:'video.learning-drawing-library-observation.v1',
     scope:'loaded_scripts_not_api_calls_or_visual_application',drawing_libraries:drawingLibraries,
     api_execution:drawingExecution(drawingFunctions),

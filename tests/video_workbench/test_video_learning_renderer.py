@@ -8,7 +8,7 @@ import pytest
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_reference_learning as protocol
 from video_workbench import animation_method_renderer as shared
-from video_workbench.video_learning_renderer import VideoLearningRenderer
+from video_workbench.video_learning_renderer import CANVAS_FRAME_STATE, VideoLearningRenderer
 from test_animation_method_renderer import IMAGE, SOURCE, SyntheticExecution
 
 
@@ -27,12 +27,16 @@ def source():
 
 
 class VideoExecution(SyntheticExecution):
+    canvas_proof = None
+
     def __call__(self, root):
         result=super().__call__(root)
         if self.failure:
             return result
         request=json.loads((root/'input/request.json').read_bytes())
         receipt=json.loads((root/'work/render-receipt.json').read_bytes())
+        if self.canvas_proof is not None:
+            receipt['canvas_frame_state'] = self.canvas_proof
         receipt.update(schema='video.animation-method-render-receipt.v3',
             project_runtime_sha256=request['project_runtime_sha256'],project_runtime=dict(
                 schema='video.hyperframes-project-runtime-proof.v1',project_id=request['project']['project_id'],
@@ -72,6 +76,29 @@ def test_complete_hyperframes_mp4_retains_original_timed_input_and_no_watch_clai
     assert binding['learning_source_sha256']==source()['source_sha256']
     assert result==value.render('render',source(),document())==value.recover('render')
     assert execute.calls==1
+
+
+def test_canvas_capture_policy_is_bound_and_proof_required(renderer, monkeypatch):
+    value, execute = renderer
+    monkeypatch.setattr(value, 'candidate_engines', ('canvas',))
+    candidate = source()
+    candidate['engine'] = 'canvas'
+    candidate['source_sha256'] = protocol.source_sha256(candidate)
+    learning = document()
+    learning['constraints']['allowed_engines'] = ['canvas']
+    execute.canvas_proof = dict(policy=CANVAS_FRAME_STATE, seek_count=29, reset_contexts=29)
+    result = value.render('canvas', candidate, learning)
+    root = value._directory('canvas')
+    request = json.loads((root/'input/request.json').read_bytes())
+    assert request['canvas_frame_state'] == CANVAS_FRAME_STATE
+    assert result['runtime']['canvas_frame_state'] == execute.canvas_proof
+    assert value.recover('canvas') == result
+    path = root/'work/render-receipt.json'
+    receipt = json.loads(path.read_bytes())
+    del receipt['canvas_frame_state']
+    path.write_bytes(canonical_bytes(receipt))
+    with pytest.raises(ServiceError, match='video_learning_canvas_frame_state_evidence_invalid'):
+        value.recover('canvas')
 
 
 def test_video_capture_defaults_to_one_hour_without_inheriting_the_method_timeout(tmp_path):
