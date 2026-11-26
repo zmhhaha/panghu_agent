@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ import pytest
 from agent_service.contracts import InlineFile, ServiceError, canonical_bytes, digest
 from agent_service.engines import StopEvidence
 from agent_service.profiles import implementation, video_reference_learning as protocol
+from agent_service.profiles.video_learning_source_handoff import SOURCE_HANDOFF
 from agent_service.reference_learning_tools import verified_extensions
 from video_workbench.animation_knowledge import AnimationKnowledgeStore
 from video_workbench.video_learning_gateway import VideoLearningAuthorGateway, VideoLearningReviewGateway
@@ -112,19 +114,43 @@ def test_comparison_requires_supplied_baseline_and_finite_enum():
     assert protocol.validate_result(out, digest(value), value) == out
 
 
-def test_collector_computes_actual_source_identity_and_requires_proven_stop(tmp_path):
+@pytest.mark.parametrize('file_handoff', [False, True])
+def test_collector_computes_actual_source_identity_and_requires_proven_stop(tmp_path, file_handoff):
     value = document()
+    task_fields = {}
+    if file_handoff:
+        task_fields['source_handoff'] = SOURCE_HANDOFF
+        value.update(task_fields)
     stage(tmp_path, value)
     out = result(value)
-    expected_sha = out['source'].pop('source_sha256')
+    expected = out['source']
+    expected['files']['scene.js'] = 'const label = "引号 \\u6c34";\r\nwindow.__animationExperiment = {seek(t){}};\n'
+    expected['source_sha256'] = protocol.source_sha256(expected)
+    deferred = out['source'] = deepcopy(expected)
+    del deferred['source_sha256']
+    if file_handoff:
+        directory = tmp_path / 'output-source'
+        directory.mkdir()
+        files = deferred.pop('files')
+        for name, content in files.items():
+            (directory / name).write_bytes(content.encode('utf-8'))
+        deferred['file_names'] = list(files)
     (tmp_path / 'output.json').write_bytes(canonical_bytes(out))
     attempt = str(uuid4())
     envelope = SimpleNamespace(profile=protocol.AUTHOR_PROFILE, profile_revision='1', attempt_id=attempt,
-        task=dict(input_sha256=digest(value)), checkpoint_ref=None, checkpoint_inputs=[], inputs=[
+        task=dict(input_sha256=digest(value), **task_fields), checkpoint_ref=None, checkpoint_inputs=[], inputs=[
             InlineFile.from_bytes(protocol.INPUT_NAME, canonical_bytes(value)), InlineFile.from_bytes('reference.png', PNG)])
     stopped = StopEvidence(execution_id=attempt, all_writers_stopped=True, resource_ids=('fixture-writer',))
-    collected = protocol.VideoReferenceLearningProfile().collect_output(tmp_path, envelope, stopped)
-    assert json.loads(collected[0].content())['source']['source_sha256'] == expected_sha
+    profile = protocol.VideoReferenceLearningProfile()
+    assert ('output-source/scene.html' in profile.build_prompt(envelope.task)) == file_handoff
+    assert ('"file_names":["scene.html","scene.js"]' in profile.build_prompt(envelope.task)) == file_handoff
+    collected = profile.collect_output(tmp_path, envelope, stopped)
+    assert json.loads(collected[0].content())['source'] == expected
+    if file_handoff:
+        del envelope.task['source_handoff']
+        with pytest.raises(ServiceError, match='input_binding_mismatch'):
+            profile.collect_output(tmp_path, envelope, stopped)
+        envelope.task.update(task_fields)
     unsafe = StopEvidence(execution_id=attempt, all_writers_stopped=False, resource_ids=('fixture-writer',))
     with pytest.raises(ServiceError, match='writers_not_stopped'):
         protocol.VideoReferenceLearningProfile().collect_output(tmp_path, envelope, unsafe)
@@ -193,6 +219,76 @@ def test_gateway_author_uploads_actual_reference_and_rejects_changed_bytes_befor
     with pytest.raises(ServiceError, match='frame_integrity'):
         gateway._files(value, files)
     assert VideoLearningReviewGateway.visual_input is VideoLearningAuthorGateway.visual_input is True
+
+
+@pytest.mark.parametrize('file_handoff', [False, True])
+def test_author_gateway_relays_the_handoff_from_frozen_input(file_handoff):
+    value = document()
+    if file_handoff:
+        value['source_handoff'] = SOURCE_HANDOFF
+    requests = []
+
+    def submit(request, *, idempotency_key):
+        requests.append(request)
+        return dict(job_id=str(uuid4()), state='queued', business_ref=request['business_ref'],
+                    publication_authorized=False)
+
+    gateway = VideoLearningAuthorGateway(SimpleNamespace(submit=submit))
+    gateway.preflight = lambda deadline: dict(max_timeout_seconds=60)
+    refs = [dict(input_id=str(uuid4()), sha256=digest(value), path=protocol.INPUT_NAME,
+                 role=gateway.input_role),
+            dict(input_id=str(uuid4()), sha256=hashlib.sha256(PNG).hexdigest(),
+                 path='reference.png', role='animation_frame')]
+    gateway.submit('author-fixture', value, time.time() + 60, refs)
+    task = requests[0]['task']
+    assert task['input_sha256'] == digest(value)
+    assert task.get('source_handoff') == value.get('source_handoff')
+    assert ('source_handoff' in task) == file_handoff
+
+
+@pytest.mark.parametrize('files', [[], ['scene.js'], ['scene.html', 'scene.html'],
+    ['scene.html', '../scene.js'], ['scene.html', ['scene.js']],
+    {'scene.html': 'inlined source'}])
+def test_workspace_manifest_requires_unique_supported_source_filenames(tmp_path, files):
+    from agent_service.profiles.video_learning_source_handoff import collect_source
+
+    out = dict(source=dict(engine='canvas', strategy={}, file_names=files))
+    with pytest.raises(ServiceError, match='learning_source_manifest_invalid'):
+        collect_source(tmp_path, out, file_handoff=True)
+
+
+def test_workspace_manifest_requires_real_utf8_files(tmp_path):
+    from agent_service.profiles.video_learning_source_handoff import collect_source
+
+    out = dict(source=dict(engine='canvas', strategy={}, file_names=['scene.html']))
+    with pytest.raises(ServiceError, match='learning_source_file_invalid'):
+        collect_source(tmp_path, out, file_handoff=True)
+    directory = tmp_path / 'output-source'
+    directory.mkdir()
+    (directory / 'scene.html').write_bytes(b'\xff')
+    with pytest.raises(ServiceError, match='learning_source_utf8_invalid'):
+        collect_source(tmp_path, out, file_handoff=True)
+
+
+@pytest.mark.parametrize('raw,reason',[
+    (b'{"private-field":"literal\nnewline"}', 'json_syntax'),
+    (b'{"private-field":1,"private-field":2}', 'duplicate_key'),
+    (b'{"private-field":1e999}', 'non_finite_number'),
+])
+def test_workspace_metadata_errors_reach_worker_diagnostics_without_raw_text(tmp_path, raw, reason):
+    from agent_service.diagnostics import SAFE_OUTPUT_CODES
+    from agent_service.profiles.video_learning_source_handoff import read_manifest
+    from agent_service.worker_api import _output_failure_diagnostic
+
+    with pytest.raises(ServiceError, match='learning_output_manifest_file_invalid'):
+        read_manifest(tmp_path, 1024)
+    (tmp_path / 'output.json').write_bytes(raw)
+    with pytest.raises(ServiceError, match='learning_output_json_invalid') as caught:
+        read_manifest(tmp_path, 1024)
+    assert caught.value.code in SAFE_OUTPUT_CODES
+    diagnostic = _output_failure_diagnostic('collect_output', caught.value)
+    assert diagnostic['classification'] == 'invalid_json' and diagnostic['reason'] == reason
+    assert 'private-field' not in json.dumps(diagnostic)
 
 
 def test_actual_tools_deliver_all_images_but_only_requested_frozen_knowledge(tmp_path):

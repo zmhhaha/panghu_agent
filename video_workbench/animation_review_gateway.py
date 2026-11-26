@@ -13,6 +13,7 @@ import time
 from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.profiles import video_animation_review as visual
 from agent_service.profiles import video_animation_create as creation
+from agent_service.profiles.video_learning_source_handoff import task_for_input
 from .agent import _finite_number, _sha, _uuid
 from .motion_gateway import MotionAgentGateway
 from .animation_observation import MAX_FRAME_TOTAL_BYTES
@@ -114,7 +115,7 @@ class _AnimationGateway(MotionAgentGateway):
         _require(remaining > 0, 'animation_deadline_expired', 409)
         request = dict(api_version='1', profile=self.profile, profile_revision=self.profile_revision,
             business_ref=self.business_prefix + operation_id,
-            task=dict(input_sha256=hashlib.sha256(raw).hexdigest()), inputs=[dict(ref) for ref in input_refs],
+            task=task_for_input(document, expected[self.input_name]), inputs=[dict(ref) for ref in input_refs],
             execution_deadline_at=deadline_at,
             timeout_seconds=min(self.task_timeout_seconds, route['max_timeout_seconds'], math.ceil(remaining)))
         def admit():

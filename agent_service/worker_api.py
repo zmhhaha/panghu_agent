@@ -37,7 +37,8 @@ from .worker_events import OUTPUT_FAILURE_STAGES, JSON_FAILURE_REASONS
 
 _SCHEMA_OUTPUT_CODES = frozenset({'reference_learning_protocol_invalid','reference_learning_result_binding_mismatch',
     'reference_learning_input_binding_mismatch','reference_learning_source_changed','invalid_video_source',
-    'worker_output_invalid'})
+    'learning_source_manifest_invalid', 'learning_source_utf8_invalid', 'worker_output_invalid'})
+_FILE_OUTPUT_CODES = frozenset({'learning_output_manifest_file_invalid', 'learning_source_file_invalid'})
 
 
 def _output_failure_diagnostic(stage, error):
@@ -47,13 +48,13 @@ def _output_failure_diagnostic(stage, error):
     code = getattr(error, 'code', None)
     diagnostic = dict(stage=stage if type(stage) is str and stage in OUTPUT_FAILURE_STAGES else 'unknown',
         classification='handoff_failure')
-    if code == 'invalid_video_json' or isinstance(error, json.JSONDecodeError):
+    if code in ('invalid_video_json', 'learning_output_json_invalid') or isinstance(error, json.JSONDecodeError):
         diagnostic['classification'] = 'invalid_json'
         reason = details.get('reason')
         diagnostic['reason'] = reason if type(reason) is str and reason in JSON_FAILURE_REASONS else 'strict_json'
     elif type(code) is str and code in _SCHEMA_OUTPUT_CODES:
         diagnostic['classification'] = 'invalid_output_contract'
-    elif isinstance(error, OSError):
+    elif isinstance(error, OSError) or (type(code) is str and code in _FILE_OUTPUT_CODES):
         diagnostic['classification'] = 'output_io_failure'
     for key in ('line','column','offset'):
         value = details.get(key, getattr(error, {'line':'lineno','column':'colno','offset':'pos'}[key], None))

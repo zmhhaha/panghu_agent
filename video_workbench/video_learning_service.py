@@ -14,6 +14,7 @@ import time
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_reference_learning as protocol
+from agent_service.profiles.video_learning_source_handoff import AUTHOR_PROMPT
 from .picture_learning_service import PictureLearningService, _text
 from .picture_learning_store import identifier, new_id, owner_id, require
 from .video_learning_store import VideoLearningStore
@@ -26,10 +27,12 @@ from .remote_reference_service import remote_reference, MAX_SOURCE_SECONDS
 PREFIX = '/api/video-lab'
 
 
-def author_output_contract():
-    """Input guidance, including when the admitted worker keeps an older image."""
+def author_output_contract(*, file_handoff=False):
+    """Describe the author handoff selected for this input."""
+    serialization = (AUTHOR_PROMPT.strip() if file_handoff else
+        'Return one strict JSON object. Source files are JSON string values: escape embedded LF as \\n, quotes and backslashes. Do not hand-concatenate unescaped JavaScript into JSON.')
     return dict(schema='video.reference-learning-author-output-guide.v1', instructions=[
-        'Return one strict JSON object. Source files are JSON string values: escape embedded LF as \\n, quotes and backslashes. Do not hand-concatenate unescaped JavaScript into JSON.',
+        serialization,
         'Use actual read_inputs input_sha256 for the result binding. Copy supplied image IDs and SHA-256 values exactly, without shortening or regenerating hashes.',
         'If method.scene_space is supplied, follow constraints.scene_space_learning exactly. Every stage evidence ID must also occur in its declared source.frame_ids; transformed object bounds must fit the world or declare supported overflow.',
         'Check the complete result structure and string escaping before the final write. This checklist grants no shell, serialization or validation tool; do not claim a check ran unless an admitted tool actually executed it.',
@@ -260,6 +263,10 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
         elif mode=='create':
             document['constraints']['output_contract'] = author_output_contract()
         return self._remote_document(run, self._render_repair_document(run, document))
+
+    def _prepare_author_operation_input(self, document):
+        super()._prepare_author_operation_input(document)
+        document['constraints']['output_contract'] = author_output_contract(file_handoff=True)
 
     def _agent(self, run, operation):
         super()._agent(run, operation)

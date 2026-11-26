@@ -29,6 +29,7 @@ from agent_service.profiles import implementation
 from agent_service.profiles.video import decode_video_json
 from agent_service.profiles.video_animation_create import source_sha256
 from agent_service.profiles.video_animation_review import _image_header
+from agent_service.profiles.video_learning_source_handoff import task_for_input
 from agent_service.registry import binding_fingerprint, required_model_capabilities
 from agent_service.worker_entry import HostConfig, _host_registry, accepted_host, host_policy
 from video_workbench.animation_candidate_import import EXPORT_NAMES, _pod
@@ -248,7 +249,7 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir=None, rend
             'reference_learning_admission_input_mismatch')
     document = method.validate_input(decode_video_json(inputs[method.INPUT_NAME]))
     require(inputs[method.INPUT_NAME] == canonical_bytes(document)
-        and envelope.task == {'input_sha256':digest(document)}
+        and envelope.task == task_for_input(document, digest(document))
         and (document['mode'] != 'create') == (profile == method.REVIEW_PROFILE),
         'reference_learning_admission_input_mismatch')
     require(set(inputs) == {method.INPUT_NAME, *[f['file_name'] for f in document['observation']['frames']]},
