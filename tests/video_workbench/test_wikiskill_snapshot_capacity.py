@@ -158,7 +158,11 @@ def test_capacity_job_freezes_revision_and_restart_replays_without_recapture_or_
     gateway = UnpaidGateway()
     coordinator = WikiSkillCoordinator(store, gateway, lambda owner: complete_library, clock=lambda: 1000.)
     request = dict(request_id=str(uuid4()), note='Explicit isolated capacity fixture')
-    created = coordinator.start('publisher', request)
+    # Keep the existing capacity-only contract frozen while new manual
+    # publications select the separately admitted hour-budget revision.
+    snapshot = C.make_snapshot('publisher', complete_library, captured_at=1000., compilation_revision='2')
+    created = store.create('publisher', request, snapshot,
+        C.build_input(snapshot, note=request['note'], compilation_revision='2'), compilation_revision='2')
     assert created['compiler_revision'] == '2' and created['state'] == 'queued'
     assert not gateway.selected and not gateway.uploaded
     frozen = store.snapshot('publisher', created['snapshot_id'], compilation_revision='2')

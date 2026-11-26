@@ -63,7 +63,7 @@ def sha(raw):
 
 def _bundle(package, registry, binding, policy):
     require(binding.profile in PROFILES and (binding.profile_revision == '1'
-        or binding.profile == PROFILES[4] and binding.profile_revision == '2')
+        or binding.profile == PROFILES[4] and binding.profile_revision in {'2', '3'})
         and policy.revision == binding.profile_revision, 'wikiskill_admission_profile_not_allowed')
     module, handler = profile_module(binding.profile), implementation(binding.profile, binding.profile_revision)
     contract = registry.contract(binding.profile, binding.profile_revision)
@@ -72,6 +72,8 @@ def _bundle(package, registry, binding, policy):
     tools = set(handler.required_tools)
     require(contract.task_schema == handler.task_schema and contract.output_schema == handler.output_schema
         and all(getattr(contract, key) == value for key, value in handler.limits.as_dict().items())
+        and (binding.profile != PROFILES[4] or binding.profile_revision != '3'
+            or contract.max_timeout_seconds == handler.max_timeout_seconds == 3600)
         and set(environment.capabilities) == {handler.output_schema},
         'wikiskill_admission_contract_mismatch')
     require(bundle.name == bundle.revision == module.BUNDLE_REVISION
@@ -84,7 +86,7 @@ def _bundle(package, registry, binding, policy):
             and sha(_capture(package, 'skill_tools_extension.mjs', 128 * 1024)) == SKILL_TOOLS_EXTENSION_SHA256,
             'wikiskill_admission_tools_mismatch')
     elif binding.profile == PROFILES[4]:
-        capacity = binding.profile_revision == '2'
+        capacity = binding.profile_revision in {'2', '3'}
         require(environment.name == (COMPILATION_CAPACITY_ENVIRONMENT_NAME if capacity else COMPILATION_CHECKED_ENVIRONMENT_NAME)
             and tools == {'read_compilation_input', 'write', 'check_compilation_output'}
             and (not capacity or bool(COMPILATION_CAPACITY_FILES)
@@ -135,7 +137,7 @@ def _bundle(package, registry, binding, policy):
 def _role_capture(root, envelope, result, raw):
     """Bind exact new-role inputs, stopped artifacts and host-owned tool evidence."""
     require(envelope.profile in PROFILES and (envelope.profile_revision == '1'
-        or envelope.profile == PROFILES[4] and envelope.profile_revision == '2'),
+        or envelope.profile == PROFILES[4] and envelope.profile_revision in {'2', '3'}),
         'wikiskill_admission_profile_not_allowed')
     module, handler = profile_module(envelope.profile), implementation(envelope.profile, envelope.profile_revision)
     inputs = {item.name: item.content() for item in envelope.inputs}
@@ -206,7 +208,7 @@ def assess_candidate(candidate_dir, *, source_root=None):
     require(all(type(value) is dict for value in docs.values()))
     envelope, result = verify_parent({name:docs[name] for name in PARENT_FILES.values()})
     require(envelope.profile in PROFILES and (envelope.profile_revision == '1'
-        or envelope.profile == PROFILES[4] and envelope.profile_revision == '2') and envelope.engine == 'pi'
+        or envelope.profile == PROFILES[4] and envelope.profile_revision in {'2', '3'}) and envelope.engine == 'pi'
         and not envelope.checkpoint_inputs and envelope.checkpoint_ref is None,
         'wikiskill_admission_profile_not_allowed')
     profile, proof = envelope.profile, result.stop_receipt

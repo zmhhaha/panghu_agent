@@ -27,6 +27,9 @@ STATES = TERMINAL | {'queued', 'uploading', 'prepared', 'submitting', 'running',
 PUBLICATION_SECONDS = 1200
 PUBLICATION_TIMING = dict(schema='video.animation-wikiskill-publication-timing.v1',
     publication_seconds=PUBLICATION_SECONDS, native_max_seconds=900, collection_reserve_seconds=250)
+EXTENDED_PUBLICATION_SECONDS = 4200
+EXTENDED_PUBLICATION_TIMING = dict(schema='video.animation-wikiskill-publication-timing.v2',
+    publication_seconds=EXTENDED_PUBLICATION_SECONDS, native_max_seconds=3600, collection_reserve_seconds=450)
 _TABLES = {'wikiskill_snapshots', 'wikiskill_jobs', 'wikiskill_releases',
            'wikiskill_active', 'wikiskill_activations'}
 
@@ -42,18 +45,21 @@ def _json(value):
 
 def collection_reserve_seconds(operation):
     """New jobs reserve collection time; historical jobs keep their exact clocks."""
+    revision = stored_compiler_revision(operation)
     if 'publication_timing' not in operation:
+        require(revision != '3', 'animation_wikiskill_publication_timing_invalid', 409)
         return None
-    require(operation['publication_timing'] == PUBLICATION_TIMING
-        and operation['deadline_at'] == operation['created_at'] + PUBLICATION_SECONDS,
+    expected = EXTENDED_PUBLICATION_TIMING if revision == '3' else PUBLICATION_TIMING
+    require(operation['publication_timing'] == expected
+        and operation['deadline_at'] == operation['created_at'] + expected['publication_seconds'],
         'animation_wikiskill_publication_timing_invalid', 409)
-    return PUBLICATION_TIMING['collection_reserve_seconds']
+    return expected['collection_reserve_seconds']
 
 
 def stored_compiler_revision(operation):
     """Missing markers belong to the unchanged historical compiler contract."""
     revision = operation.get('compiler_revision', '1')
-    require(type(revision) is str and revision in {'1', '2'},
+    require(type(revision) is str and revision in {'1', '2', '3'},
             'animation_wikiskill_compiler_revision_invalid', 409)
     return revision
 
@@ -150,14 +156,15 @@ class AnimationWikiSkillStore:
                 (owner,)).fetchone()
             require(active_job is None, 'animation_wikiskill_publication_in_progress', 409)
             now, job_id = self.clock(), str(uuid4())
+            timing = EXTENDED_PUBLICATION_TIMING if compilation_revision == '3' else PUBLICATION_TIMING
             value = dict(schema=JOB_SCHEMA, id=job_id, owner=owner, request_id=request['request_id'],
                 request_sha256=fingerprint, state='queued', snapshot_id=snapshot['id'],
                 snapshot_sha256=snapshot['sha256'], input_sha256=digest(document),
                 operation_id=job_id, job_id=None, release_id=None, error=None,
                 created_at=now, updated_at=now, input_document=document, input_refs=None,
                 remote_state=None, remote_stop_proven=False, remote_receipt=None,
-                submission_attempted=False, deadline_at=now + PUBLICATION_SECONDS,
-                publication_timing=deepcopy(PUBLICATION_TIMING))
+                submission_attempted=False, deadline_at=now + timing['publication_seconds'],
+                publication_timing=deepcopy(timing))
             if compilation_revision != '1':
                 value['compiler_revision'] = compilation_revision
             db.execute('INSERT INTO wikiskill_snapshots VALUES (?,?,?,?)',

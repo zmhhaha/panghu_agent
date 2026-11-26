@@ -45,10 +45,16 @@ def require(condition, code='animation_wikiskill_invalid', status=422):
 
 
 def compilation_limits(compilation_revision='1'):
-    require(type(compilation_revision) is str and compilation_revision in {'1', '2'},
+    require(type(compilation_revision) is str and compilation_revision in {'1', '2', '3'},
         'animation_wikiskill_compilation_revision_invalid')
     return (SNAPSHOT_MAX_BYTES, INPUT_TOTAL_MAX_BYTES) if compilation_revision == '1' else (
         CAPACITY_SNAPSHOT_MAX_BYTES, CAPACITY_INPUT_TOTAL_MAX_BYTES)
+
+
+def compilation_native_max_seconds(compilation_revision='1'):
+    """Only the explicit third compiler contract receives the hour budget."""
+    compilation_limits(compilation_revision)
+    return 3600 if compilation_revision == '3' else 900
 
 
 def text(value, maximum=400, *, empty=False):

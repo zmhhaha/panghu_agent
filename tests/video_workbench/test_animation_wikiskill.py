@@ -103,6 +103,15 @@ def start(work, owner='publisher'):
     return work[2].start(owner, {'request_id': str(uuid4())})
 
 
+def historical_start(work, revision='2'):
+    """Freeze an older admitted contract explicitly, independently of defaults."""
+    store, _, coordinator, _ = work
+    frozen = C.make_snapshot('publisher', coordinator.capture('publisher'),
+        captured_at=coordinator.clock(), compilation_revision=revision)
+    return store.create('publisher', dict(request_id=str(uuid4())), frozen,
+        C.build_input(frozen, compilation_revision=revision), compilation_revision=revision)
+
+
 def finish(work, job):
     store, gateway, coordinator, _ = work
     for _ in range(5):
@@ -220,10 +229,10 @@ def test_post_start_is_unpaid_reads_are_passive_and_replay_does_not_recapture(wo
         start(work)
 
 
-def test_new_publication_reserves_collection_time_and_replay_preserves_budget(work):
+def test_frozen_revision_two_reserves_collection_time_and_replay_preserves_budget(work):
     from video_workbench.animation_wikiskill_store import PUBLICATION_TIMING
     store, gateway, coordinator, captures = work
-    job = start(work)
+    job = historical_start(work)
     assert job['deadline_at'] == job['created_at'] + 1200
     assert job['publication_timing'] == PUBLICATION_TIMING
     restarted = WikiSkillCoordinator(AnimationWikiSkillStore(store.path, clock=lambda: 1100.),
@@ -243,7 +252,7 @@ def test_new_publication_reserves_collection_time_and_replay_preserves_budget(wo
 
 def test_legacy_publication_keeps_original_900_second_clock_and_gateway_call(work):
     store, gateway, _, captures = work
-    job = start(work)
+    job = historical_start(work, '1')
     # Seed an old persisted record in this isolated test DB. Deployment code
     # never rewrites a historical job or adds the new marker to one.
     with store._transaction() as db:
@@ -265,9 +274,9 @@ def test_legacy_publication_keeps_original_900_second_clock_and_gateway_call(wor
     assert captures == ['publisher']
 
 
-def test_new_publication_does_not_consume_collection_reserve_before_admission(work):
+def test_frozen_revision_two_does_not_consume_collection_reserve_before_admission(work):
     store, gateway, coordinator, _ = work
-    job = start(work)
+    job = historical_start(work)
     store.clock = coordinator.clock = lambda: 1950.
     failed = coordinator.advance('publisher', job['id'])
     assert failed['state'] == 'failed' and not gateway.uploads and not gateway.submissions
@@ -279,7 +288,7 @@ def test_collection_has_separate_outer_window_and_cannot_publish_after_it(work, 
     store, gateway, coordinator, _ = work
     finish(work, start(work))
     previous = store.active('publisher')
-    job = start(work)
+    job = historical_start(work)
     coordinator.advance('publisher', job['id'])
     coordinator.advance('publisher', job['id'])
     gateway.jobs[job['operation_id']].update(state='completed', stop_proven=True)

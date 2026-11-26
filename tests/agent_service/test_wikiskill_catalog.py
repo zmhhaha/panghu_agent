@@ -129,6 +129,43 @@ def test_capacity_contract_is_additive_and_preserves_historical_v4_authority():
     assert receipt['profile_revision'] == '2' and receipt['acceptance_created'] is False
 
 
+def test_hour_budget_is_additive_and_reuses_exact_capacity_tools_and_bundle():
+    from agent_service.compilation_input_tools import COMPILATION_CAPACITY_ENVIRONMENT_NAME
+    profile = 'video.animation-wikiskill-compile.v4'
+    original, _, _ = prepare(profile)
+    capacity, old_hosts, previous_receipt = prepare(profile, original, profile_revision='2')
+    frozen = deepcopy(capacity)
+    extended, hosts, receipt = prepare(profile, capacity, profile_revision='3')
+    assert capacity == frozen
+    for section in (*CATALOG_KEYS, 'kubernetes_workers', 'callers'):
+        assert extended[section][:len(frozen[section])] == frozen[section]
+    admitted = registry(extended)
+    assert admitted.contract(profile, '1').max_timeout_seconds == 900
+    assert admitted.contract(profile, '2').max_timeout_seconds == 900
+    assert admitted.contract(profile, '3').max_timeout_seconds == 3600
+    previous, current = old_hosts[profile]['execution_catalog'], hosts[profile]['execution_catalog']
+    assert current['capability_bundles'] == previous['capability_bundles']
+    assert current['tool_environments'] == previous['tool_environments']
+    assert current['tool_environments'][0]['name'] == COMPILATION_CAPACITY_ENVIRONMENT_NAME
+    config, policy, binding = candidate_config(hosts[profile])
+    assert config.profile.revision == policy.revision == binding.profile_revision == '3'
+    assert policy.max_timeout_seconds == 3600 and policy.max_input_total_bytes == 64 * 1024 * 1024
+    assert not policy.enabled and binding.acceptance is None
+    assert receipt['profile_revision'] == '3' and receipt['acceptance_created'] is False
+    assert receipt['combination_sha256'] != previous_receipt['combination_sha256']
+
+
+@pytest.mark.parametrize('native_max', [900, 3599, 3601])
+def test_registry_cannot_reinterpret_revision_three_as_another_native_budget(native_max):
+    from agent_service.registry import TaskContract
+    profile = 'video.animation-wikiskill-compile.v4'
+    _, hosts, _ = prepare(profile, profile_revision='3')
+    changed = deepcopy(hosts[profile]['execution_catalog']['task_contracts'][0])
+    changed['max_timeout_seconds'] = native_max
+    with pytest.raises(ValueError):
+        TaskContract.model_validate(changed)
+
+
 def test_v2_preparation_rejects_changed_fixed_input_reader(tmp_path, monkeypatch):
     from agent_service import compilation_input_tools
     changed = tmp_path / 'read_compilation_input_extension.mjs'

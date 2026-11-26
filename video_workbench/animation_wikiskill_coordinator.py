@@ -31,7 +31,7 @@ class WikiSkillCoordinator:
             if prior['request_sha256'] != digest(request):
                 raise ServiceError('animation_wikiskill_request_conflict', 409)
             return prior
-        revision = '2'
+        revision = '3'
         snapshot = make_snapshot(owner, self.capture(owner), captured_at=self.clock(),
                                  compilation_revision=revision)
         document = build_input(snapshot, note=request['note'], compilation_revision=revision)
