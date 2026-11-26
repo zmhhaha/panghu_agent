@@ -1,0 +1,98 @@
+{
+  "schema": "video.spatial-foundation-validation.v1",
+  "branch": "codex/video-spatial-foundation-20261126",
+  "base_before_final_commit": "67e367b266dfaa49b604cbe5639c177955e1f898",
+  "primary_python": {
+    "passed": 264,
+    "failed": 0,
+    "skipped": 0,
+    "reports": [
+      {
+        "file": "core-tests.xml",
+        "passed": 201,
+        "failed": 0,
+        "skipped": 4
+      },
+      {
+        "file": "integration-tests.xml",
+        "passed": 59,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "file": "native-tests.xml",
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      },
+      {
+        "file": "route-tests.xml",
+        "passed": 7,
+        "failed": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "node": {
+    "passed": 48,
+    "failed": 0,
+    "skipped": 0,
+    "scope": "appearance_surface_coverage_geometry"
+  },
+  "native_preview": {
+    "frames": 240,
+    "fps": 24,
+    "seconds": 10,
+    "case_count": 10,
+    "sha256": "c91fe784be8784166a8038fe8a4490f113b8e9e46ed9836d7bf1ef816522746a",
+    "model_review": "not_run",
+    "artistic_acceptance": false
+  },
+  "release": {
+    "deployed": false,
+    "main_merged": false,
+    "wikiskill_published": false,
+    "effect_adopted": false
+  },
+  "openspec_change": "improve-video-spatial-rendering-foundation",
+  "tested_source_files_sha256": {
+    "agent_service/profiles/video_animation_film_module_contract.py": "ec909774eec3eee3d30be7fa30cfcc48fbe2ec70ace0e18718ed2206a2634f84",
+    "agent_service/profiles/video_animation_film_module_spatial.py": "e8cc4e8bf25ed39bf9cce70b1fb751d711947e596ddf455864401b37b0d9ba46",
+    "agent_service/profiles/video_joint_plan.py": "33847d8491ae1072973ceb860f74f81487feeb40ce9cc37f76b0b39f1bbed462",
+    "agent_service/profiles/video_joint_plan_contract.py": "0145a9aa6f1bc9af79278bf6d1724736d0e5cf8fdcde083530e82dd2bb06ab5c",
+    "agent_service/profiles/video_joint_plan_skills.py": "55bf720366cbd55f57ced376a7a63106d73c20e0fba3fd895c4f48f43dd76847",
+    "agent_service/spatial_rendering_contract.py": "ee83601e8879689efd9ec1900d5d924578f835d74b58da91cac0857f796b0c89",
+    "tests/agent_service/test_joint_plan_skills_profile.py": "a6211bc722ec1ccc5dfa7d3cd2aef608da9c521682fdf8cc4eaaeb9cf34dd051",
+    "tests/agent_service/test_spatial_joint_plan_prompt.py": "70977e784faf7923dfe789efa5ff7c051550092598a416e8691c7e072a8d0329",
+    "tests/agent_service/test_spatial_rendering_contract.py": "8c599b55dec7754ae0b24d59b670250e1c482f327024f86adbf5be2667b86dc1",
+    "tests/video_workbench/scene-space-appearance.test.mjs": "90f43f6732432e8f22e287d46e290fb40edac31475681ce53665b34dce2f1cf9",
+    "tests/video_workbench/test_film_spatial_requirements.py": "ff7c41eecae612299cd930e9d9aa800aa1003807d611b63f3eede8e4435f2a91",
+    "tests/video_workbench/test_spatial_joint_plan_adoption.py": "72c2072db7acab146da06862935413ec413ac4f44b2804e54ca86c48c8a61576",
+    "tests/video_workbench/test_spatial_joint_plan_gateway.py": "b9e23d62799457ccfee882191f3a84a92d9380c40db46e0096ab1567a4987a79",
+    "tests/video_workbench/test_spatial_plan_repair.py": "a755113c223c83601ea111b21746459049181358550aa7cde5c0aa30bb6dbab0",
+    "tests/video_workbench/test_spatial_production_repair.py": "ad3132edea1dc9413c7abd000e574fa31b0e8d61ad6ca08c20682ae8b6ca8064",
+    "tests/video_workbench/test_spatial_rendering_route.py": "bae4ecb5618c4241bde63114d6a8fd474f5115cae9f3ed3dd9a092c2a1a10175",
+    "video_workbench/app.py": "f9fabb0c8855d363657126fa3f04e442d663c39c852191dce367e06de42a2a9d",
+    "video_workbench/creative_film_module_contract.py": "8f5ff711511d770281c6d798d791403189e095ae675d551d12d6ccce4066682c",
+    "video_workbench/examples/spatial-foundation-study/baseline-plan.json": "21ef5296f64ce8bce2993e2a16cfa591714608bcee3bee04646338343e2162ae",
+    "video_workbench/examples/spatial-foundation-study/baseline-source.json": "2e811bba83f7b8a6187dcac791353501ea03ce5f69ac5d05ba5facc1d7489492",
+    "video_workbench/examples/spatial-foundation-study/evidence.json": "a211837a620aabfaa7f60a88f486dcbae0cae201ff9cee1625882f3a40f257b4",
+    "video_workbench/examples/spatial-foundation-study/plan.json": "e847b0f9db5ae4f6cae85eb385f4d33f95fabc5855dbbd533aa3bb4756dcdf7f",
+    "video_workbench/examples/spatial-foundation-study/render_preview.py": "452960ecf9223c96d4775abb398a1f9b7647e7bf690b2dca25b7365d08890bab",
+    "video_workbench/examples/spatial-foundation-study/scene.html": "27e8a470a452fb66ba4e58f2ff4f77fe0a928128fd29a7c4710da8e9c5dae700",
+    "video_workbench/examples/spatial-foundation-study/scene.js": "5966ef5206b588a26b6743849985adc21ab37c6694cd265697ae3d73dbabf0f0",
+    "video_workbench/film_creation_store.py": "fea43bdace601d1cddbfe63038b5bb3de4b74af68af47a98abc04f00cc312f1f",
+    "video_workbench/joint_plan_gateway.py": "79488bc4339764b3389b6c3e482fe46c86d7845b4ad80bd2a6ab750e3f59d6b5",
+    "video_workbench/joint_plan_store.py": "92c35eb5081862aa49124cfdd83436c36e9a62e42f28b75f40946b4668166255",
+    "video_workbench/motion_renderer/scene_space_surface.mjs": "5ef05a298fe411fca04a1c4b0d8e635bf27a1fa759523ffd5dc376197e1bf7d1",
+    "video_workbench/production_run_store.py": "77e56f16d83e0dea73576559b8c395d74cb89774703db0911042971ac010f94a",
+    "video_workbench/scene_space_effects.py": "fae06ca63369d826a99466b4bb61d2587b9dec738931ac9cb628982fff7d13f3",
+    "video_workbench/scene_space_learning.py": "f95119b5c668243d400413dfb2e457a7c6a92a4060f8fe48b58510656003ec95",
+    "video_workbench/scene_space_learning_service.py": "f19e0d124f08fd8b415cb8aab2f3f1a5b20d81d017749d4fac2091bedd871308",
+    "video_workbench/scene_space_production.py": "33ddea8be6fd39c507fd22fc1d46942722fbbb01e4263bf791ba85688cba797d",
+    "video_workbench/scene_space_renderer.py": "d849899ed618923110a46e930b9d8ce2ef806beb86ae6210ed691b28f47c1aa8",
+    "video_workbench/skill_production_gateway.py": "095f52d8b700002962c95ab8dcc590d806c9b05d93d6f515a24b0b2312574625",
+    "video_workbench/spatial_plan_repair.py": "7ecf16ea888ddba309da46f2b78f04360214267fb3d16b129080c4671f98df87",
+    "video_workbench/spatial_rendering_route.py": "b0e88619bcf94e621002d8d473f4858eef404948334943934d326533809d59ca"
+  }
+}

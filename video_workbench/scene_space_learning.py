@@ -6,7 +6,9 @@ separate evidence; this data cannot certify artistic quality, motion or audio.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import math
+from pathlib import Path
 import re
 
 from agent_service.contracts import ServiceError, canonical_bytes
@@ -245,10 +247,24 @@ def _scene_structure_example():
         world=world, plan=plan)
 
 
-def scene_method_guidance(scope):
+def scene_method_guidance(scope, *, runtime_capabilities=None):
     """A data-only author offer, kept inside existing constraints semantics."""
+    from agent_service.spatial_rendering_contract import foundation_guidance, SURFACE_FUNCTIONS
     scope = _scope(scope)
+    # This identity comes from application-owned bytes, never the author request.
+    # Old frozen helper pins must not acquire newly added callable APIs.
+    surface = Path(__file__).with_name('motion_renderer') / 'scene_space_surface.mjs'
+    try:
+        raw = surface.read_bytes()
+    except OSError:
+        raw = b''
+    exported = [name for name in SURFACE_FUNCTIONS if re.search(
+        rb'export\s+function\s+' + name.encode('ascii') + rb'\s*\(', raw)]
+    foundation = foundation_guidance(runtime_capabilities,
+        expected_surface_sha256=hashlib.sha256(raw).hexdigest() if raw else None,
+        surface_functions=exported)
     return dict(schema='video.scene-space-learning-offer.v1', method_schema=METHOD_SCHEMA,
+        rendering_foundation=foundation,
         result_field='method.scene_space', source_scope=scope,
         world_schema=WORLD_SCHEMA, plan_schema=PLAN_SCHEMA,
         required_fields=['schema', 'world', 'plan', 'source', 'hypotheses', 'principles', 'stages', 'limitations'],

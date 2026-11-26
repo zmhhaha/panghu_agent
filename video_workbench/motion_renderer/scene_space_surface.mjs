@@ -4,6 +4,10 @@ import {reserveFieldBytes,MAX_FIELDS,MAX_TOTAL_FIELD_BYTES,
  surfaceResourceUsage} from './scene_space_surface_budget.mjs';
 export {MAX_FIELDS,MAX_TOTAL_FIELD_BYTES,surfaceResourceUsage};
 export const SURFACE_FIELD_REVISION='scene-local-surface-1';
+export const APPEARANCE_REVISION='scene-appearance-cues-1';
+export const APPEARANCE_LIMITS=Object.freeze({coordinate:1000000,material_scales:3,
+ material_min_frequency:.000001,material_max_frequency:1024,seed_max:4294967295,
+ atmosphere_density:64,height_falloff:64});
 export const MAX_FIELD_BYTES=1024*1024;
 export const MAX_WORK_BYTES=2*1024*1024;
 export const MAX_WASH_ROWS=8192;
@@ -227,4 +231,113 @@ export function paintSurfaceWash(ctx,field,options={}){
   cells_scope:'source_field_cells_not_draw_calls',strips:bands.rows,gradient_stops:bands.rows*state.columns,
   raster_method:'continuous_horizontal_scanlines',numeric_work_bytes:field.numeric_bytes+tones.byteLength,
   scope:'authored_2_5d_form_wash_not_observed_lighting_or_visual_acceptance'};
+}
+
+// These pure appearance cues do not allocate a Canvas or consume/modify a
+// coverage mask. Positions, normals and lights must be supplied in the same
+// declared coordinate system; no screen-Y depth or camera transform is inferred.
+function appearanceUnit(value,code){
+ check(Array.isArray(value)&&value.length===3,code);
+ const vector=value.map(v=>number(v)),length=Math.hypot(...vector);
+ check(length>1e-12,code);return vector.map(v=>v/length||0);
+}
+function range(value,minimum,maximum){
+ check(Array.isArray(value)&&value.length===2);
+ const low=number(value[0],minimum,maximum),high=number(value[1],low,maximum);
+ return[low,high];
+}
+
+/** Surface-to-light direction and surface normal use the same world/object XYZ
+ * basis. "diffuse" is an ambient + Lambert cue, not PBR or shadow tracing.
+ * "ink" maps the dot product through an authored smooth lightRange, then applies
+ * ambient. ink_density is pigment guidance, never opacity or solid coverage.
+ */
+export function evaluateLighting(normal,options){
+ fields(options,['light'],['mode','ambient','lightRange','inkRange']);
+ const N=appearanceUnit(normal,'scene_surface_normal_invalid'),L=appearanceUnit(options.light,'scene_surface_light_invalid'),
+  mode=option(options,'mode','diffuse'),ambient=number(option(options,'ambient',0),0,1),
+  lightRange=range(option(options,'lightRange',[0,1]),-1,1),inkRange=range(option(options,'inkRange',[0,1]),0,1);
+ check(mode==='diffuse'||mode==='ink','scene_surface_lighting_mode_invalid');
+ check(lightRange[1]>lightRange[0],'scene_surface_light_range_invalid');
+ const dot=clamp(N[0]*L[0]+N[1]*L[1]+N[2]*L[2],-1,1),diffuse=Math.max(0,dot),
+  response=mode==='ink'?smooth((dot-lightRange[0])/(lightRange[1]-lightRange[0])):diffuse,
+  lit=ambient+(1-ambient)*response,shade=1-lit;
+ return Object.freeze({schema:'video.scene-lighting-cue.v1',revision:APPEARANCE_REVISION,mode,
+  normal:Object.freeze(N),light:Object.freeze(L),dot,diffuse,lit,shade,
+  ink_density:inkRange[0]+(inkRange[1]-inkRange[0])*shade,
+  scope:'authored_directional_response_not_shadows_pbr_or_coverage'});
+}
+
+function latticeValue(x,y,z,seed){
+ let hash=(seed^0x9e3779b9)>>>0;
+ hash=Math.imul(hash^(x|0),0x85ebca6b);hash=Math.imul(hash^(y|0),0xc2b2ae35);
+ hash=Math.imul(hash^(z|0),0x27d4eb2d);hash^=hash>>>16;
+ hash=Math.imul(hash,0x85ebca6b);hash^=hash>>>13;
+ return(hash>>>0)/4294967295;
+}
+function materialNoise(position,frequency,seed){
+ const scaled=position.map(v=>v*frequency),cell=scaled.map(Math.floor),fraction=scaled.map((v,i)=>v-cell[i]),
+  blend=fraction.map(smooth),derivative=fraction.map(t=>6*t*(1-t)),values=[];
+ for(let z=0;z<2;z++)for(let y=0;y<2;y++)for(let x=0;x<2;x++)
+  values.push(latticeValue(cell[0]+x,cell[1]+y,cell[2]+z,seed));
+ const lerp=(a,b,t)=>a+(b-a)*t,
+  x00=lerp(values[0],values[1],blend[0]),x10=lerp(values[2],values[3],blend[0]),
+  x01=lerp(values[4],values[5],blend[0]),x11=lerp(values[6],values[7],blend[0]),
+  y0=lerp(x00,x10,blend[1]),y1=lerp(x01,x11,blend[1]),
+  dx=lerp(lerp(values[1]-values[0],values[3]-values[2],blend[1]),
+   lerp(values[5]-values[4],values[7]-values[6],blend[1]),blend[2])*derivative[0]*frequency,
+  dy=lerp(x10-x00,x11-x01,blend[2])*derivative[1]*frequency,
+  dz=(y1-y0)*derivative[2]*frequency;
+ return{value:lerp(y0,y1,blend[2])*2-1,gradient:[dx*2,dy*2,dz*2]};
+}
+
+/** Three bounded spatial frequencies anchored to supplied coordinates. For a
+ * moving object, supply its local coordinates to keep the material attached.
+ * space labels that caller-owned basis; this function never transforms it.
+ * value/roughness/normal_delta are variation cues, not a finished BRDF or alpha.
+ */
+export function sampleMaterial(position,options){
+ fields(options,['seed'],['space','scales','weights','base','amplitude','roughness','roughnessVariation','normalStrength']);
+ const P=point(position,3),seed=integer(options.seed,0,APPEARANCE_LIMITS.seed_max),space=option(options,'space','object'),
+  scales=option(options,'scales',[.25,1,4]),weights=option(options,'weights',[.5,.3,.2]);
+ check(space==='object'||space==='world','scene_surface_material_space_invalid');
+ check(Array.isArray(scales)&&scales.length===3&&Array.isArray(weights)&&weights.length===3);
+ const frequencies=scales.map(v=>number(v,APPEARANCE_LIMITS.material_min_frequency,APPEARANCE_LIMITS.material_max_frequency)),
+  W=weights.map(v=>number(v,0,1)),total=W.reduce((sum,v)=>sum+v,0);
+ check(frequencies[0]<frequencies[1]&&frequencies[1]<frequencies[2]&&total>0,'scene_surface_material_scales_invalid');
+ const base=number(option(options,'base',.5),0,1),amplitude=number(option(options,'amplitude',.15),0,1),
+  roughness=number(option(options,'roughness',.6),0,1),roughnessVariation=number(option(options,'roughnessVariation',.15),0,1),
+  normalStrength=number(option(options,'normalStrength',.1),0,1);
+ let variation=0;const gradient=[0,0,0];
+ for(let i=0;i<3;i++){
+  const sample=materialNoise(P,frequencies[i],(seed+Math.imul(i,0x9e3779b9))>>>0),weight=W[i]/total;
+  variation+=sample.value*weight;for(let axis=0;axis<3;axis++)gradient[axis]+=sample.gradient[axis]*weight;
+ }
+ variation=clamp(variation,-1,1);
+ return Object.freeze({schema:'video.scene-material-cue.v1',revision:APPEARANCE_REVISION,space,seed,
+  variation,value:clamp(base+amplitude*variation,0,1),roughness:clamp(roughness+roughnessVariation*variation,0,1),
+  normal_delta:Object.freeze(gradient.map(v=>clamp(v,-1,1)*normalStrength||0)),
+  scope:'anchored_three_scale_variation_not_brdf_geometry_or_coverage'});
+}
+
+/** Distance/height color-mixing cue, not volume scattering or visibility.
+ * distance, near/far and height/baseHeight share the caller's world units.
+ * far is the end of the distance ramp; maxAmount bounds the color mixture.
+ * transmittance is 1-amount for this mixture and must not replace object alpha.
+ */
+export function sampleAtmosphere(distance,options={}){
+ fields(options,[],['near','far','density','strength','maxAmount','height','baseHeight','heightFalloff','color']);
+ number(distance,0,COORD);
+ const near=number(option(options,'near',0),0,COORD),far=number(option(options,'far',100),.000001,COORD),
+  density=number(option(options,'density',3),0,APPEARANCE_LIMITS.atmosphere_density),
+  strength=number(option(options,'strength',1),0,1),maxAmount=number(option(options,'maxAmount',.95),0,1),
+  height=number(option(options,'height',0)),baseHeight=number(option(options,'baseHeight',0)),
+  heightFalloff=number(option(options,'heightFalloff',0),0,APPEARANCE_LIMITS.height_falloff),
+  color=rgb(option(options,'color',[238,233,220]));
+ check(far>near,'scene_surface_atmosphere_range_invalid');
+ const distanceFraction=smooth((distance-near)/(far-near)),heightWeight=Math.exp(-heightFalloff*Math.max(0,height-baseHeight)),
+  amount=maxAmount*strength*(-Math.expm1(-density*distanceFraction*heightWeight));
+ return Object.freeze({schema:'video.scene-atmosphere-cue.v1',revision:APPEARANCE_REVISION,
+  amount,transmittance:1-amount,color:Object.freeze(color),distance_fraction:distanceFraction,height_weight:heightWeight,
+  scope:'distance_height_color_mix_not_volume_scattering_or_coverage'});
 }

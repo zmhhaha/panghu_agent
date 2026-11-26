@@ -7,7 +7,8 @@ from .scene_space_plan import default_budget
 
 
 def effect_scene_offer(run):
-    offer=scene_method_guidance('scene_data_only')
+    offer=scene_method_guidance('scene_data_only',
+        runtime_capabilities=run['frozen']['constraints']['scene_space_capability'])
     offer['result_field']='methods[].runtime_requirements.scene_space'
     offer['instructions']=[line.replace('method.scene_space',offer['result_field']) for line in offer['instructions']]
     offer['render_capability']=deepcopy(run['frozen']['constraints']['scene_space_capability'])

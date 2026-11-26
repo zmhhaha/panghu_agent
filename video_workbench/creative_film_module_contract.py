@@ -35,7 +35,7 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
                       audio_sha256, duration_seconds, film_context, module_id, namespace,
                       runtime_identity, transition_target=None, width=1280, height=720, fps=24,
                       assets=None, instruction='', base_module=None, style='', allowed_engines=None,
-                      predecessor_package=None):
+                      predecessor_package=None, spatial_rendering=None):
     """Exact task for SkillProductionAdapter.freeze, including the new targets."""
     instruction = with_drawing_context_guidance(instruction, allowed_engines or ['html-svg'])
     value = dict(scene=dict(scene_id=scene_id, title=title, visual_description=visual_description,
@@ -47,6 +47,12 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
         film_context=deepcopy(film_context),
         target=dict(module_id=module_id, namespace=namespace, transition_target=deepcopy(transition_target)),
         assets={} if assets is None else deepcopy(assets), base_module=deepcopy(base_module))
+    if spatial_rendering is not None:
+        from agent_service.profiles.video_animation_film_module_spatial import validate_spatial_offer, spatial_instruction
+        offer = validate_spatial_offer(spatial_rendering)
+        value['constraints']['spatial_rendering'] = offer
+        current = value['scene']['instruction']
+        value['scene']['instruction'] = current + ('\n\n' if current else '') + spatial_instruction(offer)
     value = validate_core_task(value)
     if not is_silent_task(value):
         validate_alignment(value['scene']['alignment'], value['scene']['beats'])

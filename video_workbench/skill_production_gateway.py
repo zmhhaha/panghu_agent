@@ -138,6 +138,9 @@ class SkillProductionAgentGateway(MotionAgentGateway):
                  and {'text', 'tool_calls'} <= set(required), 'skill_production_profile_unavailable', 503)
         return route
 
+    def _task(self, document, input_sha256):
+        return dict(input_sha256=input_sha256)
+
     def prepare_submission(self, operation_id, document, deadline_at, input_ref=None):
         """Validate resources/readiness before a durable admission claim."""
         key = self._operation_key(operation_id)
@@ -146,7 +149,7 @@ class SkillProductionAgentGateway(MotionAgentGateway):
         remaining = deadline_at - time.time()
         _require(remaining > 0, 'skill_production_deadline_expired', 409)
         request = dict(api_version='1', profile=self.profile, profile_revision=self.profile_revision,
-            business_ref=self.business_prefix + operation_id, task=dict(input_sha256=input_sha256),
+            business_ref=self.business_prefix + operation_id, task=self._task(document, input_sha256),
             inputs=refs, execution_deadline_at=deadline_at,
             timeout_seconds=min(600, route['max_timeout_seconds'], math.ceil(remaining)))
 

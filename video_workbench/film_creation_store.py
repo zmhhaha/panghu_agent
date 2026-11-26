@@ -471,10 +471,44 @@ class FilmCreationStore:
             input_sha256=package['input_sha256'], result_sha256=package['result_sha256'])
         return module, reference
 
+    @staticmethod
+    def _spatial_offer(request, capabilities):
+        """Resolve only the admitted film backend's authorable feature boundary."""
+        require(('rendering_intent' in request) == ('rendering_quality' in request),
+            'film_creation_rendering_requirements_incomplete')
+        if 'rendering_intent' not in request:
+            return None
+        from agent_service.spatial_rendering_contract import validate_rendering_intent, resolve_quality
+        from agent_service.profiles.video_animation_film_module_spatial import make_spatial_offer
+        from .spatial_rendering_route import FILM_FEATURES
+        intent = validate_rendering_intent(request['rendering_intent'])
+        require(intent['engine'] in capabilities['allowed_engines'], 'film_creation_rendering_engine_not_admitted', 409)
+        quality = resolve_quality(intent, FILM_FEATURES[intent['engine']])
+        require(request['rendering_quality'] == quality, 'film_creation_rendering_quality_changed', 409)
+        return make_spatial_offer(intent, quality)
+
+    def _check_spatial_binding(self, op):
+        """Persisted new inputs retain their exact offer through retries/recovery."""
+        core = op['document'].get('core_task', op['document'])
+        actual = core['constraints'].get('spatial_rendering')
+        if not ('spatial_rendering' in op or 'rendering_intent' in op['request'] or actual is not None):
+            return None
+        from agent_service.profiles.video_animation_film_module_spatial import validate_spatial_offer
+        expected = validate_spatial_offer(op.get('spatial_rendering'))
+        require(op['request_sha256'] == digest(op['request']) and actual == expected
+            and core['constraints']['allowed_engines'] == [expected['intent']['engine']],
+            'film_creation_rendering_requirements_changed', 409)
+        requested = self._spatial_offer(op['request'], op['configuration']['runtime_capabilities'])
+        require(requested is None or requested == expected, 'film_creation_rendering_requirements_changed', 409)
+        return expected
+
     def start_module(self, owner, project_id, scene_id, request, idem):
         self._validate_request(request, {'expected_revision', 'film', 'film_sha256', 'current_scene_index',
             'predecessor_version_id', 'target', 'instruction', 'configuration_sha256'},
-            {'base_module_version_id', 'resource_authoring', 'resource_references', 'library_binding'})
+            {'base_module_version_id', 'resource_authoring', 'resource_references', 'library_binding',
+             'rendering_intent', 'rendering_quality'})
+        require(('rendering_intent' in request) == ('rendering_quality' in request),
+            'film_creation_rendering_requirements_incomplete')
         if 'base_module_version_id' in request:
             require(type(request['base_module_version_id']) is str and 1 <= len(request['base_module_version_id']) <= 100)
         fingerprint = digest(dict(project_id=project_id, scene_id=scene_id, request=request))
@@ -482,6 +516,7 @@ class FilmCreationStore:
             if replay := self._replay(db, owner, idem, 'module', fingerprint):
                 return replay
             self._configured(request)
+            spatial_offer = self._spatial_offer(request, self.runtime_capabilities)
             project, film = self._film(db, owner, project_id, request)
             library_binding = deepcopy(request.get('library_binding', project.get('joint_plan', {}).get('library_binding')))
             if library_binding is not None:
@@ -516,6 +551,14 @@ class FilmCreationStore:
                     'film_creation_library_binding_mismatch', 409)
                 library_binding = deepcopy(original_binding)
                 resource_dependencies.append(base_version['operation_id'])
+                base_package = self._version(db, owner, request['base_module_version_id'])[1]
+                inherited_offer = base_package['input_document']['constraints'].get('spatial_rendering')
+                if inherited_offer is not None:
+                    from agent_service.profiles.video_animation_film_module_spatial import validate_spatial_offer
+                    inherited_offer = validate_spatial_offer(inherited_offer)
+                    require(spatial_offer is None or spatial_offer == inherited_offer,
+                        'film_creation_base_rendering_requirements_changed', 409)
+                    spatial_offer = inherited_offer
             caps = self.runtime_capabilities
             references = request.get('resource_references', [])
             prepared = self._prepared_records(db, owner, project_id, references, round(film['total_seconds'] * 24))
@@ -535,14 +578,16 @@ class FilmCreationStore:
                     else CONTEXT_SCHEMA, film=film, film_sha256=request['film_sha256'],
                     current_scene_index=index, predecessor=predecessor), instruction=request['instruction'],
                 module_id=target['module_id'], namespace=target['namespace'], transition_target=target['transition_target'],
-                runtime_identity=caps['runtime_identity'], allowed_engines=caps['allowed_engines'],
+                runtime_identity=caps['runtime_identity'],
+                allowed_engines=[spatial_offer['intent']['engine']] if spatial_offer else caps['allowed_engines'],
                 assets={name: hashlib.sha256(raw).hexdigest() for name, raw in
                     self._assets_for_operations(db, owner, resource_dependencies).items()}, style=film['style'],
-                predecessor_package=predecessor_package, base_module=base_module)
+                predecessor_package=predecessor_package, base_module=base_module, spatial_rendering=spatial_offer)
             from .film_authoring_resources import attach_authoring_libraries
             core = attach_authoring_libraries(core, caps)
             from .formal_drawing_libraries import attach_drawing_libraries
-            core = attach_drawing_libraries(core, caps)
+            if spatial_offer is None or spatial_offer['intent']['engine'] == 'canvas':
+                core = attach_drawing_libraries(core, caps)
             from .film_authoring_resources import attach_film_resource, merge_film_resources
             merge_film_resources(self.assets, [*self._resource_records(db, owner, resource_dependencies), *prepared])
             for resource in prepared:
@@ -564,6 +609,8 @@ class FilmCreationStore:
                 version_id=None, input_ref=None, job_id=None, submit_attempted=False, cancel_requested=False,
                 cancel_attempts=0, next_cancel_at=0, stop_proven=False)
             op['resource_dependencies'] = resource_dependencies
+            if spatial_offer is not None:
+                op['spatial_rendering'] = deepcopy(spatial_offer)
             if library_binding is not None:
                 op['library_binding'] = library_binding
             op['resource_references'] = deepcopy(references)
@@ -583,6 +630,7 @@ class FilmCreationStore:
         if op['document'].get('schema') != PENDING_SCHEMA or op['cancel_requested']:
             return op
         core = op['document']['core_task']
+        self._check_spatial_binding(op)
         if callable(getattr(adapter, 'pin', None)):
             require('library_binding' in op, 'production_skill_batch_required', 409)
         require(not op.get('resource_authoring') or op.get('generated_resource'), 'film_resource_not_ready', 409)
@@ -706,7 +754,12 @@ class FilmCreationStore:
 
     def complete_module(self, operation_id, delivered):
         op = self.operation('module', operation_id)
+        spatial_offer = self._check_spatial_binding(op)
         package = collect_module_result(op['document'], **delivered)
+        if spatial_offer is not None:
+            require(package['engine'] == spatial_offer['intent']['engine']
+                and package['result']['module']['engine'] == spatial_offer['intent']['engine'],
+                'film_creation_rendering_engine_mismatch', 409)
         if op.get('resource_references'):
             with self.store.transaction() as db:
                 resources = self._prepared_records(db, op['owner'], op['project_id'], op['resource_references'])

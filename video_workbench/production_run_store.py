@@ -68,6 +68,8 @@ class ProductionRunStore:
         silent = run.get('audio_mode') == 'silent'
         if 'audio_mode' in run:
             result['audio_mode'] = run['audio_mode']
+        if 'rendering_route' in run:
+            result['rendering_route'] = deepcopy(run['rendering_route'])
         raw_items = run.get('items') if type(run.get('items')) is list else []
         frozen = run.get('frozen') if type(run.get('frozen')) is dict else {}
         frozen_scenes = frozen.get('scenes') if type(frozen.get('scenes')) is list else []
@@ -679,8 +681,24 @@ class ProductionRunStore:
                 # sequence or fresh recordings. No GET performs this mutation.
                 parent_sequence = self._sequence_parent(owner, project_id, request['reuse_audio_from_run_id'])
         configuration = resource_plan = resource_source = None
-        use_scene_space = (self.scene_space_adapter is not None
-            and getattr(self.scene_space_adapter,'enabled',True) and audio_mode == 'silent')
+        with self.store.transaction() as db:
+            rendering_project = self.store._project(db,owner,project_id)
+            rendering_intent = deepcopy(rendering_project.get('joint_plan',{}).get('rendering_intent'))
+        rendering_route = None
+        if rendering_intent is not None:
+            from .spatial_rendering_route import preferred_route
+            use_scene_space = preferred_route(rendering_intent) == 'scene-space'
+            if use_scene_space:
+                use_scene_space = (self.scene_space_adapter is not None
+                    and getattr(self.scene_space_adapter,'enabled',True)
+                    and resource_authoring is None and 'resource_plan' not in request
+                    and not rendering_project.get('joint_plan',{}).get('resource_plan'))
+            if not use_scene_space:
+                require(self.film_creation is not None,'spatial_rendering_route_unavailable',503)
+        else:
+            # Historical plans without the new frozen offer retain v1 routing.
+            use_scene_space = (self.scene_space_adapter is not None
+                and getattr(self.scene_space_adapter,'enabled',True) and audio_mode == 'silent')
         if use_scene_space:
             # The new route has its own admission. Never require or borrow the
             # old film-module profile/host merely to admit the scene compositor.
@@ -700,6 +718,19 @@ class ProductionRunStore:
                     and type(configuration.get('configuration_sha256')) is str
                     and re.fullmatch(r'[0-9a-f]{64}',configuration['configuration_sha256']),
                     'scene_space_production_unavailable',503)
+                if rendering_intent is not None:
+                    from .spatial_rendering_route import admit_route
+                    try:
+                        admit_route(rendering_intent,configuration,audio_mode=audio_mode)
+                    except ServiceError as error:
+                        if self.film_creation is None or error.code not in {
+                                'spatial_rendering_audio_mode_not_admitted',
+                                'spatial_rendering_required_features_unavailable',
+                                'spatial_rendering_optional_downgrade_forbidden'}:
+                            raise
+                        # A different admitted implementation must still satisfy
+                        # every core request; no unsupported sound is discarded.
+                        use_scene_space=False;configuration=None
         if self.film_creation is not None and not use_scene_space:
             # The facade authorizes through this same SQLite store and may do
             # network preflight. Do not hold BEGIN IMMEDIATE while calling it.
@@ -747,6 +778,13 @@ class ProductionRunStore:
             'production_run_resources_require_film', 503)
         require('resource_plan' not in request or self.film_creation is not None,
             'production_run_resources_require_film', 503)
+        if rendering_intent is not None:
+            from .spatial_rendering_route import admit_route
+            admission = deepcopy(configuration)
+            if not use_scene_space:
+                admission['runtime_capabilities'] = deepcopy(
+                    self.film_creation.configuration.get('runtime_capabilities', {}))
+            rendering_route = admit_route(rendering_intent,admission,audio_mode=audio_mode)
         with self.store.transaction() as db:
             row = db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
                              (owner, idem)).fetchone()
@@ -759,6 +797,8 @@ class ProductionRunStore:
                 return self.public(run, current=current and self._matches(run, project, db))
             project = self.store._project(db, owner, project_id)
             self.store._revision(project, request['expected_revision'])
+            require(project.get('joint_plan',{}).get('rendering_intent') == rendering_intent,
+                'spatial_rendering_intent_changed',409)
             head = self.joint._head(db, owner, project_id)
             require(head['version_id'] == request['joint_plan_version_id']
                 and project.get('joint_plan', {}).get('version_id') == head['version_id'],
@@ -821,6 +861,8 @@ class ProductionRunStore:
                     for scene in frozen['scenes']])
             if 'audio_mode' in request:
                 run['audio_mode'] = audio_mode
+            if rendering_route is not None:
+                run['rendering_route'] = rendering_route
             if audio_mode == 'silent':
                 run.update(voice=None, phase='module')
                 for item in run['items']:
@@ -1205,6 +1247,9 @@ class ProductionRunStore:
                 predecessor_version_id=None if index == 0 else run['items'][index - 1]['module_version_id'],
                 target=deepcopy(run['module_targets'][index]), instruction='',
                 configuration_sha256=configuration_sha256)
+            if 'rendering_route' in run:
+                result['rendering_intent']=deepcopy(run['rendering_route']['intent'])
+                result['rendering_quality']=deepcopy(run['rendering_route']['quality'])
             if 'library_binding' in run:
                 result['library_binding'] = deepcopy(run['library_binding'])
             references = run.get('prepared_resource_references', {}).get(run['items'][index]['scene_id'], [])

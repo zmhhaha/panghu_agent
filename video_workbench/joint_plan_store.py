@@ -45,9 +45,11 @@ def _size(value):
 
 
 class JointPlanStore:
-    def __init__(self, store, *, runtime_capabilities=None, skill_adapter=None):
+    def __init__(self, store, *, runtime_capabilities=None, skill_adapter=None, rendering_foundation=False):
         self.store = store
         self.skill_adapter = skill_adapter
+        _require(type(rendering_foundation) is bool)
+        self.rendering_foundation = rendering_foundation
         self.allowed_engines = (['html-svg'] if runtime_capabilities is None else
                                 validate_runtime_capabilities(runtime_capabilities)['allowed_engines'])
         with store.transaction() as db:
@@ -229,6 +231,9 @@ class JointPlanStore:
                             brief=request['brief'], instruction=request.get('instruction', ''),
                             preserve_script=request.get('preserve_script', False), method_delivery=None,
                             allowed_engines=list(self.allowed_engines))
+            if self.rendering_foundation:
+                from agent_service.spatial_rendering_contract import foundation_guidance
+                document['rendering_foundation'] = foundation_guidance()
             document = validate_joint_plan_input(document)
             now = time.time()
             op = dict(id=str(uuid4()), owner=owner, project_id=project_id, kind='joint-plan',
@@ -469,6 +474,9 @@ class JointPlanStore:
                 project['joint_plan'] = dict(version_id=version['id'],
                     **{key: result[key] for key in ('summary', 'understanding_goal', 'visual_style',
                                                   'continuity', 'method_decision')})
+                if 'rendering_intent' in result:
+                    from copy import deepcopy
+                    project['joint_plan']['rendering_intent'] = deepcopy(result['rendering_intent'])
                 if 'library_binding' in version:
                     project['joint_plan']['library_binding'] = version['library_binding']
                 if 'resource_plan' in version:

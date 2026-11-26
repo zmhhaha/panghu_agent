@@ -16,8 +16,11 @@ from agent_service.profiles.video_joint_plan_contract import planning_method_tas
 from test_joint_plan_profile import document, result
 
 
-def stage(tmp_path):
+def stage(tmp_path, *, rendering_foundation=False):
     context = document()
+    if rendering_foundation:
+        from agent_service.spatial_rendering_contract import foundation_guidance
+        context['rendering_foundation'] = foundation_guidance()
     packages = [build_skill_package(skill_id=f'lesson-{i}', version=1, kind='foundation' if i == 0 else 'expression',
         files={'SKILL.md': f'---\nname: lesson-{i}\ndescription: Show relationships through a changing object.\n---\n'
             'Keep object identity while demonstrating the process.'}, runtime_requirements={'engines': ['html-svg']})

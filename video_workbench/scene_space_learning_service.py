@@ -45,7 +45,7 @@ class SceneSpaceLearningMixin:
             and digest(binding['runtime']) == binding['capability_sha256'],
             'scene_space_learning_binding_changed', 409)
         scope, refs, frame_ids = self._scene_source_context(run, document)
-        offer = scene_method_guidance(scope)
+        offer = scene_method_guidance(scope, runtime_capabilities=binding['runtime'])
         offer.update(runtime=deepcopy(binding['runtime']), source_references=refs,
             source_frame_ids=frame_ids, observation_scope='static_or_sampled_inference_only',
             host_render_budget=self._scene_run_status(run))

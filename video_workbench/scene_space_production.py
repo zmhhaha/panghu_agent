@@ -64,9 +64,9 @@ class SceneSpaceWorldReviewGateway(PictureReviewGateway):
     task_timeout_seconds=3600
 
 
-def _author_guidance(frames, budget):
+def _author_guidance(frames, budget, *, runtime_capabilities=None):
     return dict(schema='video.scene-space-production-author-offer.v1',
-        method=scene_method_guidance('scene_data_only'),
+        method=scene_method_guidance('scene_data_only',runtime_capabilities=runtime_capabilities),
         world_schema='video.scene-world.v1',plan_schema='video.scene-space-plan.v1',
         duration_frames=frames,fps=24,viewport=dict(width=1280,height=720),
         budget=deepcopy(budget),
@@ -121,7 +121,11 @@ def author_document(run, *, constraints, budget, knowledge_binding=None, knowled
     _require(digest(film)==run['film_sha256'] and 1<=frames<=7200,
         'scene_space_production_film_changed',409)
     bounds=dict(width=1280,height=720,allowed_engines=['canvas'],
-        scene_space_production=_author_guidance(frames,budget))
+        scene_space_production=_author_guidance(frames,budget,
+            runtime_capabilities=run['scene_space_configuration']['render_capability']))
+    intent=(run.get('frozen',{}).get('joint_plan') or {}).get('rendering_intent')
+    if intent is not None:
+        bounds['scene_space_production']['rendering_intent']=deepcopy(intent)
     # Preserve the full unabridged film separately instead of truncating a long
     # storyboard to fit the historical still profile's 8k goal field.
     bounds['scene_space_production'].update(film_context=deepcopy(film),film_sha256=run['film_sha256'])
@@ -233,6 +237,7 @@ class SceneSpaceProductionAdapter:
             render_capability=deepcopy(caps),max_seconds=300,fps=24,audio_modes=['silent'],
             budget=deepcopy(self.budget),preview_min_score=80,max_preview_frames=3,max_pre_export_repairs=1,
             pre_export_gate_revision=2,max_preview_clip_frames=48,
+            plan_repair_revision=1,
             model_job_reserve_calls=8,model_job_reserve_tokens=262144,
             visual_gate_scope='actual_static_and_clip_samples_not_continuous_playback_or_user_acceptance')
         value['configuration_sha256']=digest(value)
@@ -386,6 +391,10 @@ class SceneSpaceProductionAdapter:
             'scene_space_production_clock_changed',409)
         _require(plan['budget']==row['configuration']['budget'],'scene_space_production_budget_changed',409)
         plan=validate_plan(plan)
+        intent=document['constraints']['scene_space_production'].get('rendering_intent')
+        if intent is not None:
+            from .spatial_rendering_route import validate_scene_intent_plan
+            validate_scene_intent_plan(intent,plan)
         saved=self.space_store.freeze(row['owner'],row['run_id'],plan)
         self.space_store.record_usage(row['owner'],row['run_id'],id=operation,
             phase='generation',outcome='completed',**row['author_usage'],render_seconds=0)
@@ -693,6 +702,14 @@ class SceneSpaceProductionAdapter:
                     'Repair only the reported painting defects in this exact production candidate. Preserve the full original goal, style, worlds, object identities, layout, timing, cameras and local animation.',
                     'Return complete editable source and the unchanged method.scene_space plan. Do not create new content, a transfer experiment, a second world or a new camera plan.',
                     'The supplied output images are sampled static evidence only. Do not claim motion, audio, artistic acceptance or user approval.'])
+            if row['configuration'].get('plan_repair_revision',0)>=1:
+                offer=document['constraints']['scene_space_same_content_repair']
+                offer.update(schema='video.scene-space-structural-repair.v1',allow_plan_revision=True,
+                    instructions=[
+                        'Correct the earliest faulty layer identified in the review: authored geometry, layout, lighting, camera or painting. Preserve the film goal, style, world IDs/seeds and object IDs/kinds. No changed-content experiment.',
+                        'If only source changes, return the identical plan. For spatial or camera edits increment plan.revision and budget.revisions.used exactly once; increment each changed world.revision, update its shot world_revision, and retain fps, viewport, duration, provenance, budget caps and used totals.',
+                        'Return the complete editable source and method.scene_space plan. The host validates geometry/coverage, records revision lineage, preserves actual consumption, invalidates previous previews and rechecks the replacement.',
+                        'Samples remain static evidence. Do not claim continuous motion/audio observation or user artistic acceptance.'])
             document['prior_review']=deepcopy(row['review']['result']['review'])
             document['feedback']='Correct only the defects in constraints.scene_space_same_content_repair.review.'
             document=picture.validate_input(document)
@@ -731,18 +748,41 @@ class SceneSpaceProductionAdapter:
         picture.validate_result(result,repair['input_sha256'],document)
         spatial=validate_scene_method((result.get('method') or {}).get('scene_space'),
             source_scope='scene_data_only',source_refs=[],frame_ids=[])
-        _require(spatial['plan']==document['constraints']['scene_space_same_content_repair']['plan'],
-            'scene_space_repair_plan_changed',409)
         source=picture.validate_source(result['source'],constraints=document['constraints'])
-        _require(source['files']!=row['source']['files'],'scene_space_repair_unchanged',409)
+        prior_plan=document['constraints']['scene_space_same_content_repair']['plan']
+        intent=document['constraints']['scene_space_production'].get('rendering_intent')
+        if intent is not None:
+            from .spatial_rendering_route import validate_scene_intent_plan
+            validate_scene_intent_plan(intent,spatial['plan'])
+        change=None
+        if row['configuration'].get('plan_repair_revision',0)>=1:
+            from .spatial_plan_repair import validate_same_content_plan_repair
+            replacement=validate_same_content_plan_repair(prior_plan,spatial['plan'],
+                reason='Automatic correction of reviewed defects in the same production scene')
+            if replacement['change'] is not None:
+                current=self.space_store.get(row['owner'],row['run_id'])
+                target_sha=replacement['frozen']['plan_sha256']
+                if current['frozen']['plan_sha256']!=target_sha:
+                    try:
+                        changed=self.space_store.revise(row['owner'],row['run_id'],replacement['plan'],
+                            reason=replacement['change']['reason'],expected_plan_sha256=digest(prior_plan))
+                    except ServiceError as error:
+                        if error.code!='scene_space_plan_revision_conflict':raise
+                        changed=self.space_store.get(row['owner'],row['run_id'])
+                    _require(changed['frozen']['plan_sha256']==target_sha,'scene_space_repair_plan_changed',409)
+                change=replacement['change']
+        else:
+            _require(spatial['plan']==prior_plan,'scene_space_repair_plan_changed',409)
+        _require(source['files']!=row['source']['files'] or change is not None,
+            'scene_space_repair_unchanged',409)
         row.setdefault('attempts',[]).append(dict(attempt=row.get('attempt',0),source=deepcopy(row['source']),
             source_sha256=row['source_sha256'],plan_sha256=row['plan_sha256'],
             previews=deepcopy(row['previews']),clips=deepcopy(row.get('clips',[])),
             review=deepcopy(row['review']['result']['review']),review_evidence=deepcopy(row['review']),
-            gate=deepcopy(row.get('gate'))))
+            gate=deepcopy(row.get('gate')),plan=deepcopy(prior_plan),plan_change=deepcopy(change)))
         repair['result']=deepcopy(result)
         row.update(source=source,source_sha256=source['source_sha256'],attempt=row.get('attempt',0)+1,
-            previews=[],clips=[],review=None,gate=None,status='preview',error=None)
+            plan_sha256=digest(spatial['plan']),previews=[],clips=[],review=None,gate=None,status='preview',error=None)
         return self._write(row)
 
     def _render(self,row,*,admit):

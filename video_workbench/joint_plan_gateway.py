@@ -11,7 +11,7 @@ import time
 
 from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.profiles.video_joint_plan import (INPUT_MAX_BYTES, OUTPUT_MAX_BYTES,
-    validate_joint_plan_input, validate_joint_plan_result)
+    validate_joint_plan_input, validate_joint_plan_result, planner_task)
 from .agent import VideoAgentGateway, _decode, _finite_number, _operation, _sha, _uuid
 from .skill_production_gateway import SkillProductionAgentGateway
 from agent_service.profiles.video_joint_plan_skills import VideoJointPlanSkillsProfile
@@ -118,7 +118,7 @@ class JointPlanAgentGateway(VideoAgentGateway):
         remaining = deadline_at - time.time()
         _require(remaining > 0, 'joint_plan_deadline_expired', 409)
         request = dict(api_version='1', profile=self.profile, profile_revision=self.profile_revision,
-            business_ref=self.business_prefix + operation_id, task={'input_sha256': checksum},
+            business_ref=self.business_prefix + operation_id, task=planner_task(document, checksum),
             inputs=[dict(input_ref)], execution_deadline_at=deadline_at,
             timeout_seconds=min(600, route['max_timeout_seconds'], math.ceil(remaining)))
         response = self._remote(self.client.submit, request, idempotency_key=key)
@@ -204,3 +204,6 @@ class JointPlanSkillAgentGateway(SkillProductionAgentGateway):
     validate_input = staticmethod(validate_joint_plan_input)
     validate_result = staticmethod(validate_joint_plan_result)
     profile_implementation = VideoJointPlanSkillsProfile
+
+    def _task(self, document, input_sha256):
+        return planner_task(document, input_sha256)

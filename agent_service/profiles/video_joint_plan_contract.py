@@ -24,8 +24,12 @@ def planning_method_task(document):
 def validate_joint_plan_input(document):
     fields = {'schema_version', 'project', 'scenes', 'brief', 'instruction',
               'preserve_script', 'method_delivery', 'allowed_engines'}
-    _require(type(document) is dict and fields <= set(document) <= fields | {'skill_catalog'})
+    _require(type(document) is dict and fields <= set(document) <= fields | {'skill_catalog', 'rendering_foundation'})
     _require(document['schema_version'] == 'video-joint-plan-input.v1')
+    if 'rendering_foundation' in document:
+        from ..spatial_rendering_contract import foundation_guidance
+        _require(document['rendering_foundation'] == foundation_guidance(),
+                 'joint_plan_rendering_offer_invalid')
     project = document['project']
     _fields(project, {'title', 'script', 'style', 'voice'})
     for key, maximum, empty in [('title', 300, False), ('script', 50000, False),
@@ -116,7 +120,13 @@ def validate_joint_plan_result(result, input_sha256, input_document, *, read_pac
               'visual_style', 'continuity', 'scenes', 'method_decision', 'warnings'}
     if context.get('skill_catalog') is not None:
         fields |= {'skill_decisions', 'skill_tool_evidence_sha256'}
+    if 'rendering_foundation' in context:
+        fields.add('rendering_intent')
     _fields(result, fields)
+    if 'rendering_foundation' in context:
+        from ..spatial_rendering_contract import validate_rendering_intent
+        intent = validate_rendering_intent(result['rendering_intent'])
+        _require(intent['engine'] in context['allowed_engines'], 'joint_plan_rendering_engine_not_offered')
     _require(result['schema_version'] == 'video-joint-plan-result.v1'
              and result['input_sha256'] == input_sha256, 'joint_plan_input_binding_mismatch')
     for key in ('summary', 'understanding_goal', 'visual_style', 'continuity'):

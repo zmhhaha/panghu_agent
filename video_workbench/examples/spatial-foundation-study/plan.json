@@ -1,0 +1,697 @@
+{
+  "budget": {
+    "model": {
+      "limit_calls": 1,
+      "used_calls": 0,
+      "limit_tokens": 1000000,
+      "used_tokens": null
+    },
+    "render": {
+      "limit_seconds": 3600,
+      "max_cached_pixels": 16777216,
+      "max_temporary_bytes": 134217728,
+      "used_seconds": 0
+    },
+    "revisions": {
+      "limit": 1,
+      "used": 0
+    }
+  },
+  "duration_frames": 240,
+  "fps": 24,
+  "id": "spatial-foundation-study-plan",
+  "provenance": {
+    "audio_observed": false,
+    "evidence_scope": "scene_data_only",
+    "motion_observed": false,
+    "origin": "generated",
+    "source_refs": [],
+    "whole_video_watched": false
+  },
+  "revision": 2,
+  "schema": "video.scene-space-plan.v1",
+  "shots": [
+    {
+      "camera": {
+        "max_zoom": 1.07,
+        "keyframes": [
+          {
+            "easing": "linear",
+            "frame": 0,
+            "x": 640,
+            "y": 360,
+            "zoom": 1
+          },
+          {
+            "easing": "linear",
+            "frame": 18,
+            "x": 640,
+            "y": 360,
+            "zoom": 1
+          },
+          {
+            "easing": "smoothstep",
+            "frame": 216,
+            "x": 648,
+            "y": 350,
+            "zoom": 1.07
+          },
+          {
+            "easing": "linear",
+            "frame": 240,
+            "x": 648,
+            "y": 350,
+            "zoom": 1.07
+          }
+        ]
+      },
+      "end_frame": 240,
+      "id": "retained-mountain-slow-push",
+      "local_animation": [],
+      "start_frame": 0,
+      "transition": "cut",
+      "world_id": "sword-cloud-study-world",
+      "world_revision": 1
+    }
+  ],
+  "viewport": {
+    "height": 720,
+    "width": 1280
+  },
+  "worlds": [
+    {
+      "id": "sword-cloud-study-world",
+      "layers": [
+        {
+          "blur": 0,
+          "cache_policy": "static",
+          "id": "paper-layer",
+          "mask_region_id": null,
+          "opacity": 1,
+          "order": 0,
+          "parallax": 1
+        },
+        {
+          "blur": 0,
+          "cache_policy": "static",
+          "id": "sky-layer",
+          "mask_region_id": null,
+          "opacity": 1,
+          "order": 1,
+          "parallax": 1
+        },
+        {
+          "blur": 0,
+          "cache_policy": "static",
+          "id": "distance-layer",
+          "mask_region_id": null,
+          "opacity": 1,
+          "order": 2,
+          "parallax": 1
+        },
+        {
+          "blur": 0,
+          "cache_policy": "static",
+          "id": "mass-layer",
+          "mask_region_id": null,
+          "opacity": 1,
+          "order": 3,
+          "parallax": 1
+        },
+        {
+          "blur": 0,
+          "cache_policy": "static",
+          "id": "bank-layer",
+          "mask_region_id": null,
+          "opacity": 1,
+          "order": 5,
+          "parallax": 1
+        },
+        {
+          "blur": 0,
+          "cache_policy": "static",
+          "id": "tree-layer",
+          "mask_region_id": null,
+          "opacity": 1,
+          "order": 6,
+          "parallax": 1
+        },
+        {
+          "id": "mist-layer",
+          "order": 4,
+          "parallax": 1,
+          "opacity": 1,
+          "blur": 0,
+          "cache_policy": "static",
+          "mask_region_id": null
+        }
+      ],
+      "layout": {
+        "grid": {
+          "columns": 11,
+          "origin": [
+            0,
+            0
+          ],
+          "rows": 7,
+          "spacing": [
+            128,
+            120
+          ]
+        },
+        "points": [
+          {
+            "depth": {
+              "kind": "unknown",
+              "value": null
+            },
+            "id": "main-summit",
+            "position": [
+              583,
+              233
+            ]
+          },
+          {
+            "depth": {
+              "kind": "unknown",
+              "value": null
+            },
+            "id": "secondary-summit",
+            "position": [
+              1067,
+              355
+            ]
+          },
+          {
+            "depth": {
+              "kind": "unknown",
+              "value": null
+            },
+            "id": "pine-root-a",
+            "position": [
+              128,
+              535
+            ]
+          },
+          {
+            "depth": {
+              "kind": "unknown",
+              "value": null
+            },
+            "id": "pine-root-b",
+            "position": [
+              258,
+              555
+            ]
+          },
+          {
+            "depth": {
+              "kind": "unknown",
+              "value": null
+            },
+            "id": "mist-passage",
+            "position": [
+              890,
+              580
+            ]
+          }
+        ],
+        "regions": [
+          {
+            "bounds": {
+              "height": 22,
+              "width": 30,
+              "x": 115,
+              "y": 527
+            },
+            "id": "root-support-a",
+            "kind": "rect"
+          },
+          {
+            "bounds": {
+              "height": 22,
+              "width": 30,
+              "x": 245,
+              "y": 547
+            },
+            "id": "root-support-b",
+            "kind": "rect"
+          }
+        ]
+      },
+      "objects": [
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "center": [
+              640,
+              360
+            ]
+          },
+          "bounds": {
+            "height": 720,
+            "width": 1280,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 0
+          },
+          "id": "paper",
+          "kind": "paper",
+          "layer_id": "paper-layer",
+          "order": 0,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "center": [
+              27,
+              27
+            ]
+          },
+          "bounds": {
+            "height": 54,
+            "width": 54,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 0
+          },
+          "id": "sun",
+          "kind": "sun",
+          "layer_id": "sky-layer",
+          "order": 0,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 1000,
+            "y": 150
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "center": [
+              56,
+              38
+            ]
+          },
+          "bounds": {
+            "height": 76,
+            "width": 112,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 0
+          },
+          "id": "birds",
+          "kind": "birds",
+          "layer_id": "sky-layer",
+          "order": 1,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 790,
+            "y": 100
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "center": [
+              640,
+              92
+            ]
+          },
+          "bounds": {
+            "height": 185,
+            "width": 1280,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 1
+          },
+          "id": "far-ridge",
+          "kind": "mountain",
+          "layer_id": "distance-layer",
+          "order": 0,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 0,
+            "y": 360
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "foot": [
+              273,
+              310
+            ],
+            "summit": [
+              273,
+              5
+            ]
+          },
+          "bounds": {
+            "height": 330,
+            "width": 570,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 2
+          },
+          "id": "main-mass",
+          "kind": "mountain",
+          "layer_id": "mass-layer",
+          "order": 1,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 310,
+            "y": 228
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "foot": [
+              132,
+              182
+            ],
+            "summit": [
+              132,
+              5
+            ]
+          },
+          "bounds": {
+            "height": 190,
+            "width": 250,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 2
+          },
+          "id": "right-mass",
+          "kind": "mountain",
+          "layer_id": "mass-layer",
+          "order": 0,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 935,
+            "y": 350
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "center": [
+              355,
+              105
+            ],
+            "root-a": [
+              128,
+              25
+            ],
+            "root-b": [
+              258,
+              45
+            ]
+          },
+          "bounds": {
+            "height": 210,
+            "width": 710,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 4
+          },
+          "id": "bank",
+          "kind": "bank",
+          "layer_id": "bank-layer",
+          "order": 0,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 0,
+            "y": 510
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "root": [
+              38,
+              123
+            ],
+            "tip": [
+              60,
+              7
+            ]
+          },
+          "bounds": {
+            "height": 135,
+            "width": 145,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 5
+          },
+          "id": "pine-a",
+          "kind": "pine",
+          "layer_id": "tree-layer",
+          "order": 1,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 90,
+            "y": 412
+          }
+        },
+        {
+          "allow_overflow": false,
+          "anchors": {
+            "root": [
+              23,
+              89
+            ],
+            "tip": [
+              34,
+              5
+            ]
+          },
+          "bounds": {
+            "height": 102,
+            "width": 95,
+            "x": 0,
+            "y": 0
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 5
+          },
+          "id": "pine-b",
+          "kind": "pine",
+          "layer_id": "tree-layer",
+          "order": 0,
+          "overflow_reason": null,
+          "parent_id": null,
+          "recipe_ref": null,
+          "transform": {
+            "rotation": 0,
+            "scale_x": 1,
+            "scale_y": 1,
+            "x": 235,
+            "y": 466
+          }
+        },
+        {
+          "id": "cloud-ribbons",
+          "kind": "mist",
+          "layer_id": "mist-layer",
+          "order": 0,
+          "parent_id": null,
+          "bounds": {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 240
+          },
+          "transform": {
+            "x": 0,
+            "y": 430,
+            "scale_x": 1,
+            "scale_y": 1,
+            "rotation": 0
+          },
+          "anchors": {
+            "center": [
+              640,
+              120
+            ]
+          },
+          "depth": {
+            "kind": "ordinal",
+            "value": 3
+          },
+          "allow_overflow": false,
+          "overflow_reason": null,
+          "recipe_ref": null
+        }
+      ],
+      "relations": [
+        {
+          "anchor": "root",
+          "id": "a-root-join",
+          "kind": "attachment",
+          "object_id": "pine-a",
+          "target_anchor": "root-a",
+          "target_object_id": "bank",
+          "tolerance": 0
+        },
+        {
+          "anchor": "root",
+          "id": "b-root-join",
+          "kind": "attachment",
+          "object_id": "pine-b",
+          "target_anchor": "root-b",
+          "target_object_id": "bank",
+          "tolerance": 0
+        },
+        {
+          "anchor": "root",
+          "id": "a-support",
+          "kind": "support",
+          "object_id": "pine-a",
+          "region_id": "root-support-a",
+          "tolerance": 0.0007199999999999999
+        },
+        {
+          "anchor": "root",
+          "id": "b-support",
+          "kind": "support",
+          "object_id": "pine-b",
+          "region_id": "root-support-b",
+          "tolerance": 0.0007199999999999999
+        },
+        {
+          "id": "tree-size",
+          "kind": "scale",
+          "max_ratio": 1.35,
+          "metric": "height",
+          "min_ratio": 1.3,
+          "object_id": "pine-a",
+          "reference_object_id": "pine-b"
+        },
+        {
+          "id": "peak-size",
+          "kind": "scale",
+          "max_ratio": 1.8,
+          "metric": "height",
+          "min_ratio": 1.7,
+          "object_id": "main-mass",
+          "reference_object_id": "right-mass"
+        },
+        {
+          "back_id": "far-ridge",
+          "front_id": "main-mass",
+          "id": "main-over-distance",
+          "kind": "occlusion"
+        },
+        {
+          "back_id": "far-ridge",
+          "front_id": "right-mass",
+          "id": "right-over-distance",
+          "kind": "occlusion"
+        },
+        {
+          "back_id": "main-mass",
+          "front_id": "bank",
+          "id": "bank-over-main",
+          "kind": "occlusion"
+        },
+        {
+          "back_id": "bank",
+          "front_id": "pine-a",
+          "id": "a-over-bank",
+          "kind": "occlusion"
+        },
+        {
+          "back_id": "bank",
+          "front_id": "pine-b",
+          "id": "b-over-bank",
+          "kind": "occlusion"
+        }
+      ],
+      "revision": 1,
+      "schema": "video.scene-world.v1",
+      "seed": 631907,
+      "space": {
+        "bounds": {
+          "height": 720,
+          "width": 1280,
+          "x": 0,
+          "y": 0
+        },
+        "projection": "planar"
+      },
+      "style": "ink-landscape with directional rock texture and warm paper reserves"
+    }
+  ]
+}

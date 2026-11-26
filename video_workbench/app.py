@@ -145,6 +145,12 @@ MESSAGES = {
     'creative_audio_binding_mismatch': '这份动画对应的旁白录音已变化，请为当前录音重新生成。',
     'creative_timing_requires_regeneration': '这份动画按固定录音时间制作，调整节拍后需要重新生成。',
     'creative_scene_engine_not_admitted': '当前创意动画支持 HTML/SVG，这种渲染方式尚未启用。',
+    'spatial_rendering_route_unavailable': '这份画面方案所需的制作能力尚未启用，未启动新的制作任务。',
+    'spatial_rendering_engine_unavailable': '这份方案选择的绘画引擎当前不可用。',
+    'spatial_rendering_required_features_unavailable': '当前制作环境无法满足这份方案的必要画面要求，已停止继续生成。',
+    'spatial_rendering_optional_downgrade_forbidden': '部分可选效果不可用，而这份方案未允许降低效果。',
+    'spatial_rendering_audio_mode_not_admitted': '所选画面制作方式尚不支持这份影片的声音要求。',
+    'spatial_rendering_intent_changed': '画面制作方案已更新，请基于当前方案重新安排制作。',
     'creative_render_observation_mismatch': '动画的播放与复验画面不一致，请重新制作候选。',
     'creative_reverse_seek_mismatch': '动画反向定位不一致，请重新制作候选。',
     'process_disabled': '过程演示尚未启用，已有候选和录音仍可查看。',
@@ -545,7 +551,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                joint_plan_enabled=None, production_runs_enabled=None,
                skill_gateway=None, skill_adapter=None, skill_production=True, film_creation=None,
                resource_planning_gateway=None, resource_producer_catalog=None,
-               refinement_service=None, refinement_enabled=None, scene_space_adapter=None):
+               refinement_service=None, refinement_enabled=None, scene_space_adapter=None,
+               rendering_foundation_enabled=None):
     if type(skill_production) is not bool:
         raise ValueError('An explicit boolean Skill production mode is required')
     explanation_settings = ExplanationSettings.from_env()
@@ -669,7 +676,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if joint_client is not None:
             joint_plan_gateway = JointPlanAgentGateway(joint_client,
                 os.environ.get('VIDEO_JOINT_PLAN_PROFILE_REVISION', '1'), skill_adapter=skill_adapter)
-    joint_plan_store = JointPlanStore(store, runtime_capabilities=creative_capabilities, skill_adapter=skill_adapter)
+    if rendering_foundation_enabled is None:
+        rendering_foundation_enabled = os.environ.get('VIDEO_SPATIAL_FOUNDATION_PLANNING_ENABLED', '0') == '1'
+    joint_plan_store = JointPlanStore(store, runtime_capabilities=creative_capabilities, skill_adapter=skill_adapter,
+        rendering_foundation=rendering_foundation_enabled)
     if resource_planning_gateway is None:
         resource_settings = ResourcePlanningAgentSettings.from_env()
         if resource_settings is not None:

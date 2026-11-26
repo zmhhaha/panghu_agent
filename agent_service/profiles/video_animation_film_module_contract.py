@@ -271,14 +271,19 @@ def validate_core_task(document):
         checksum(scene['audio_sha256'])
         require(beats['source_text'] == scene['narration']
             and alignment['audio_sha256'] == scene['audio_sha256'], 'film_module_audio_binding_mismatch')
-    require(type(bounds) is dict and set(bounds) == {'width', 'height', 'fps', 'duration_seconds',
-        'allowed_engines', 'runtime_identity'}, 'film_module_constraints_invalid')
+    required_bounds = {'width', 'height', 'fps', 'duration_seconds', 'allowed_engines', 'runtime_identity'}
+    require(type(bounds) is dict and required_bounds <= set(bounds)
+        <= required_bounds | {'spatial_rendering'}, 'film_module_constraints_invalid')
     require(all(type(bounds[key]) is int and bounds[key] == value
         for key, value in [('width', 1280), ('height', 720), ('fps', 24)]), 'film_module_constraints_invalid')
     engines = bounds['allowed_engines']
     require(type(engines) is list and bool(engines) and all(type(engine) is str
         and engine in {'html-svg', 'canvas', 'three'} for engine in engines)
         and len(set(engines)) == len(engines), 'film_module_engines_invalid')
+    if 'spatial_rendering' in bounds:
+        from .video_animation_film_module_spatial import validate_spatial_offer
+        offer = validate_spatial_offer(bounds['spatial_rendering'])
+        require(engines == [offer['intent']['engine']], 'film_module_spatial_engine_mismatch', 409)
     validate_runtime_identity(bounds['runtime_identity'])
     number(bounds['duration_seconds'], 1 / 24 if silent else .1, 60)
     require(bounds['duration_seconds'] == (row['end_seconds'] - row['start_seconds'] if silent
