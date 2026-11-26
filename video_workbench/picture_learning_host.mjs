@@ -67,17 +67,23 @@ export async function capturePicture({chromium, request, resources, engineRuntim
   const deadline = performance.now() + Math.min(3600000, deadlineAtMs - Date.now());
   const stage = async (name, cap, action) => {
     const remaining = Math.floor(deadline - performance.now());
-    if (remaining <= 0) throw Error('picture_render_deadline_exceeded');
+    const timeoutError = () => {
+      const code = remaining <= cap ? 'picture_render_deadline_exceeded' : 'picture_' + name + '_timeout';
+      return Object.assign(Error(code), {pictureFailure: {code, phase: name}});
+    };
+    if (remaining <= 0) throw timeoutError();
     const timeout = Math.min(cap, remaining);
     let timer;
     try {
       return await Promise.race([
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(Error(remaining <= cap ?
-            'picture_render_deadline_exceeded' : 'picture_' + name + '_timeout')), timeout);
+          timer = setTimeout(() => reject(timeoutError()), timeout);
         }),
         Promise.resolve().then(() => action(timeout)),
       ]);
+    } catch (error) {
+      if (error.name === 'TimeoutError') throw timeoutError();
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -212,6 +218,8 @@ export async function capturePicture({chromium, request, resources, engineRuntim
 
 async function main() {
   const receipt = {schema:'video.picture-learning-render-receipt.v1',status:'starting',evidence_scope:'static_only'};
+  const diagnosticSchema='video.picture-learning-render-failure.v1';
+  let includeDiagnostic=false;
   try {
     const raw=read('/input/request.json',256*1024), request=JSON.parse(raw);
     if(!['video.picture-learning-render-request.v1','video.picture-learning-render-request.v2'].includes(request.schema)
@@ -220,6 +228,10 @@ async function main() {
       || request.image_digest!==process.env.ANIMATION_METHOD_IMAGE_DIGEST
       || hash(read(fileURLToPath(import.meta.url),1024*1024))!==request.host_sha256
       || !['html-svg','canvas','three'].includes(request.engine)) throw Error('picture_request_binding_invalid');
+    Object.assign(receipt,{request_identity:request.identity,request_sha256:hash(raw),
+      image_digest:request.image_digest,host_sha256:request.host_sha256,engine:request.engine,
+      engine_runtime_sha256:request.engine_runtime_sha256,project_runtime_sha256:request.project_runtime_sha256});
+    includeDiagnostic=request.failure_diagnostic_schema===diagnosticSchema;
     for(const [name,key] of [['engine_runtime.mjs','engine_runtime_sha256'],['hyperframes_project.mjs','project_runtime_sha256']])
       if(hash(read('/opt/renderer/'+name,1024*1024))!==request[key]) throw Error('picture_runtime_changed');
     const c=request.constraints;
@@ -248,12 +260,13 @@ async function main() {
     const {bytes,...evidence}=await capturePicture({chromium,request,resources,engineRuntime,projectRuntime,deadlineAtMs});
     if(bytes.length>8*1024*1024) throw Error('picture_output_too_large');
     writeFileSync('/work/output.png',bytes);
-    Object.assign(receipt,{status:'rendered',request_identity:request.identity,request_sha256:hash(raw),
-      image_digest:request.image_digest,host_sha256:request.host_sha256,engine:request.engine,
-      engine_runtime_sha256:request.engine_runtime_sha256,project_runtime_sha256:request.project_runtime_sha256,
+    Object.assign(receipt,{status:'rendered',
       output_sha256:hash(bytes),output_bytes:bytes.length,width:c.width,height:c.height,
       ...evidence,expressive_quality:'not_evaluated'});
-  } catch(error) { receipt.status='failed'; receipt.error=String(error).slice(0,500); process.exitCode=1; }
+  } catch(error) {
+    receipt.status='failed'; receipt.error=String(error).slice(0,500); process.exitCode=1;
+    if (includeDiagnostic && error.pictureFailure) receipt.diagnostic={schema:diagnosticSchema,...error.pictureFailure};
+  }
   finally { writeFileSync('/work/render-receipt.json',JSON.stringify(receipt)); }
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)) await main();

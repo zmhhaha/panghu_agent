@@ -155,5 +155,8 @@ test('picture learning cannot wait past its original deadline for a never-ready 
  const html=`<!doctype html><body><script>
  window.__animationExperiment={ready:new Promise(()=>{}),seek(){}};
  </script></body>`;
- await assert.rejects(captureStill(html,{deadlineAtMs:Date.now()+3000}),/picture_render_deadline_exceeded/);
+ await assert.rejects(captureStill(html,{deadlineAtMs:Date.now()+5000}),error=>{
+  assert.deepEqual(error.pictureFailure,{code:'picture_render_deadline_exceeded',phase:'project_ready'});
+  return true;
+ });
 });

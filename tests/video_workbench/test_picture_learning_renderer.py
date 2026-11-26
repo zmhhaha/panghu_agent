@@ -93,6 +93,33 @@ def test_failed_render_preserves_proven_stop_without_media(renderer,monkeypatch)
     assert 'picture_path' not in result and execute.calls==1
 
 
+def test_bound_stage_failure_is_projected_and_sealed(renderer,monkeypatch):
+    execute=SyntheticExecution(fail=True)
+    diagnostic=dict(schema=module.FAILURE_SCHEMA,code='picture_screenshot_timeout',phase='screenshot')
+
+    def failed_capture(root):
+        outcome=execute(root)
+        request=json.loads((root/'input/request.json').read_bytes())
+        receipt=dict(schema='video.picture-learning-render-receipt.v1',status='failed',evidence_scope='static_only',
+            request_identity=request['identity'],request_sha256=digest(request),diagnostic=diagnostic,
+            **{key:request[key] for key in ('host_sha256','engine_runtime_sha256','project_runtime_sha256','engine','image_digest')})
+        (root/'work').mkdir()
+        (root/'work/render-receipt.json').write_bytes(canonical_bytes(receipt))
+        return outcome
+
+    monkeypatch.setattr(module,'execute_method_render',failed_capture)
+    result=renderer.render('failed-stage',source(),document())
+    assert result['error']==diagnostic['code'] and result['diagnostic']==diagnostic
+    assert result['stop_proven'] and 'picture_path' not in result
+    assert renderer.recover('failed-stage')==result and execute.calls==1
+    path=renderer._directory('failed-stage')/'work/render-receipt.json'
+    receipt=json.loads(path.read_bytes())
+    receipt['request_sha256']='d'*64
+    path.write_bytes(canonical_bytes(receipt))
+    with pytest.raises(ServiceError,match='picture_render_failure_receipt_changed'):
+        renderer.lookup('failed-stage')
+
+
 @pytest.mark.parametrize('changed',['input/scene/scene.html','host.mjs','work/output.png','work/render-receipt.json'])
 def test_post_completion_artifact_tampering_is_rejected(renderer,monkeypatch,changed):
     monkeypatch.setattr(module,'execute_method_render',SyntheticExecution())
