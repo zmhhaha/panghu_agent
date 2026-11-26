@@ -62,14 +62,14 @@ test('delete requires confirmation, binds revision, and trash restores without r
   assert.equal(f.$('delete-project-name').children.length, 0, 'Project titles remain plain text');
   await f.$('cancel-delete-project').emit('click'); assert.equal(f.calls.length, 0);
   await f.$('delete-project').emit('click'); await f.$('confirm-delete-project').emit('click');
-  assert.deepEqual(f.calls, [{ path: '/api/projects/one/trash', method: 'POST', body: { expected_revision: 4 } }]);
+  assert.deepEqual(f.calls, [{ path: '/api/v1/projects/one/trash', method: 'POST', body: { expected_revision: 4 } }]);
   assert.deepEqual(f.removed, [{ id: 'one', epoch: 1 }]);
   assert.equal(f.$('delete-project-dialog').open, false);
   await f.$('show-project-trash').emit('click');
   assert.equal(f.$('project-count').textContent, '1');
   const restore = f.$('project-list').children[0].children[1];
   await restore.emit('click');
-  assert.deepEqual(f.calls.at(-1), { path: '/api/projects/one/restore', method: 'POST', body: { expected_revision: 5 } });
+  assert.deepEqual(f.calls.at(-1), { path: '/api/v1/projects/one/restore', method: 'POST', body: { expected_revision: 5 } });
   assert.deepEqual(f.restored, [{ id: 'one', epoch: 2 }]);
   assert.equal(f.$('show-active-projects')['aria-pressed'], 'true');
   assert.equal(f.messages.length, 2);
@@ -93,7 +93,7 @@ test('lost committed write reconciles by GETs once, with no second POST or dupli
   const f = fixture(); f.setMode('unknown-applied');
   await f.$('delete-project').emit('click'); await f.$('confirm-delete-project').emit('click');
   assert.deepEqual(f.calls.map(call => [call.method ?? 'GET', call.path]), [
-    ['POST', '/api/projects/one/trash'], ['GET', '/api/projects'], ['GET', '/api/projects?deleted=true'],
+    ['POST', '/api/v1/projects/one/trash'], ['GET', '/api/v1/projects'], ['GET', '/api/v1/projects?deleted=true'],
   ]);
   assert.equal(f.removed.length, 1);
   assert.equal(f.errors.length, 0);
@@ -131,7 +131,7 @@ test('project switch invalidates a confirmation and in-flight success stays boun
   f.context.project = { id: 'three', title: 'New selection', revision: 1 }; f.context.epoch++;
   f.release(); await result;
   assert.equal(f.calls.length, 1);
-  assert.equal(f.calls[0].path, '/api/projects/two/trash');
+  assert.equal(f.calls[0].path, '/api/v1/projects/two/trash');
   assert.deepEqual(f.removed, [{ id: 'two', epoch: 2 }]);
   assert.equal(f.context.project.id, 'three');
 });
@@ -143,7 +143,7 @@ test('server rejection closes stale confirmation and never cancels production wo
   assert.equal(f.removed.length, 0);
   assert.equal(f.$('delete-project-dialog').open, false);
   assert.equal(f.calls.length, 1);
-  assert.equal(f.calls[0].path, '/api/projects/one/trash');
+  assert.equal(f.calls[0].path, '/api/v1/projects/one/trash');
 });
 
 test('a lost restore response opens the restored identity once after read-only confirmation', async () => {
@@ -152,8 +152,8 @@ test('a lost restore response opens the restored identity once after read-only c
   await f.$('show-project-trash').emit('click'); f.setMode('unknown-applied');
   await f.$('project-list').children[0].children[1].emit('click');
   assert.deepEqual(f.calls.map(call => [call.method ?? 'GET', call.path]), [
-    ['GET', '/api/projects?deleted=true'], ['POST', '/api/projects/one/restore'],
-    ['GET', '/api/projects'], ['GET', '/api/projects?deleted=true'],
+    ['GET', '/api/v1/projects?deleted=true'], ['POST', '/api/v1/projects/one/restore'],
+    ['GET', '/api/v1/projects'], ['GET', '/api/v1/projects?deleted=true'],
   ]);
   assert.deepEqual(f.restored, [{ id: 'one', epoch: 1 }]);
   assert.equal(f.removed.length, 0);

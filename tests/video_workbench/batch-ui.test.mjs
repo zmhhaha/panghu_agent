@@ -62,8 +62,8 @@ function harness() {
     }
     if (path.endsWith('/cancel')) { state.batches[0].status = 'cancelling'; return structuredClone(state.batches[0]); }
     if (path.endsWith('/retry')) { const next = batch('retry-1', 'queued'); next.parent_batch_id = state.batches[0].id; state.batches.unshift(next); return structuredClone(next); }
-    if (path.startsWith('/api/batches/')) return structuredClone(state.batches.find(row => row.id === decodeURIComponent(path.split('/').at(-1))));
-    if (path.startsWith('/api/motion-versions/')) {
+    if (path.startsWith('/api/v1/batches/')) return structuredClone(state.batches.find(row => row.id === decodeURIComponent(path.split('/').at(-1))));
+    if (path.startsWith('/api/v1/motion-versions/')) {
       const id = decodeURIComponent(path.split('/').at(-1)); return structuredClone(state.versions.get(id) ?? version(id, state.context.project.id));
     }
     throw new Error(`Unexpected request ${path}`);
@@ -106,7 +106,7 @@ test('reused creative candidates display their frozen strategy without executing
 test('batch intent validates the selected project scenes, bounded steps and clean revision', () => {
   const p = project('../p?');
   const intent = createBatchRequest(p, { sceneIds: ['s1'], steps: ['draft', 'motion'] });
-  assert.deepEqual(intent, { path: '/api/projects/..%2Fp%3F/batches/preview', body: {
+  assert.deepEqual(intent, { path: '/api/v1/projects/..%2Fp%3F/batches/preview', body: {
     expected_revision: 1, scene_ids: ['s1'], steps: ['motion', 'draft'], reuse_current: true } });
   for (const change of [{ sceneIds: [] }, { sceneIds: ['s1', 's1'] }, { sceneIds: ['foreign'] },
     { steps: [] }, { steps: ['unknown'] }, { unsaved: true }, { busy: true }]) {
@@ -137,7 +137,7 @@ test('range preview shows task caps and requires an explicit second confirmation
   await h.panel.start(); assert.equal(writes(h).length, 1);
   h.$('confirm-batch-start').checked = true; await h.$('confirm-batch-start').emit('change');
   await Promise.all([h.panel.start(), h.panel.start()]);
-  const starts = writes(h).filter(row => row.path === '/api/projects/p1/batches');
+  const starts = writes(h).filter(row => row.path === '/api/v1/projects/p1/batches');
   assert.equal(starts.length, 1); assert.equal(starts[0].options.body.plan_sha256, 'a'.repeat(64));
   assert.equal(h.panel.hasActiveOperation(), true);
   assert.equal(h.state.context.project.scenes[0].head_audio_version_id, null);
@@ -181,7 +181,7 @@ test('transport failures still use the network-error handler and never create a 
   assert.equal(writes(h).length, 1);
   h.state.transport = null; await h.panel.preview();
   assert.match(h.state.successes.at(-1), /尚未启动生成/);
-  assert.equal(writes(h).filter(row => row.path === '/api/projects/p1/batches').length, 0);
+  assert.equal(writes(h).filter(row => row.path === '/api/v1/projects/p1/batches').length, 0);
 });
 
 test('known render failures explain recovery without exposing raw diagnostics or repeating successful work', async () => {
@@ -219,13 +219,13 @@ test('changed steps, dirty content, unavailable providers and revision updates i
 test('failed uncertain submission reads existing batch and never starts a second one', async () => {
   const h = harness(); h.state.batches = []; await h.load(); await h.panel.preview();
   h.state.transport = async (path, options, fallback) => {
-    if (path === '/api/projects/p1/batches' && options.method === 'POST') {
+    if (path === '/api/v1/projects/p1/batches' && options.method === 'POST') {
       h.state.batches.push(batch('accepted-original', 'blocked')); throw new Error('response lost');
     }
     return fallback(path, options);
   };
   h.$('confirm-batch-start').checked = true; await h.panel.start(); await h.panel.start();
-  assert.equal(writes(h).filter(row => row.path === '/api/projects/p1/batches').length, 1);
+  assert.equal(writes(h).filter(row => row.path === '/api/v1/projects/p1/batches').length, 1);
   assert.equal(h.panel.hasUnresolvedOperation(), true);
   assert.equal(h.panel.hasActiveOperation(), true);
   assert.equal(h.state.errors.length, 1);
@@ -263,7 +263,7 @@ test('batch adoption binds reviewed exact IDs and both current heads with an ind
   await h.panel.adopt(); assert.equal(writes(h).length, 0);
   h.$('confirm-batch-adoption').checked = true; await h.$('confirm-batch-adoption').emit('change');
   await h.panel.adopt();
-  assert.deepEqual(writes(h).at(-1), { path: '/api/projects/p1/batch-adopt', options: { method: 'POST', body: {
+  assert.deepEqual(writes(h).at(-1), { path: '/api/v1/projects/p1/batch-adopt', options: { method: 'POST', body: {
     expected_revision: 1, selections: [{ scene_id: 's1', motion_version_id: 'm1', audio_version_id: 'a1',
       expected_motion_head_version_id: null, expected_audio_head_version_id: null }] } } });
   assert.equal(h.panel.hasDrafts(), false);
@@ -331,7 +331,7 @@ test('failed-step retry is explicit, counts each type and retains successful res
   const retry = inputIn(audioCell); retry.checked = true; await retry.emit('change');
   assert.match(h.$('batch-retry-note').textContent, /动态图解 0 次，配音 1 次，镜头草稿 0 次/);
   await h.panel.retry();
-  assert.deepEqual(writes(h).at(-1), { path: '/api/batches/b1/retry', options: { method: 'POST', body: {
+  assert.deepEqual(writes(h).at(-1), { path: '/api/v1/batches/b1/retry', options: { method: 'POST', body: {
     expected_revision: 1, item_ids: ['i-audio'] } } });
   assert.equal(h.state.batches.find(row => row.id === 'b1').items[0].version_id, 'm1');
 });
@@ -342,7 +342,7 @@ test('blocked uncertain steps cannot be retried and cancellation remains availab
   await h.load(); await h.panel.retry(); assert.equal(writes(h).length, 0);
   assert.equal(h.$('cancel-batch').disabled, false);
   await h.panel.cancel();
-  assert.equal(writes(h).at(-1).path, '/api/batches/b1/cancel');
+  assert.equal(writes(h).at(-1).path, '/api/v1/batches/b1/cancel');
   assert.equal(h.$('cancel-batch').disabled, true);
   assert.equal(h.panel.hasActiveOperation(), true);
 });
@@ -351,7 +351,7 @@ test('candidate media and scene navigation use the exact batch pair including re
   const h = harness(); h.state.batches[0].items[2].status = 'reused'; await h.load();
   const buttons = descendants(h.$('batch-review')).filter(element => element.tagName === 'button');
   await buttons.find(element => /试听配音/.test(element.textContent)).emit('click');
-  assert.equal(h.$('batch-audio-preview').src, '/api/audio-versions/a1/audio');
+  assert.equal(h.$('batch-audio-preview').src, '/api/v1/audio-versions/a1/audio');
   await buttons.find(element => element.textContent === '播放对应草稿').emit('click');
   assert.deepEqual(h.state.plays, [{ id: 'r1', purpose: 'draft' }]);
   await buttons.find(element => element.textContent === '打开此候选审阅').emit('click');
@@ -383,7 +383,7 @@ test('failed reads preserve candidates and checks; owner-mismatched candidates c
 test('adoption helper excludes unreviewed fields and errors stay inert without exposing raw backend codes', () => {
   const p = project('../p?');
   assert.deepEqual(createBatchAdoption(p, [{ scene_id: 's1', audio_version_id: 'a1', ignored: 'latest' }]), {
-    path: '/api/projects/..%2Fp%3F/batch-adopt', body: { expected_revision: 1,
+    path: '/api/v1/projects/..%2Fp%3F/batch-adopt', body: { expected_revision: 1,
       selections: [{ scene_id: 's1', audio_version_id: 'a1', expected_audio_head_version_id: null }] } });
   assert.throws(() => createBatchAdoption(p, []));
   assert.throws(() => createBatchAdoption(p, [{ scene_id: 'foreign', audio_version_id: 'a1' }]));

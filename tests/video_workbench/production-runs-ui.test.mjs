@@ -48,7 +48,7 @@ test('whole-film modules enable draft review without pretending to be old scene 
     selection:'draft_only', content_state:'current', actual_duration_seconds:3.125 }]), 3.125);
   const h=harness(); h.state.data={runs:[value]}; await h.load();
   assert.match(h.$('production-run-items').textContent,/动画候选已生成/);
-  assert.equal(h.$('production-run-video').src,'/api/renders/one-project-render/video');
+  assert.equal(h.$('production-run-video').src,'/api/v1/renders/one-project-render/video');
   assert.equal(posts(h).length,0);
   h.state.data={runs:[{ ...value, status:'running', phase:'module' }]}; await h.load();
   assert.match(h.$('production-run-status').textContent,/编排完整视频画面/);
@@ -73,7 +73,7 @@ test('scene-space silent production preserves one explicit audio choice and offe
   h.state.data={runs:[value]};h.state.transport=null;await h.load();
   assert.equal(h.$('production-run-previews').hidden,false);
   assert.equal(h.$('production-run-preview-images').children.length,1);
-  assert.equal(h.$('production-run-video').src,'/api/renders/scene-film/video');
+  assert.equal(h.$('production-run-video').src,'/api/v1/renders/scene-film/video');
   assert.match(h.$('production-run-voice').textContent,/无旁白/);
   assert.match(h.$('production-run-items').textContent,/共用场景已准备/);
   assert.doesNotMatch(h.$('production-run-items').textContent,/配音尚未完成/);
@@ -92,9 +92,53 @@ test('resource phase reports stopped ready resources and excludes adopted record
   assert.equal(h.$('production-run-player').hidden,true);
 });
 
+test('scene-space images, clips and retained previews use public media routes without rewriting stored internal URLs',async()=>{
+  const h=harness();
+  const prefix='/api/production-runs/run-1/scene-previews/';
+  const value=run({status:'failed',scene_space:{
+    previews:[{frame:0,status:'completed',url:prefix+'ss-image'},
+      {frame:24,status:'running',url:prefix+'ss-pending'}],
+    preview_clips:[{start_frame:0,end_frame:48,status:'completed',url:prefix+'ss-clip'},
+      {start_frame:48,end_frame:72,status:'failed',url:prefix+'ss-failed'}],
+    retained_attempts:[{attempt:0,previews:[{frame:24,url:prefix+'ss-history'}]}]}});
+  const before=structuredClone(value);h.state.data={runs:[value]};await h.load();
+  const [imageFigure,clipFigure,historyLink]=h.$('production-run-preview-images').children;
+  assert.equal(h.$('production-run-previews').hidden,false);
+  assert.equal(h.$('production-run-preview-images').children.length,3);
+  assert.equal(imageFigure.children[0].href,'/api/v1/production-runs/run-1/scene-previews/ss-image');
+  assert.equal(imageFigure.children[0].children[0].src,imageFigure.children[0].href);
+  assert.equal(clipFigure.children[0].src,'/api/v1/production-runs/run-1/scene-previews/ss-clip');
+  assert.equal(historyLink.href,'/api/v1/production-runs/run-1/scene-previews/ss-history');
+  assert.deepEqual(value,before,'Media presentation preserves the internal API and retained history contract');
+  assert.equal(posts(h).length,0);
+});
+
+test('scene-space media rejects cross-run, cross-path and noncanonical URLs in every preview collection',async()=>{
+  const prefix='/api/production-runs/run-1/scene-previews/';
+  const invalid=[undefined,'',prefix,prefix+'../other',prefix+'%2e%2e%2fother',prefix+'ss-image/extra',
+    prefix+'ss-image?download=1',prefix+'ss-image#fragment',prefix+'ss-image\\other',prefix+'ss-image\n',
+    prefix+'ss-image%2fother','/api/production-runs/run-2/scene-previews/ss-image',
+    '/api/production-runs/run-1/cancel','/api/v1/production-runs/run-1/scene-previews/ss-image',
+    'https://example.test'+prefix+'ss-image','//example.test'+prefix+'ss-image','javascript:alert(1)'];
+  for(const url of invalid){
+    const h=harness();h.state.data={runs:[run({status:'failed',scene_space:{
+      previews:[{frame:0,status:'completed',url}],
+      preview_clips:[{start_frame:0,end_frame:48,status:'completed',url}],
+      retained_attempts:[{attempt:0,previews:[{frame:0,url}]}]}})]};
+    await h.load();
+    assert.equal(h.$('production-run-previews').hidden,true,`Rejected media URL: ${JSON.stringify(url)}`);
+    assert.equal(h.$('production-run-preview-images').children.length,0);
+    assert.equal(posts(h).length,0);
+  }
+  const h=harness();h.state.data={runs:[run({project_id:'p2',scene_space:{
+    previews:[{frame:0,status:'completed',url:prefix+'ss-image'}]}})]};await h.load();
+  assert.equal(h.$('production-run-result').hidden,true,'A different project never exposes its media');
+  assert.equal(h.$('production-run-preview-images').children.length,0);
+});
+
 test('whole-video request requires adopted plan and saved inputs, sends no per-scene approvals',()=>{
   const p=project(), before=structuredClone(p);
-  assert.deepEqual(createProductionRunRequest(p),{path:'/api/projects/p1/production-runs',body:{expected_revision:4,joint_plan_version_id:'approved-plan'}});
+  assert.deepEqual(createProductionRunRequest(p),{path:'/api/v1/projects/p1/production-runs',body:{expected_revision:4,joint_plan_version_id:'approved-plan'}});
   assert.deepEqual(p,before);
   assert.throws(()=>createProductionRunRequest({...p,joint_plan:null}),/采用/);
   assert.throws(()=>createProductionRunRequest(p,{unsaved:true}),/保存/);
@@ -122,7 +166,7 @@ test('one click submits one bounded request with dedicated idempotency key then 
   const h=harness();await h.load();h.state.refreshAction=h.load;
   h.state.transport=(path,options)=>{if(options.method==='POST'){h.state.data={runs:[run()]};return run();}return h.state.data;};
   await h.panel.start();await h.panel.start();
-  assert.equal(posts(h).length,1);assert.deepEqual(posts(h)[0],{path:'/api/projects/p1/production-runs',options:{method:'POST',body:{expected_revision:4,joint_plan_version_id:'approved-plan'},idempotencyKey:'production-run:test-key'}});
+  assert.equal(posts(h).length,1);assert.deepEqual(posts(h)[0],{path:'/api/v1/projects/p1/production-runs',options:{method:'POST',body:{expected_revision:4,joint_plan_version_id:'approved-plan'},idempotencyKey:'production-run:test-key'}});
   assert.equal(h.panel.hasUnresolvedOperation(),true);assert.match(h.$('production-run-voice').textContent,/云健/);
   assert.doesNotMatch(h.state.calls.map(row=>row.path).join('\n'),/adopt|audio\/generate|motion-renders|timing/);
 });
@@ -165,7 +209,7 @@ test('completed result is one draft player with the real media route; playback n
   const h=harness();h.state.data={runs:[run({status:'completed',phase:'completed',draft_render_id:'render/a?b',
     items:[{scene_id:'p1-scene',title:'<script>inert</script>',audio_seconds:8.125,audio_version_id:'a',motion_version_id:'m'}]})]};
   await h.load();assert.equal(h.$('production-run-player').hidden,false);
-  assert.equal(h.$('production-run-video').src,'/api/renders/render%2Fa%3Fb/video');
+  assert.equal(h.$('production-run-video').src,'/api/v1/renders/render%2Fa%3Fb/video');
   assert.equal(h.$('download-production-run').href,h.$('production-run-video').src);
   assert.match(h.$('production-run-review-note').textContent,/不代表.*试听、采用或核准/);
   assert.match(h.$('production-run-items').textContent,/实测录音 8.13 秒/);assert.match(h.$('production-run-items').textContent,/<script>inert<\/script>/);
@@ -179,7 +223,7 @@ test('cancel is explicit, sent once, and refresh cannot restart cancelled or fai
   const h=harness();h.state.data={runs:[run({status:'running',phase:'motion'})]};await h.load();h.state.refreshAction=h.load;
   h.state.transport=(path,options)=>{if(options.method==='POST'){h.state.data={runs:[run({status:'cancelled'})]};return h.state.data.runs[0];}return h.state.data;};
   await h.panel.cancel();await h.panel.cancel();await h.$('reload-production-runs').emit('click');
-  assert.equal(posts(h).length,1);assert.equal(posts(h)[0].path,'/api/production-runs/run-1/cancel');
+  assert.equal(posts(h).length,1);assert.equal(posts(h)[0].path,'/api/v1/production-runs/run-1/cancel');
   assert.equal(h.panel.hasUnresolvedOperation(),false);
 });
 
@@ -251,7 +295,7 @@ test('completed status is not duplicated, schedule and encoded duration stay dis
   assert.match(h.$('production-run-review-note').textContent,/视频实际 9.5 秒/);
   h.$('production-run-select').value='old';await h.$('production-run-select').emit('change');
   assert.equal(h.panel.currentRun(h.state.context.project).id,'latest');
-  assert.equal(h.$('production-run-video').src,'/api/renders/old-render/video');
+  assert.equal(h.$('production-run-video').src,'/api/v1/renders/old-render/video');
   assert.equal(h.$('production-run-player-heading').textContent,'历史整片预览');
   assert.match(h.$('production-run-review-note').textContent,/项目内容已变化/);
   assert.deepEqual([...h.panel.managedRenderIds('p1')].sort(),['draft-render','old-render']);

@@ -132,7 +132,7 @@ test('storyboard request snapshots its limit and revision and binds both to retr
   const key = keys.get('POST', intent.path, intent.body);
   acceptProjectRead(state, issueProjectRead(state), project('a', 4));
   const changedLimit = createStoryboardRequest({ id: 'a', revision: 3 }, 2);
-  assert.equal(intent.path, '/api/projects/a/storyboard');
+  assert.equal(intent.path, '/api/v1/projects/a/storyboard');
   assert.deepEqual(intent.body, { expected_revision: 3, max_scenes: 1 });
   assert.equal(keys.get('POST', intent.path, intent.body), key);
   assert.notEqual(keys.get('POST', changedLimit.path, changedLimit.body), key);
@@ -159,7 +159,7 @@ test('polling tracks submitting and cancelling operations, deduplicates and excl
 });
 
 test('version URLs only address immutable preview/source paths and encode untrusted IDs', () => {
-  assert.equal(versionPath('../other?x=1', 'source'), '/api/versions/..%2Fother%3Fx%3D1/source');
-  assert.equal(versionPath('v1'), '/api/versions/v1/preview');
+  assert.equal(versionPath('../other?x=1', 'source'), '/api/v1/versions/..%2Fother%3Fx%3D1/source');
+  assert.equal(versionPath('v1'), '/api/v1/versions/v1/preview');
   assert.throws(() => versionPath('v1', '../admin'));
 });

@@ -201,7 +201,7 @@ test('detail updates are shown for review and cannot be presented as unchanged c
 test('proposal and draft requests bind explicit revisions and versions without speech generation', () => {
   const p = project('../p?'), links = [link('copy')];
   const intent = createContinuityProposal(p, links); links[0].mode = 'retain';
-  assert.equal(intent.path, '/api/projects/..%2Fp%3F/continuity/proposals');
+  assert.equal(intent.path, '/api/v1/projects/..%2Fp%3F/continuity/proposals');
   assert.deepEqual(intent.body, { expected_revision: 1, links: [link('copy')] });
   assert.deepEqual(createContinuityProposal(p).body, { expected_revision: 1 });
   assert.deepEqual(createContinuityProposal(p, []).body.links, []);

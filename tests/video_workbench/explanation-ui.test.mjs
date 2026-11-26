@@ -79,7 +79,7 @@ async function fill(h) {
 test('request freezes only planning inputs, revision and selected brief with bounded fields', () => {
   const draft = { ...explanationDraft(), audience: ' 开发者 ', goal: ' 讲清概念 ', instruction: ' 少用术语 ' };
   const intent = createExplanationRequest(project('../p?'), draft);
-  assert.equal(intent.path, '/api/projects/..%2Fp%3F/explanation');
+  assert.equal(intent.path, '/api/v1/projects/..%2Fp%3F/explanation');
   assert.deepEqual(intent.body, { expected_revision: 1,
     brief: { audience: '开发者', goal: '讲清概念', tone: 'conversational' }, instruction: '少用术语' });
   draft.goal = '后改的要求';
@@ -260,7 +260,7 @@ test('one click creates only one plan; in-flight form edits survive completion',
   h.$('explanation-instruction').value = '用户还在修改要求'; await h.$('explanation-instruction').emit('input');
   complete({ id: 'op1', status: 'running', version_id: null }); await one; await duplicate;
   const posts = h.state.calls.filter(call => call.options.method === 'POST');
-  assert.equal(posts.length, 1); assert.equal(posts[0].path, '/api/projects/p1/explanation');
+  assert.equal(posts.length, 1); assert.equal(posts[0].path, '/api/v1/projects/p1/explanation');
   assert.equal(posts[0].options.body.instruction, '用一个贯穿例子');
   assert.equal(h.$('explanation-instruction').value, '用户还在修改要求');
   assert.equal(h.panel.hasDrafts(), true); assert.equal(h.panel.hasActiveOperation(), true);
@@ -345,7 +345,7 @@ test('reload restores running work, cancellation uses the operation route and co
   assert.equal(h.panel.hasActiveOperation(), true);
   h.state.transport = async () => ({ id: '../operation', status: 'cancelling' });
   await h.panel.cancel();
-  assert.equal(h.state.calls.at(-1).path, '/api/explanation-operations/..%2Foperation/cancel');
+  assert.equal(h.state.calls.at(-1).path, '/api/v1/explanation-operations/..%2Foperation/cancel');
   assert.equal(h.panel.hasActiveOperation(), true); assert.equal(h.$('cancel-explanation').disabled, true);
   const calls = h.state.calls.length; await h.panel.cancel(); assert.equal(h.state.calls.length, calls);
   h.state.transport = async () => response([], { id: '../operation', status: 'cancelled' }); await h.load();
@@ -369,7 +369,7 @@ test('adoption requires explicit confirmation and rejects dirty or newly changed
   await h.load(); h.$('confirm-explanation-adoption').checked = true;
   h.state.transport = async () => project('p1', 3); await h.panel.adopt();
   const post = h.state.calls.find(call => call.options.method === 'POST');
-  assert.equal(post.path, '/api/projects/p1/explanation/adopt');
+  assert.equal(post.path, '/api/v1/projects/p1/explanation/adopt');
   assert.deepEqual(post.options.body, { expected_revision: 2, version_id: 'v1', expected_head_version_id: null });
   assert.equal(h.$('explanation-goal').value, '讲清两类记录');
 });
@@ -405,7 +405,7 @@ test('closed configuration restores in-flight work and permits cancellation whil
   assert.equal(h.state.calls.length, previous);
   h.state.transport = async () => ({ id: 'old-op', status: 'cancelling' });
   await h.panel.cancel();
-  assert.equal(h.state.calls.at(-1).path, '/api/explanation-operations/old-op/cancel');
+  assert.equal(h.state.calls.at(-1).path, '/api/v1/explanation-operations/old-op/cancel');
   assert.equal(h.panel.hasActiveOperation(), true);
   assert.equal(h.$('cancel-explanation').disabled, true);
 });

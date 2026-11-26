@@ -70,13 +70,13 @@ const posts = h => h.state.calls.filter(call => call.options.method === 'POST');
 test('advanced release selection is made once at planning and never publishes or starts media', async () => {
   const h = harness();
   h.state.data.versions[0].library_binding = { release_id: 'release-1', release_sequence: 1 };
-  h.state.transport = (path, options) => path === '/api/wikiskill/releases'
+  h.state.transport = (path, options) => path === '/api/v1/wikiskill/releases'
     ? { active_release_id: 'release-2', releases: [
       { id: 'release-2', sequence: 2, summary: 'Current knowledge' },
       { id: 'release-1', sequence: 1, summary: 'Earlier knowledge' }] }
     : options.method === 'POST' ? { id: 'operation', status: 'queued' } : structuredClone(h.state.data);
   await h.load();
-  assert.equal(h.state.calls.some(call => call.path === '/api/wikiskill/releases'), false);
+  assert.equal(h.state.calls.some(call => call.path === '/api/v1/wikiskill/releases'), false);
   assert.match(h.$('joint-plan-review').textContent, /固定使用技能版本 1/);
   h.$('joint-plan-library-options').open = true;
   await h.$('joint-plan-library-options').emit('toggle');
@@ -100,7 +100,7 @@ test('WikiSkill is on for each new planning draft and explicit off never carries
   assert.throws(() => createJointPlanRequest(project(), { ...jointPlanDraft(), use_wikiskill: 'false' }), /WikiSkill/);
   assert.throws(() => createJointPlanRequest(project(), { ...jointPlanDraft(), use_wikiskill: false, library_release_id: 'release-1' }), /不能同时指定/);
   const h = harness();
-  h.state.transport = (path, options) => path === '/api/wikiskill/releases'
+  h.state.transport = (path, options) => path === '/api/v1/wikiskill/releases'
     ? { active_release_id: 'release-1', releases: [{ id: 'release-1', sequence: 1 }] }
     : options.method === 'POST' ? { id: 'operation', status: 'queued' } : structuredClone(h.state.data);
   await h.load();
@@ -122,7 +122,7 @@ test('disabled knowledge can plan despite catalogue failure and adopted versions
   const h = harness();
   h.state.data.versions[0].library_binding = { use_wikiskill: false, release_id: null };
   h.state.transport = (path, options) => {
-    if (path === '/api/wikiskill/releases') throw Error('catalogue unavailable');
+    if (path === '/api/v1/wikiskill/releases') throw Error('catalogue unavailable');
     return options.method === 'POST' ? { id: 'operation', status: 'queued' } : structuredClone(h.state.data);
   };
   await h.load();
@@ -143,7 +143,7 @@ test('disabled knowledge can plan despite catalogue failure and adopted versions
 test('zero-scene project can plan saved script with immutable bounded inputs and original-script option', () => {
   const draft = { ...jointPlanDraft(), goal: ' 讲清楚 ', preserve_script: true };
   const intent = createJointPlanRequest(project('../p?'), draft);
-  assert.equal(intent.path, '/api/projects/..%2Fp%3F/joint-plan');
+  assert.equal(intent.path, '/api/v1/projects/..%2Fp%3F/joint-plan');
   assert.deepEqual(intent.body, { expected_revision: 1, brief: { audience: '', goal: '讲清楚', tone: 'conversational' },
     instruction: '', preserve_script: true, use_wikiskill: true });
   draft.goal = '后来改变'; assert.equal(intent.body.brief.goal, '讲清楚');
@@ -203,7 +203,7 @@ test('whole-plan adoption requires explicit confirmation and exact revision/head
   assert.equal(h.$('adopt-joint-plan').disabled, false);
   h.state.transport = () => project('p1', 2); await h.panel.adopt();
   assert.deepEqual(posts(h).map(call => [call.path, call.options.body]), [[
-    '/api/projects/p1/joint-plan/adopt', { expected_revision: 1, version_id: 'v1', expected_head_version_id: 'old-head' },
+    '/api/v1/projects/p1/joint-plan/adopt', { expected_revision: 1, version_id: 'v1', expected_head_version_id: 'old-head' },
   ]]);
   assert.equal(h.$('confirm-joint-plan-adoption').checked, false);
   assert.doesNotMatch(h.state.calls.map(call => call.path).join('\n'), /audio|render|speech/);
@@ -287,7 +287,7 @@ test('cancel, progress clocks and stale reads keep project identity and never ov
   assert.equal(h.panel.hasActiveOperation(), true); assert.equal(h.panel.hasRefreshableOperation(), true);
   assert.match(h.$('joint-plan-status-text').textContent, /已等待/); h.panel.refreshElapsed();
   h.state.transport = async () => ({ id: 'op/a', status: 'cancel_requested' }); await h.panel.cancel();
-  assert.deepEqual(posts(h).map(call => [call.path, call.options.body]), [['/api/joint-plan-operations/op%2Fa/cancel', {}]]);
+  assert.deepEqual(posts(h).map(call => [call.path, call.options.body]), [['/api/v1/joint-plan-operations/op%2Fa/cancel', {}]]);
   assert.equal(h.$('cancel-joint-plan').disabled, true);
   let oldResolve;
   h.state.transport = () => new Promise(done => { oldResolve = done; }); const oldRead = h.load();

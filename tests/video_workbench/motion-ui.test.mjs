@@ -288,14 +288,14 @@ test('global motion gate still blocks process even with a stale configured capab
 test('generation, adoption and draft requests bind exact reviewed candidate, revision and adopted recording', () => {
   const p = project('../p?'), scene = p.scenes[0], candidate = scene.motion.versions[0];
   assert.deepEqual(createMotionRequest(p, scene, ' 连线 ', candidate), {
-    path: '/api/scenes/scene-1/motion', body: { expected_revision: 1, instruction: '连线', base_version_id: 'v1' } });
+    path: '/api/v1/scenes/scene-1/motion', body: { expected_revision: 1, instruction: '连线', base_version_id: 'v1' } });
   assert.deepEqual(createMotionAdoption(p, scene, candidate).body,
     { expected_revision: 1, version_id: 'v1', expected_head_version_id: null });
   assert.throws(() => createMotionAdoption(p, scene, candidate, { unsaved: true }), /未保存/);
   assert.throws(() => createMotionAdoption(p, scene, { ...candidate, stale: true }));
   assert.throws(() => createMotionAdoption(p, scene, { id: 'foreign' }));
   const draft = createMotionRenderRequest(p, { scene, candidate, audio: currentMotionAudio(scene) });
-  assert.equal(draft.path, '/api/projects/..%2Fp%3F/motion-renders');
+  assert.equal(draft.path, '/api/v1/projects/..%2Fp%3F/motion-renders');
   assert.deepEqual(draft.body, { expected_revision: 1, purpose: 'draft', subtitles: false,
     scene_id: 'scene-1', motion_version_id: 'v1', audio_version_id: 'a1' });
   assert.deepEqual(createMotionRenderRequest(p, { purpose: 'delivery' }).body,
@@ -308,7 +308,7 @@ test('generation, adoption and draft requests bind exact reviewed candidate, rev
 
 test('whole-project drafts explicitly use adopted versions and leave timing confirmation to delivery', () => {
   assert.deepEqual(createProjectMotionDraftRequest(project('../p?')), {
-    path: '/api/projects/..%2Fp%3F/motion-renders',
+    path: '/api/v1/projects/..%2Fp%3F/motion-renders',
     body: { expected_revision: 1, purpose: 'draft', subtitles: false } });
   for (const p of [null, {}, { id: 'p1' }, { id: 'p1', revision: '1' }]) {
     assert.throws(() => createProjectMotionDraftRequest(p), /读取项目/);
@@ -347,7 +347,7 @@ test('review is inert text, first read only estimates and never generates, adopt
   assert.match(h.$('motion-review').textContent, /第 1 段.*出现/);
   assert.match(h.$('motion-timing-status').textContent, /文字比例估算.*尚未人工核对/);
   assert.match(h.$('motion-timing-rows').textContent, /实际读法：然后处理艾斯迪开/);
-  assert.equal(h.$('motion-timing-audio').src, '/api/audio-versions/a1/audio');
+  assert.equal(h.$('motion-timing-audio').src, '/api/v1/audio-versions/a1/audio');
   assert.equal(h.$('adopt-motion').disabled, true); assert.equal(h.$('preview-motion').disabled, false);
   assert.deepEqual(h.state.context.project.speech_settings, { voice: 'one-project-voice' });
 });
@@ -413,7 +413,7 @@ test('adoption requires explicit confirmation, loaded current candidate and no d
   h.$('confirm-motion-adoption').checked = true; await h.panel.adopt(); assert.equal(posts(h).length, 0);
   h.state.data.revision = 2; await h.load(); h.$('confirm-motion-adoption').checked = true;
   h.state.transport = async () => project('p1', 3); await h.panel.adopt();
-  assert.deepEqual(posts(h).at(-1), { path: '/api/scenes/scene-1/motion/adopt',
+  assert.deepEqual(posts(h).at(-1), { path: '/api/v1/scenes/scene-1/motion/adopt',
     options: { method: 'POST', body: { expected_revision: 2, version_id: 'v1', expected_head_version_id: null } } });
   assert.equal(h.state.context.scene.motion.mode, 'static'); // Only a server refresh changes adoption.
 });
@@ -547,7 +547,7 @@ test('gate off preserves history, audio and cancellation and permits withdrawing
   await h.panel.generate(); await h.panel.adopt(); await h.panel.saveTiming(true); await h.panel.preview(); await h.panel.mode('motion');
   assert.equal(h.state.calls.length, calls);
   h.state.transport = async () => ({ id: '../op', status: 'cancelling' }); await h.panel.cancel();
-  assert.equal(posts(h).at(-1).path, '/api/motion-operations/..%2Fop/cancel');
+  assert.equal(posts(h).at(-1).path, '/api/v1/motion-operations/..%2Fop/cancel');
   assert.equal(h.$('cancel-motion').disabled, true);
   const cancelledCalls = posts(h).length; await h.panel.cancel(); assert.equal(posts(h).length, cancelledCalls);
   h.state.transport = async () => project(); await h.panel.mode('static');
@@ -589,7 +589,7 @@ test('manual save remains pending and verification is a separate explicit record
   assert.equal(h.panel.hasDrafts(), false); await h.panel.saveTiming(true); assert.equal(posts(h).length, 1);
   h.$('confirm-motion-timing').checked = true; await h.$('confirm-motion-timing').emit('change');
   await h.panel.saveTiming(true);
-  assert.deepEqual(posts(h).at(-1), { path: '/api/motion-versions/v1/timing/verify', options: { method: 'POST',
+  assert.deepEqual(posts(h).at(-1), { path: '/api/v1/motion-versions/v1/timing/verify', options: { method: 'POST',
     body: { expected_revision: 2, audio_version_id: 'a1', expected_alignment_sha256: '4'.repeat(64) } } });
   assert.match(h.$('motion-timing-status').textContent, /已由人工核对/);
   assert.equal(posts(h).length, 2); assert.ok(!h.state.calls.some(row => /speech|audio\/generate/.test(row.path)));
@@ -620,7 +620,7 @@ test('current recording or stale plan change clears verification and does not re
   h.state.timing = timing('v1', 'a2'); h.panel.render();
   assert.equal(h.$('confirm-motion-timing').checked, false); assert.equal(h.$('motion-timing-rows').children.length, 0);
   await h.load(); assert.match(h.$('motion-timing-status').textContent, /尚未人工核对/);
-  assert.equal(h.$('motion-timing-audio').src, '/api/audio-versions/a2/audio');
+  assert.equal(h.$('motion-timing-audio').src, '/api/v1/audio-versions/a2/audio');
   h.state.data.scenes[0].motion.versions[0].stale = true; await h.load();
   assert.equal(h.$('motion-timing-rows').children.length, 0); assert.equal(h.$('preview-motion').disabled, true);
   assert.match(h.$('motion-timing-status').textContent, /历史方案不能校正/);
@@ -665,7 +665,7 @@ test('busy timing writes disable inputs and older callbacks cannot overwrite a s
 test('candidate MP4 draft uses saved estimated timing without adoption, verification or TTS', async () => {
   const h = harness(); await h.load(); h.state.transport = async () => ({ id: 'draft', status: 'queued' });
   await h.panel.preview(); assert.equal(posts(h).length, 1);
-  assert.deepEqual(posts(h)[0], { path: '/api/projects/p1/motion-renders', options: { method: 'POST',
+  assert.deepEqual(posts(h)[0], { path: '/api/v1/projects/p1/motion-renders', options: { method: 'POST',
     body: { expected_revision: 1, purpose: 'draft', subtitles: false,
       scene_id: 'scene-1', motion_version_id: 'v1', audio_version_id: 'a1' } } });
   assert.equal(h.state.context.scene.motion.head_version_id, null); assert.equal(h.state.refreshes, 1);
@@ -762,7 +762,7 @@ test('a dynamic project keeps the video workflow before any plan exists without 
 test('explicit transition binds the reviewed project revision and rejects unsaved or active work', () => {
   const p = project('../legacy?');
   assert.deepEqual(createDynamicProjectRequest(p), {
-    path: '/api/projects/..%2Flegacy%3F/production-mode', body: { mode: 'motion', expected_revision: 1 },
+    path: '/api/v1/projects/..%2Flegacy%3F/production-mode', body: { mode: 'motion', expected_revision: 1 },
   });
   assert.throws(() => createDynamicProjectRequest(p, { unsaved: true }), /未保存/);
   assert.throws(() => createDynamicProjectRequest(p, { busy: true }), /任务结束/);

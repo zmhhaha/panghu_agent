@@ -63,9 +63,9 @@ test('opening and playing original or revised drafts never spends work or assert
   h.state.data.operations.unshift({...automatic(),id:'revision',kind:'user_requested',result:{source:revised,revision_performed:true}});
   h.state.data.sequences[0].sources.push(revised);
   await h.load();
-  assert.equal(h.panel.nodes.player.src,'/api/renders/original/video');
+  assert.equal(h.panel.nodes.player.src,'/api/v1/renders/original/video');
   h.panel.nodes.chooser.value='revised';await h.panel.nodes.chooser.emit('change');
-  assert.equal(h.panel.nodes.player.src,'/api/renders/revised/video');
+  assert.equal(h.panel.nodes.player.src,'/api/v1/renders/revised/video');
   assert.match(h.panel.nodes.note.textContent,/未经人工认可/);
   assert.match(h.panel.nodes.history.textContent,/尚未再次完整审阅或试听/);
   await h.panel.nodes.player.emit('play');assert.equal(posts(h).length,0);
