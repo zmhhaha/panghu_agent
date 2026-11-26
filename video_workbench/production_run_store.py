@@ -646,6 +646,23 @@ class ProductionRunStore:
                 and item.get('audio_operation_id') is None,
                 'production_run_audio_reuse_mismatch', 409)
 
+    @staticmethod
+    def _has_planned_resources(project):
+        value = project.get('joint_plan', {}).get('resource_plan')
+        if value is None:
+            return False
+        # Nonempty and malformed graphs retain the existing film validation
+        # path. Only the planner's complete, valid empty contract means no work.
+        if type(value) is not dict or type(value.get('nodes')) is not list or value['nodes']:
+            return True
+        budget = value.get('budget')
+        require(set(value) == {'nodes', 'budget'} and type(budget) is dict
+            and set(budget) == {'max_attempts', 'max_attempts_per_node'}
+            and all(type(v) is int and 1 <= v <= 32 for v in budget.values())
+            and budget['max_attempts_per_node'] <= budget['max_attempts'],
+            'production_resource_plan_invalid')
+        return False
+
     def start(self, owner, project_id, request, idem):
         required = {'expected_revision', 'joint_plan_version_id'}
         require(type(request) is dict and required <= set(request) <= required | {
@@ -709,7 +726,7 @@ class ProductionRunStore:
                 use_scene_space = (self.scene_space_adapter is not None
                     and getattr(self.scene_space_adapter,'enabled',True)
                     and resource_authoring is None and 'resource_plan' not in request
-                    and not rendering_project.get('joint_plan',{}).get('resource_plan'))
+                    and not self._has_planned_resources(rendering_project))
             if not use_scene_space:
                 require(self.film_creation is not None,'spatial_rendering_route_unavailable',503)
         else:
@@ -724,7 +741,7 @@ class ProductionRunStore:
             with self.store.transaction() as db:
                 replay = db.execute('SELECT 1 FROM production_runs WHERE owner=? AND idem=?',(owner,idem)).fetchone()
                 planning_project = self.store._project(db,owner,project_id)
-                require(not planning_project.get('joint_plan',{}).get('resource_plan'),
+                require(not self._has_planned_resources(planning_project),
                     'scene_space_production_resource_not_admitted')
             if replay is None:
                 configuration = self.scene_space_adapter.freeze_configuration(owner,project_id)
