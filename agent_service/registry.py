@@ -105,6 +105,9 @@ class TaskContract(_Record):
     @model_validator(mode='after')
     def reviewed_handler(self):
         handler = implementation(self.name, self.revision)
+        if (self.name == 'video.animation-wikiskill-compile.v4' and self.revision == '3'
+                and self.max_timeout_seconds != handler.max_timeout_seconds):
+            raise ValueError('The extended WikiSkill revision requires its exact native budget')
         if (self.task_schema != handler.task_schema or self.output_schema != handler.output_schema
                 or set(self.required_tools) != set(handler.required_tools)
                 or not {'text', 'tool_calls'} <= set(self.required_model_capabilities)):
