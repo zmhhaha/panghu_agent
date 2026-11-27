@@ -5,6 +5,10 @@ control-owned model response ledger after the existing tenant, caller and profil
 authorization checks. When ledger rows exist they add `usage_evidence`, and the
 existing bounded `usage` field reflects that evidence. Submission/replay responses
 and stored worker/job outcomes retain their original semantics and bytes.
+If the original native outcome already has usable usage, a partial ledger proof
+is attached separately and does not erase it. Only independent complete evidence
+replaces that existing public usage with the all-attempts aggregate. Missing
+native usage can receive partial evidence while still remaining unknown.
 
 The evidence schema is `agent-model-usage-evidence.v1`. It binds `job_id`, current
 `attempt_id`, `fence`, `state` and `execution_binding_sha256`. `all_attempts=true`
@@ -25,6 +29,9 @@ are supported; repeated identical terminal events count once per request.
 Conflicting, malformed, missing, uncertain, active or unbound evidence remains
 partial. No ledger rows produces no new evidence, rather than invented zero cost.
 More than 1024 requests or attempts produces bounded partial evidence.
+Counts and SQL limits are checked before fetching supplier bodies. Over-limit
+histories select metadata only; normal histories stream and parse one response
+at a time, rather than materializing every response blob in memory.
 
 The aggregate `request_count`, `input_tokens`, `output_tokens`, `total_tokens`,
 `cache_read_tokens` and `cache_write_tokens` use supplier counters. Missing counters

@@ -1154,7 +1154,8 @@ def test_conflicting_or_malformed_sse_terminal_events_are_partial(execution):
     assert usage_evidence_for_job(run.store, job)['completeness'] == 'partial'
 
 
-def test_aggregate_overflow_and_excessive_request_inventory_stay_partial(execution):
+def test_aggregate_overflow_and_excessive_request_inventory_stay_partial(execution, monkeypatch):
+    from sqlalchemy import event
     run = execution()
     for index in range(3):
         _usage_ledger(run, _supplier_response(2**62, 0, 0), suffix=str(index))
@@ -1165,9 +1166,47 @@ def test_aggregate_overflow_and_excessive_request_inventory_stay_partial(executi
         db.execute(insert(requests), [dict(attempt_id=other.envelope.attempt_id,
             body_sha256=hashlib.sha256(str(index).encode()).hexdigest(), state='complete', created_at=1,
             status=200, media_type='application/json', response=raw) for index in range(1025)])
-    proof = usage_evidence_for_job(other.store, _usage_stopped(other))
+    selected=[]
+    def record_sql(_connection,_cursor,statement,_parameters,_context,_many):
+        if statement.lstrip().upper().startswith('SELECT'):selected.append(statement)
+    event.listen(other.store.engine,'before_cursor_execute',record_sql)
+    with monkeypatch.context() as bounded:
+        bounded.setattr('agent_service.model_proxy._response_usage',lambda *_:pytest.fail('Over-limit body must not be parsed'))
+        proof = usage_evidence_for_job(other.store, _usage_stopped(other))
+    event.remove(other.store.engine,'before_cursor_execute',record_sql)
     assert proof['completeness'] == 'partial' and proof['authoritative'] is False
     assert proof['request_count'] == 1025 and len(proof['requests']) == 1024
+    assert not any('agent_model_requests.response' in sql for sql in selected)
+    assert all(row['response_sha256'] is None for row in proof['requests'])
+
+
+def test_in_budget_usage_reader_streams_supplier_bodies_one_at_a_time(execution):
+    from sqlalchemy import event
+    run=execution();_usage_ledger(run);job=_usage_stopped(run);options=[]
+    def record_sql(_connection,_cursor,statement,_parameters,context,_many):
+        if statement.lstrip().upper().startswith('SELECT') and 'agent_model_requests.response' in statement:
+            options.append(dict(context.execution_options))
+    event.listen(run.store.engine,'before_cursor_execute',record_sql)
+    try:proof=usage_evidence_for_job(run.store,job)
+    finally:event.remove(run.store.engine,'before_cursor_execute',record_sql)
+    assert proof['completeness']=='complete'
+    assert len(options)==1 and options[0]['stream_results'] is True and options[0]['yield_per']==1
+
+
+@pytest.mark.parametrize('supplier_complete',[False,True])
+def test_partial_ledger_does_not_erase_existing_native_usage(execution,supplier_complete):
+    from agent_service.api import public_job
+    run=execution();_usage_ledger(run,state='complete' if supplier_complete else 'admitted')
+    native=dict(input_tokens=100,output_tokens=20,request_count=2,completeness='complete')
+    job=_usage_stopped(run,forged_usage=native)
+    evidence=usage_evidence_for_job(run.store,job);view=public_job(job,usage_evidence=evidence)
+    assert view['usage_evidence']==evidence
+    if supplier_complete:
+        assert view['usage']['input_tokens']==10 and view['usage']['request_count']==1
+    else:
+        assert all(view['usage'][key]==value for key,value in native.items())
+        assert view['usage_evidence']['completeness']=='partial'
+    assert run.store.get_job('tenant','business',run.envelope.job_id)['outcome']['usage']==native
 
 
 def test_all_attempts_are_accounted_and_missing_old_stop_custody_blocks_completeness(execution):

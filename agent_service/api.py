@@ -127,7 +127,9 @@ def public_job(job: dict, *, usage_evidence=None) -> dict:
         'checkpoint_ref': job['request'].get('checkpoint_ref'),
     }
     if usage_evidence is not None:
-        value['usage'] = _usage(usage_evidence)
+        if value['usage'] is None or (usage_evidence.get('completeness') == 'complete'
+                                     and usage_evidence.get('authoritative') is True):
+            value['usage'] = _usage(usage_evidence)
         value['usage_evidence'] = usage_evidence
     return value
 

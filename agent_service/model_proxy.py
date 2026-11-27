@@ -136,21 +136,53 @@ def usage_evidence_for_job(store, job):
     """
     job_id = job.get('job_id', job.get('id'))
     with store.engine.connect() as db:
-        current = db.execute(select(jobs).where(jobs.c.id == job_id)).mappings().one_or_none()
+        current = db.execute(select(jobs.c.id, jobs.c.pins, jobs.c.state, jobs.c.attempt_id,
+            jobs.c.fence, jobs.c.outcome).where(jobs.c.id == job_id)).mappings().one_or_none()
         if current is None or any(current[key] != job.get(key) for key in ('attempt_id', 'fence', 'state')):
             return None
         current = dict(current)
-        attempts_seen = [dict(row) for row in db.execute(select(attempts).where(
-            attempts.c.job_id == job_id).order_by(attempts.c.fence)).mappings()]
-        rows = db.execute(select(requests, attempts.c.fence).join(
-            attempts, requests.c.attempt_id == attempts.c.id).where(
-            attempts.c.job_id == job_id).order_by(requests.c.created_at,
-                requests.c.attempt_id, requests.c.body_sha256)).mappings().all()
-        if not rows:
+        attempt_count = db.execute(select(func.count()).select_from(attempts).where(
+            attempts.c.job_id == job_id)).scalar_one()
+        attempts_seen = [dict(row) for row in db.execute(select(attempts.c.id, attempts.c.fence,
+            attempts.c.state, attempts.c.outcome).where(attempts.c.job_id == job_id)
+            .order_by(attempts.c.fence).limit(1025)).mappings()]
+        request_count = db.execute(select(func.count()).select_from(requests).join(
+            attempts, requests.c.attempt_id == attempts.c.id).where(attempts.c.job_id == job_id)).scalar_one()
+        if not request_count:
             return None
-        allocations = {row['attempt_id']: dict(row) for row in db.execute(select(worker_allocations).where(
-            worker_allocations.c.job_id == job_id)).mappings()}
-    request_attempts = {row['attempt_id'] for row in rows}
+        bounded = request_count <= 1024 and attempt_count <= 1024
+        allocations = {}
+        for row in db.execute(select(worker_allocations.c.attempt_id, worker_allocations.c.job_id,
+                worker_allocations.c.fence, worker_allocations.c.request_sha256,
+                worker_allocations.c.candidate_result['stop_receipt'].label('candidate_stop_receipt'))
+                .where(worker_allocations.c.job_id == job_id,
+                    worker_allocations.c.attempt_id.in_([a['id'] for a in attempts_seen[:1024]]))
+                .limit(1024)).mappings():
+            value = dict(row)
+            value['candidate_result'] = dict(stop_receipt=value.pop('candidate_stop_receipt'))
+            allocations[row['attempt_id']] = value
+        columns = (list(requests.c) if bounded else [requests.c.attempt_id, requests.c.body_sha256,
+            requests.c.state, requests.c.status])
+        query = select(*columns, attempts.c.fence).join(attempts, requests.c.attempt_id == attempts.c.id).where(
+            attempts.c.job_id == job_id).order_by(requests.c.created_at,
+                requests.c.attempt_id, requests.c.body_sha256).limit(1025)
+        # A server-side cursor retains at most one supplier body at a time.
+        # Over-limit histories never select response bytes at all.
+        records = []
+        with db.execute(query.execution_options(stream_results=True, yield_per=1)) as result:
+            for index, row in enumerate(result.mappings()):
+                if index == 1024:
+                    bounded = False
+                    break
+                raw = bytes(row['response'] or b'') if bounded else None
+                usage = (_response_usage(raw, row['media_type'] or '')
+                         if raw is not None and row['state'] == 'complete' and row['status'] == 200 else None)
+                records.append(dict(attempt_id=row['attempt_id'], fence=row['fence'], body_sha256=row['body_sha256'],
+                    execution_request_sha256=allocations.get(row['attempt_id'], {}).get('request_sha256'),
+                    state=row['state'], status=row['status'],
+                    response_sha256=hashlib.sha256(raw).hexdigest() if raw is not None else None,
+                    usage_complete=usage is not None, **(usage or {})))
+    request_attempts = {row['attempt_id'] for row in records}
     attempt_proofs = []
     for attempt in attempts_seen[:1024]:
         allocation = allocations.get(attempt['id'])
@@ -158,7 +190,7 @@ def usage_evidence_for_job(store, job):
             stop_proven=_attempt_usage_custody(attempt, allocation, current, attempt['id'] in request_attempts),
             execution_request_sha256=(allocation or {}).get('request_sha256'),
             stop_result_sha256=((attempt.get('outcome') or {}).get('stop_receipt') or {}).get('result_sha256')))
-    custody = bool(attempts_seen) and all(_attempt_usage_custody(
+    custody = bounded and bool(attempts_seen) and all(_attempt_usage_custody(
         attempt, allocations.get(attempt['id']), current, attempt['id'] in request_attempts)
         for attempt in attempts_seen)
     active_attempt = next((row for row in attempts_seen if row['id'] == current['attempt_id']), None)
@@ -166,17 +198,6 @@ def usage_evidence_for_job(store, job):
         and (current.get('outcome') or {}).get('_service_stop_proven') is True \
         and active_attempt is not None \
         and (current.get('outcome') or {}).get('stop_receipt') == (active_attempt.get('outcome') or {}).get('stop_receipt')
-    # Keep the business-facing proof bounded even for a corrupted/legacy ledger.
-    bounded = len(rows) <= 1024 and len(attempts_seen) <= 1024
-    records = []
-    for row in rows[:1024]:
-        raw = bytes(row['response'] or b'')
-        usage = (_response_usage(raw, row['media_type'] or '')
-                 if row['state'] == 'complete' and row['status'] == 200 else None)
-        records.append(dict(attempt_id=row['attempt_id'], fence=row['fence'], body_sha256=row['body_sha256'],
-            execution_request_sha256=allocations.get(row['attempt_id'], {}).get('request_sha256'),
-            state=row['state'], status=row['status'], response_sha256=hashlib.sha256(raw).hexdigest(),
-            usage_complete=usage is not None, **(usage or {})))
     complete = bounded and custody and all(row['usage_complete'] for row in records)
     totals = {}
     for key in ('input_tokens', 'output_tokens', 'total_tokens', 'cache_read_tokens', 'cache_write_tokens'):
@@ -189,7 +210,7 @@ def usage_evidence_for_job(store, job):
         attempt_id=current['attempt_id'], fence=current['fence'], state=current['state'],
         execution_binding_sha256=(current['pins'].get('execution_binding') or {}).get('sha256'),
         stop_proven=custody, all_attempts=True, authoritative=custody and bounded,
-        completeness='complete' if complete else 'partial', request_count=len(rows), attempt_count=len(attempts_seen),
+        completeness='complete' if complete else 'partial', request_count=request_count, attempt_count=attempt_count,
         **totals, reported_cost=None, cost_status='unknown', attempts=attempt_proofs, requests=records)
     if len(models) == 1 and None not in models:
         evidence['model'] = next(iter(models))
