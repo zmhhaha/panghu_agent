@@ -1,0 +1,306 @@
+{
+  "schema": "video.review-evidence-reliability-delivery.v1",
+  "status": "implemented_and_locally_verified_cold_probe_failed_not_production_admitted",
+  "implementation_commit": "aec56904468b32db6a4e2beaafa529b5cdd1fac7",
+  "actual_execution_source_commit": "804f9ba8fffaf6b20d52bf4811c669a59877f777",
+  "actual_execution_worker_image": "arm-cluster-master:5000/agent-service-pi:latest@sha256:cce8d5aded972098a5882475c4ffbd9c92d406ee81844e6365d15508e5f6f656",
+  "scope": {
+    "lossless_png_capture": true,
+    "versioned_frames_api": true,
+    "classified_review_v2": true,
+    "frozen_production_gate_and_export_evidence": true,
+    "legacy_v1_unchanged": true,
+    "all_learning_consumers_migrated": false
+  },
+  "tests": {
+    "identity": [
+      "classname",
+      "name"
+    ],
+    "selected_junit_reports": 12,
+    "selected_junit_recorded_pass_executions": 690,
+    "selected_junit_distinct_passed": 669,
+    "selected_junit_repeated_executions_not_counted_twice": 21,
+    "selected_junit_failures": 0,
+    "selected_junit_errors": 0,
+    "selected_junit_skips": 0,
+    "baseline_r2_distinct_passed": 391,
+    "sqlite_after_added": 235,
+    "collector_added": 15,
+    "model_route_added": 28,
+    "cumulative_report_additions": [
+      {
+        "file": "review-v2-profile-tests-r2.xml",
+        "recorded_passed": 131,
+        "new_identities": 131,
+        "cumulative_distinct": 131
+      },
+      {
+        "file": "review-v2-scenario-tests-r1.xml",
+        "recorded_passed": 1,
+        "new_identities": 1,
+        "cumulative_distinct": 132
+      },
+      {
+        "file": "review-v2-cold-probe-tests-r3.xml",
+        "recorded_passed": 15,
+        "new_identities": 15,
+        "cumulative_distinct": 147
+      },
+      {
+        "file": "review-v2-operator-preparation-tests-r1.xml",
+        "recorded_passed": 4,
+        "new_identities": 4,
+        "cumulative_distinct": 151
+      },
+      {
+        "file": "review-sample-http-null-r2.xml",
+        "recorded_passed": 108,
+        "new_identities": 108,
+        "cumulative_distinct": 259
+      },
+      {
+        "file": "review-reliability-production-r1.xml",
+        "recorded_passed": 70,
+        "new_identities": 70,
+        "cumulative_distinct": 329
+      },
+      {
+        "file": "review-reliability-production-r2.xml",
+        "recorded_passed": 15,
+        "new_identities": 6,
+        "cumulative_distinct": 335
+      },
+      {
+        "file": "review-v2-gateway-r1.xml",
+        "recorded_passed": 3,
+        "new_identities": 3,
+        "cumulative_distinct": 338
+      },
+      {
+        "file": "review-v2-acceptance-final-r1.xml",
+        "recorded_passed": 53,
+        "new_identities": 53,
+        "cumulative_distinct": 391
+      },
+      {
+        "file": "review-v2-sqlite-concurrency-after-r1.xml",
+        "recorded_passed": 247,
+        "new_identities": 235,
+        "cumulative_distinct": 626
+      },
+      {
+        "file": "review-v2-cold-collector-offline-r3.xml",
+        "recorded_passed": 15,
+        "new_identities": 15,
+        "cumulative_distinct": 641
+      },
+      {
+        "file": "review-v2-model-route-preflight-r1.xml",
+        "recorded_passed": 28,
+        "new_identities": 28,
+        "cumulative_distinct": 669
+      }
+    ],
+    "A_prior_non_junit_recorded_passes": 55,
+    "UID_compat_reported_non_junit_passes": 10,
+    "non_junit_records_not_added_to_identity_verified_total": true,
+    "universal_distinct_total_claimed": false,
+    "node_nested_cases_added_to_python_total": false,
+    "current_counts_are_existing_test_evidence_not_artistic_or_paid_acceptance": true
+  },
+  "actual_cold_run": {
+    "job_id": "3fa20851-3eaf-4472-a284-e1336d88fb90",
+    "attempt_id": "d6cf94b6-def2-423c-9bd2-134a32793471",
+    "authorization_sha256": "59f4ad28c601bad808af056d5f6785d066589d94fb25fd0c43bcf702ad27057b",
+    "execution_binding_sha256": "57959d887f1a1e3f67a9578d4dc48f83beebf5f3711a343a68a179d297ff5422",
+    "input_sha256": "310cd2986a73ef117184849a045b2c962e2891eefce6861bf956d9f86191fb7b",
+    "actual_requests": 1,
+    "completed_requests": 0,
+    "completed_reviews": 0,
+    "image_transport_rows": 0,
+    "request_phase": "connectivity_before_picture_review",
+    "observed_upstream_http_status": 400,
+    "original_upstream_response_persisted": false,
+    "usage_completeness": "unknown",
+    "input_tokens": null,
+    "output_tokens": null,
+    "total_tokens": null,
+    "cost": null,
+    "job_limits": {
+      "max_requests": 8,
+      "max_output_tokens": 8192,
+      "execution_seconds": 3600
+    },
+    "actual_first_request_limits": {
+      "max_requests": 8,
+      "max_output_tokens": 2048
+    },
+    "fresh_physical_stops": [
+      {
+        "exit_code": 1,
+        "image_id": "docker-pullable://arm-cluster-master:5000/agent-service-pi@sha256:cce8d5aded972098a5882475c4ffbd9c92d406ee81844e6365d15508e5f6f656",
+        "phase": "Failed",
+        "pod_uid": "600c96eb-aa7f-49d6-87db-64dac8ec4d5f",
+        "role": "worker",
+        "snapshot_sha256": "e005ec9d249dda2b613645b79298b9c9de9115345cf7f12022b6f60542a2314b",
+        "stop_proven": true
+      },
+      {
+        "exit_code": 0,
+        "image_id": "docker-pullable://arm-cluster-master:5000/agent-service-pi@sha256:cce8d5aded972098a5882475c4ffbd9c92d406ee81844e6365d15508e5f6f656",
+        "phase": "Succeeded",
+        "pod_uid": "2bb7d611-131a-4c5a-b93f-f2d2fd359ef1",
+        "role": "proxy",
+        "snapshot_sha256": "a73f04ee59b083a9f330ce54434e184369b03876e06b1340fccafe2168daccab",
+        "stop_proven": true
+      }
+    ],
+    "admission_passed": false,
+    "automatic_retry": false,
+    "author_jobs": 0,
+    "repair_jobs": 0,
+    "render_jobs": 0,
+    "exports": 0,
+    "collector_zero_model_calls_is_not_zero_requests": true
+  },
+  "diagnosis": {
+    "reason": "backend_model_name_was_used_as_public_alias",
+    "attempted_public_alias": "gpt-6.2-sol",
+    "advertised_public_alias": "llm-trusted",
+    "configured_backend_model": "gpt-6.2-sol",
+    "route_revision": "fe4ce4894a71e7b9812f7264",
+    "evidence_sources": [
+      "existing readiness routes",
+      "IP/time-correlated access log",
+      "deployed application AST"
+    ],
+    "original_error_response_body_available": false,
+    "unknown_usage_reclassified": false
+  },
+  "future_preflight_fix": {
+    "module": "agent_service/model_route_preflight.py",
+    "required": [
+      "exact public alias",
+      "configured backend model",
+      "route revision"
+    ],
+    "no_io": true,
+    "no_alias_fallback": true,
+    "local_tests_passed": 28,
+    "source_commit_scope": "Follow-up source commit containing this record, newer than actual executed image804.",
+    "built_into_executed_image": false,
+    "deployed": false,
+    "future_disabled_combination": "246a6a553c4a4beb2b621b1172618c407fd13940b2f1dd24272c9e78797a0f2b",
+    "future_candidate_launched": false,
+    "new_authorization_created": false,
+    "metadata_preflight_is_not_model_admission": true
+  },
+  "cleanup": {
+    "status": "six_exact_candidate_objects_absent",
+    "exact_objects": 6,
+    "permanent_uid_reservation_retained": true,
+    "uid_ledger_sha256": "3570fc2483104eadf843361e0fce2461136d175159ec1d1423d24e6e699b9dc1",
+    "production_objects_touched": 0,
+    "secrets_touched": 0
+  },
+  "boundaries": {
+    "production_bindings": 113,
+    "new_profile_enabled": false,
+    "png_host_enabled": false,
+    "six_one_complete": false,
+    "old_a7_reclassified": false,
+    "old_unknown_preserved": true,
+    "formal_export": false,
+    "artistic_acceptance": false,
+    "wikiskill_published": false,
+    "main_merged": false,
+    "five_minute_film_resumed": false
+  },
+  "evidence": [
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-validation-aggregate-r3.json",
+      "bytes": 259575,
+      "sha256": "716a1b9e198b73828554415a087d80025bdefb982632850c654c7135ca181705"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-validation-hashes-r3.json",
+      "bytes": 22720,
+      "sha256": "ad499132745b07e4bcfb5b39a08b7c8898e911d436a2cf1283249fec62bf145b"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-worker-build-independent-review-r2.json",
+      "bytes": 3755,
+      "sha256": "a58db56252026a4a15e9e9dbba102afb8b548f9aed0e1e4c2c5237b46b11829d"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-sqlite-budget-fix-r1.json",
+      "bytes": 1487,
+      "sha256": "7b66f28fe140afa4757d4082590a3852f92e93b6a32aef8684ec94b64fc09d12"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\audit.json",
+      "bytes": 10266,
+      "sha256": "e7c5036021aadc26098392d59d8fc0a2742b4bdfc9a9b063c9cf60cbd8da894e"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\inventory.json",
+      "bytes": 5298,
+      "sha256": "58524472b4bdb193f124c8fa17480cd6b5f3cd1169830f7040a330109610b087"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-actual-llm-alias-contract-diagnosis-r2.json",
+      "bytes": 2618,
+      "sha256": "6f73578203745117d0e9b389e7ec342dac7fbf99967f95c253a923cf2fc0e528"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-cleanup-completed-r2.json",
+      "bytes": 2721,
+      "sha256": "314b11c5a14d3c1c56932c9a9104102d308766fafe26f0ff526f2c921967ab35"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-corrected-alias-preparation-r3.json",
+      "bytes": 2335,
+      "sha256": "72f1c52e77fadb5c3965fcb26dbb2ba0835cf58552995033f936b6e3018989f4"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-actual-disabled-catalog-r3.json",
+      "bytes": 8740,
+      "sha256": "54b3183b157c11f8189b7e0215cf38ff5c8f041ec58b0b2ed8b3956241f99f77"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\openspec-review-reliability-terminal-r4-summary.json",
+      "bytes": 487,
+      "sha256": "cd11d9c45fa7e0eaf5697c6651f48e881ed33255ab02e61921cd096cf8701124"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-independent-review-r2.json",
+      "bytes": 2177,
+      "sha256": "0c5b1a584b3b782f9257e8da91ef216a4f65c18123fefa3edb413f58d4138d71"
+    },
+    {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-terminal-evidence-r2.json",
+      "bytes": 8709,
+      "sha256": "dc44c901f670e5520654363b8989061867851ee835acb83a397938db17b15ab6"
+    }
+  ],
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "review_change": {
+      "id": "improve-video-review-evidence-reliability",
+      "revision": "fa13463a7836ee62d966afbcc5047141a0060658",
+      "completed": 8,
+      "total": 9,
+      "remaining_task": "3.1",
+      "validated": true
+    },
+    "spatial_change": {
+      "id": "improve-video-spatial-rendering-foundation",
+      "revision": "e578256ca46bc1d67dea60745e3dbfc4da1f53b1",
+      "completed": 16,
+      "total": 26,
+      "six_one_complete": false,
+      "validated": true
+    }
+  }
+}

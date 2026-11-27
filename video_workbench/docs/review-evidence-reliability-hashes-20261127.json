@@ -1,0 +1,383 @@
+{
+  "schema": "video.review-reliability-validation-file-index.v3",
+  "observed_at": "2026-11-27T09:03:08.356063+00:00",
+  "executed_source_revision": "804f9ba8fffaf6b20d52bf4811c669a59877f777",
+  "aggregate": {
+    "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-validation-aggregate-r3.json",
+    "bytes": 259575,
+    "sha256": "716a1b9e198b73828554415a087d80025bdefb982632850c654c7135ca181705"
+  },
+  "evidence_files": {
+    "audit_review_v2_cold_failure_readonly_r1.py": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\audit_review_v2_cold_failure_readonly_r1.py",
+      "bytes": 14990,
+      "sha256": "3a1fad6701ad073166ba1faab82ffaafb521e1320827c58c7888df89af90ec18"
+    },
+    "build-evidence/review-reliability-worker-r2/build-completed.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\build-evidence\\review-reliability-worker-r2\\build-completed.json",
+      "bytes": 1232,
+      "sha256": "a92114177525b1d0c6a1d45456cbb61b9a2566c4dd629606939a3bb582fbce4f"
+    },
+    "build-evidence/review-reliability-worker-r2/source-manifest.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\build-evidence\\review-reliability-worker-r2\\source-manifest.json",
+      "bytes": 219974,
+      "sha256": "c41e7d5b1867b2620ee71e989643130b492ed5993d9da5de0e5d9f155f257d9e"
+    },
+    "build-evidence/review-reliability-worker-r2/worker-build.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\build-evidence\\review-reliability-worker-r2\\worker-build.json",
+      "bytes": 2264,
+      "sha256": "c39a6976fcf331f820dd5247224cc78e1627f4667e51bf65e601188337fba423"
+    },
+    "build-evidence/review-reliability-worker-r2/worker-runtime-smoke.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\build-evidence\\review-reliability-worker-r2\\worker-runtime-smoke.json",
+      "bytes": 4128,
+      "sha256": "0132bf190356b70471cd8984d9bfa2cc96472430fbc5490fe763a5a1fa69bb9d"
+    },
+    "future_model_route_preflight_example_r3.py": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\future_model_route_preflight_example_r3.py",
+      "bytes": 1588,
+      "sha256": "58a63acad5354e3f93a49a361deb2fdeee8e5fcdd3d1b3e72fc4ed52fad40278"
+    },
+    "review-reliability-production-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-production-r1.xml",
+      "bytes": 12481,
+      "sha256": "baf681d22d973bc26661dba3730f5519cd38ad5ba8419a142c16d930c7c0c0db"
+    },
+    "review-reliability-production-r2.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-production-r2.xml",
+      "bytes": 2746,
+      "sha256": "cadce1c5577a90a56113f397e5ef053cc4390390cdfea8a25515131a5be79f5d"
+    },
+    "review-reliability-validation-aggregate-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-validation-aggregate-r2.json",
+      "bytes": 149264,
+      "sha256": "78009be518d8f06e611e70ea42108be1722b1854742f7b2cf1c74e5045ed8bfd"
+    },
+    "review-reliability-validation-hashes-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-validation-hashes-r2.json",
+      "bytes": 14492,
+      "sha256": "3f445ee44a40e77152811e8a1367a9978c01fd87b7e30ea0508773c59cb05a45"
+    },
+    "review-reliability-worker-build-independent-review-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-worker-build-independent-review-r2.json",
+      "bytes": 3755,
+      "sha256": "a58db56252026a4a15e9e9dbba102afb8b548f9aed0e1e4c2c5237b46b11829d"
+    },
+    "review-reliability-worker-collected-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-reliability-worker-collected-r2.json",
+      "bytes": 1418,
+      "sha256": "b583ea9cd8d332d38db063d49bfc0f916b5c03e334b6b7b9194bf1b6b923fe49"
+    },
+    "review-sample-http-null-r2.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-sample-http-null-r2.xml",
+      "bytes": 18447,
+      "sha256": "d13a8a3a354381b930c2fe3a0a753c7ef2da232c3c44b116391539724c46594f"
+    },
+    "review-v2-acceptance-final-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-acceptance-final-r1.xml",
+      "bytes": 10420,
+      "sha256": "b7e11c91c9524928fbe07cd946b39124ef8c4e08b2cc4b718ba7e1c6ea80044a"
+    },
+    "review-v2-actual-llm-alias-contract-diagnosis-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-actual-llm-alias-contract-diagnosis-r2.json",
+      "bytes": 2618,
+      "sha256": "6f73578203745117d0e9b389e7ec342dac7fbf99967f95c253a923cf2fc0e528"
+    },
+    "review-v2-cold-authorization-r1.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-authorization-r1.json",
+      "bytes": 1712,
+      "sha256": "59f4ad28c601bad808af056d5f6785d066589d94fb25fd0c43bcf702ad27057b"
+    },
+    "review-v2-cold-collection-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-collection-r2.json",
+      "bytes": 1168,
+      "sha256": "090d8706f925f071efac2cdfa6db7441b9cd2ddc215ca0dd981565066be12560"
+    },
+    "review-v2-cold-collector-offline-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-collector-offline-r1.xml",
+      "bytes": 8555,
+      "sha256": "389f7f4c15ca89a001848d871f80a373055f28253de6b69cdbb46bade9e8bf9c"
+    },
+    "review-v2-cold-collector-offline-r2.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-collector-offline-r2.xml",
+      "bytes": 2746,
+      "sha256": "d0a2936cbce321c05faa5a6a4e199ecf18a4e9988cb8f02c8c267dda27c385c5"
+    },
+    "review-v2-cold-collector-offline-r3.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-collector-offline-r3.xml",
+      "bytes": 3282,
+      "sha256": "8d6156db088c401d0d35dbd2f6eeb8c4711678bbb19c91a268df936ceb571db9"
+    },
+    "review-v2-cold-failure-readonly-r1/audit.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\audit.json",
+      "bytes": 10266,
+      "sha256": "e7c5036021aadc26098392d59d8fc0a2742b4bdfc9a9b063c9cf60cbd8da894e"
+    },
+    "review-v2-cold-failure-readonly-r1/binding/authorization.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\binding\\authorization.json",
+      "bytes": 1712,
+      "sha256": "59f4ad28c601bad808af056d5f6785d066589d94fb25fd0c43bcf702ad27057b"
+    },
+    "review-v2-cold-failure-readonly-r1/binding/execution-binding.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\binding\\execution-binding.json",
+      "bytes": 2752,
+      "sha256": "57959d887f1a1e3f67a9578d4dc48f83beebf5f3711a343a68a179d297ff5422"
+    },
+    "review-v2-cold-failure-readonly-r1/binding/preparation-seal.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\binding\\preparation-seal.json",
+      "bytes": 5105,
+      "sha256": "6153d7d6502106155cbb70610310bdeb58d97f0e3a420749eefb9b0aa21b0f64"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/candidate-request.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\candidate-request.json",
+      "bytes": 3363270,
+      "sha256": "2a0d3bb17092c76c7e261d36de5837079571685bfdcd400fae25a9b4bfe0e0ad"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/operator-summary.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\operator-summary.json",
+      "bytes": 915,
+      "sha256": "d576afe97b01c9586e8e1ebffad599f322e6d1a8371c43e6addd5a59538a990a"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/picture-learning-input.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\picture-learning-input.json",
+      "bytes": 2921,
+      "sha256": "310cd2986a73ef117184849a045b2c962e2891eefce6861bf956d9f86191fb7b"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/proxy-pod.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\proxy-pod.json",
+      "bytes": 6628,
+      "sha256": "c363c2e3ca954832333557472e6baa0f79f297d466ddc18369008cc3bd398091"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/proxy.log": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\proxy.log",
+      "bytes": 111,
+      "sha256": "5718ac4c8267c08005ebd05fbad5441338db0d1aa5289f189ab671c1c7c84d50"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/response-ledger.sqlite3": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\response-ledger.sqlite3",
+      "bytes": 2736128,
+      "sha256": "8d7885d397fccc093eb6db778c153f0547c08dc0d19a5f4472377d5f069ca84c"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/worker-pod.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\worker-pod.json",
+      "bytes": 6095,
+      "sha256": "3c4a6873ffa2668a1e8e2781c90eeee8ffe1cb6b22d502483738f3b902eb3256"
+    },
+    "review-v2-cold-failure-readonly-r1/candidate-output/worker.log": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\candidate-output\\worker.log",
+      "bytes": 152,
+      "sha256": "d6f7f97d08392a1bce1ed95298b01bae78ac9e224a0a7dcd8b1bcca2750f7838"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/after-worker-status.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\after-worker-status.json",
+      "bytes": 1336,
+      "sha256": "386d90f0af7372226c3666fcff46b201208a71a9d3a334a03390f79dcb4184cf"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/candidate-request.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\candidate-request.json",
+      "bytes": 3363270,
+      "sha256": "2a0d3bb17092c76c7e261d36de5837079571685bfdcd400fae25a9b4bfe0e0ad"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/initial-status.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\initial-status.json",
+      "bytes": 1336,
+      "sha256": "eae7d5ec74d5f897cb67c3271a21699a3801afd845d57cae4ddb28dd7b2dfc7c"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/proxy-after-stop.log": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\proxy-after-stop.log",
+      "bytes": 111,
+      "sha256": "5718ac4c8267c08005ebd05fbad5441338db0d1aa5289f189ab671c1c7c84d50"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/proxy-before-stop.log": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\proxy-before-stop.log",
+      "bytes": 336,
+      "sha256": "a6f9376f6066142f251182cc6b8d9cfd4fce9918d0c8171a9b72f36d5f18370a"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/proxy-delete-options.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\proxy-delete-options.json",
+      "bytes": 105,
+      "sha256": "c51161eb050d86cb74bb5c313587c9358587ad65d3d7b39fb7e82bbb33b323ad"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/proxy-delete-response.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\proxy-delete-response.json",
+      "bytes": 10917,
+      "sha256": "31aecf206896d52d6dc6be64b39e33dc6a3cc2b9245abe6e3c651525afae2dbc"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/proxy-pod-before-stop.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\proxy-pod-before-stop.json",
+      "bytes": 6338,
+      "sha256": "2f37deef917c00919ff71702c15b7a14af9ec18430e2c4ea8e7b8656762448b0"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/proxy-pod.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\proxy-pod.json",
+      "bytes": 6628,
+      "sha256": "c363c2e3ca954832333557472e6baa0f79f297d466ddc18369008cc3bd398091"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/readonly-accounting.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\readonly-accounting.json",
+      "bytes": 1043,
+      "sha256": "e6b2919f83e787f832211e0212e259340b45768c5cd4f7d064d107bbce5609e1"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/response-ledger.sqlite3": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\response-ledger.sqlite3",
+      "bytes": 2736128,
+      "sha256": "8d7885d397fccc093eb6db778c153f0547c08dc0d19a5f4472377d5f069ca84c"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/result.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\result.json",
+      "bytes": 915,
+      "sha256": "d576afe97b01c9586e8e1ebffad599f322e6d1a8371c43e6addd5a59538a990a"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/worker-after-stop.log": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\worker-after-stop.log",
+      "bytes": 152,
+      "sha256": "d6f7f97d08392a1bce1ed95298b01bae78ac9e224a0a7dcd8b1bcca2750f7838"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/worker-before-stop.log": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\worker-before-stop.log",
+      "bytes": 152,
+      "sha256": "d6f7f97d08392a1bce1ed95298b01bae78ac9e224a0a7dcd8b1bcca2750f7838"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/worker-pod-before-stop.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\worker-pod-before-stop.json",
+      "bytes": 6095,
+      "sha256": "3c4a6873ffa2668a1e8e2781c90eeee8ffe1cb6b22d502483738f3b902eb3256"
+    },
+    "review-v2-cold-failure-readonly-r1/collection/worker-pod.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\collection\\worker-pod.json",
+      "bytes": 6095,
+      "sha256": "3c4a6873ffa2668a1e8e2781c90eeee8ffe1cb6b22d502483738f3b902eb3256"
+    },
+    "review-v2-cold-failure-readonly-r1/fresh/proxy-pod.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\fresh\\proxy-pod.json",
+      "bytes": 13553,
+      "sha256": "a73f04ee59b083a9f330ce54434e184369b03876e06b1340fccafe2168daccab"
+    },
+    "review-v2-cold-failure-readonly-r1/fresh/worker-pod.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\fresh\\worker-pod.json",
+      "bytes": 12675,
+      "sha256": "e005ec9d249dda2b613645b79298b9c9de9115345cf7f12022b6f60542a2314b"
+    },
+    "review-v2-cold-failure-readonly-r1/inventory.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\inventory.json",
+      "bytes": 5298,
+      "sha256": "58524472b4bdb193f124c8fa17480cd6b5f3cd1169830f7040a330109610b087"
+    },
+    "review-v2-cold-failure-readonly-r1/prepared/launch-once.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\prepared\\launch-once.json",
+      "bytes": 782,
+      "sha256": "bd5922796739bc3a4fbd0c786866b1d09b3780ec53393408861d37fa24bb12a6"
+    },
+    "review-v2-cold-failure-readonly-r1/prepared/object-identities.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\prepared\\object-identities.json",
+      "bytes": 266,
+      "sha256": "be0ae08b524609cefd6601b3360b35fe138f4edb00c1c1b794126a3cd0e4144f"
+    },
+    "review-v2-cold-failure-readonly-r1/prepared/probe-identity.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-failure-readonly-r1\\prepared\\probe-identity.json",
+      "bytes": 1482,
+      "sha256": "62e4247251103d66a80e20b4f2929a3c7f1d8df5c47951e55f07e0683a7b32e8"
+    },
+    "review-v2-cold-preparation-independent-review-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-preparation-independent-review-r2.json",
+      "bytes": 2252,
+      "sha256": "ee28e468b6ec7f51da8678f86e96cf6688644cd18b61efe93e956676342da3d6"
+    },
+    "review-v2-cold-probe-tests-r3.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-probe-tests-r3.xml",
+      "bytes": 2845,
+      "sha256": "97bc07d3e6ce4657a708d65bb8abef007df26c67b6d7e137555ea6029bf7f328"
+    },
+    "review-v2-cold-status-r2-01.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-cold-status-r2-01.json",
+      "bytes": 1665,
+      "sha256": "4ab00ac410f5888fd21cc05928508f29a8f145d0c829da4c47abedd6c126226d"
+    },
+    "review-v2-gateway-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-gateway-r1.xml",
+      "bytes": 750,
+      "sha256": "aa7091c941419dd606c0eb6f625da6bd6958e7334b5440ab0d95620879ea7612"
+    },
+    "review-v2-model-route-preflight-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-model-route-preflight-r1.xml",
+      "bytes": 4993,
+      "sha256": "7fa251f0e474b89c20230433fbe10ae7ee35dedd9ff70edefd25a9b357d080f2"
+    },
+    "review-v2-operator-preparation-tests-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-operator-preparation-tests-r1.xml",
+      "bytes": 873,
+      "sha256": "0b57a970c91bcbf3313f841eb6af9aa1e929d0e8273efc36aa990c77318dbe5f"
+    },
+    "review-v2-profile-tests-r2.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-profile-tests-r2.xml",
+      "bytes": 22695,
+      "sha256": "1484586d1f212786bfa2d6a47b866cf6498fbd61434d6328babed1359739b926"
+    },
+    "review-v2-scenario-tests-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-scenario-tests-r1.xml",
+      "bytes": 433,
+      "sha256": "11b1e8b98890cf98ebd7eb7effa9a2b702162f9b148f99808f725fca2f042365"
+    },
+    "review-v2-sqlite-budget-fix-r1.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-sqlite-budget-fix-r1.json",
+      "bytes": 1487,
+      "sha256": "7b66f28fe140afa4757d4082590a3852f92e93b6a32aef8684ec94b64fc09d12"
+    },
+    "review-v2-sqlite-concurrency-after-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-sqlite-concurrency-after-r1.xml",
+      "bytes": 47953,
+      "sha256": "710361ef901c98bdc6fb62712a92f7feb3120aa6decb9a29bcd3c0514ce74691"
+    },
+    "review-v2-sqlite-concurrency-before-r1.xml": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-sqlite-concurrency-before-r1.xml",
+      "bytes": 4329,
+      "sha256": "e8db2165e1f2fd9085399638ac42c265e4a64183bc3fb96479fef018a60b0a23"
+    },
+    "review-v2-uid-history-compat-r2/history-readonly-revalidation-r2.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-uid-history-compat-r2\\history-readonly-revalidation-r2.json",
+      "bytes": 2174,
+      "sha256": "c500e1af5d4928ed29c1de974e3abdf13ab15544162f2e6a40794413288a4d8f"
+    },
+    "review-v2-uid-history-compat-r2/test_uid_history_command_compat_r2.py": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-uid-history-compat-r2\\test_uid_history_command_compat_r2.py",
+      "bytes": 4474,
+      "sha256": "0183b5074a72c71f987493e2f27f5589e32150522a99dfcdf3f1681e8f6fe336"
+    },
+    "review-v2-uid-history-compat-r2/uid-authority-final-source-r3.json": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-uid-history-compat-r2\\uid-authority-final-source-r3.json",
+      "bytes": 754,
+      "sha256": "49b689d45f45bd374a9b463018443c6fd3acbb6f2f96f2706fc51153c21c120f"
+    },
+    "review-v2-uid-history-compat-r2/uid_history_command_compat_r2.py": {
+      "path": "D:\\codex-work\\operations\\video-next-work-20261127\\review-v2-uid-history-compat-r2\\uid_history_command_compat_r2.py",
+      "bytes": 5016,
+      "sha256": "3951197b833d97b412c31344516e6b007f646f5bf610fdfbfb937a1501879269"
+    }
+  },
+  "later_helper_working_bytes": {
+    "agent_service/model_route_preflight.py": {
+      "path": "D:\\codex-work\\operations\\video-scene-usage-recovery-20261127\\source\\agent_service\\model_route_preflight.py",
+      "bytes": 4352,
+      "sha256": "dbd314b5791c0b29336202115c7b0f08dd3b5ac9d8e7af0e7018f7d6af3eff23",
+      "source_identity": "local working bytes at aggregate observation; not the executed Worker image"
+    },
+    "tests/agent_service/test_model_route_preflight.py": {
+      "path": "D:\\codex-work\\operations\\video-scene-usage-recovery-20261127\\source\\tests\\agent_service\\test_model_route_preflight.py",
+      "bytes": 4764,
+      "sha256": "825d83e5f9e6ef60cdf9e65684cc91474d694da95b5d5d240ee257168066791a",
+      "source_identity": "local working bytes at aggregate observation; not the executed Worker image"
+    }
+  },
+  "generator": {
+    "path": "D:\\codex-work\\operations\\video-next-work-20261127\\aggregate_review_reliability_validation_r3.py",
+    "bytes": 16414,
+    "sha256": "92e6a1193b744413268a4aa487d83180bb7899068402b5121599d40fc85aa9ad"
+  },
+  "input_files_reread_unchanged": true,
+  "tests_reexecuted": 0,
+  "remote_calls": 0,
+  "model_requests": 0,
+  "source_edits": 0,
+  "openspec_writes": 0,
+  "deployments": 0
+}
