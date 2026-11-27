@@ -35,7 +35,8 @@ from scientific_agent.academic_observations import (
 def execution(tmp_path):
     opened = []
 
-    def make(*, engine='pi', profile='workspace-task.v1', allocation=True, task_document=None, **settings):
+    def make(*, engine='pi', profile='workspace-task.v1', allocation=True, task_document=None,
+             complete_usage=False, **settings):
         configured = make_catalog(engine, True)
         registry = DeploymentRegistry.from_config(**{
             key: value for key, value in configured.items() if key != 'schema_version'})
@@ -67,7 +68,7 @@ def execution(tmp_path):
 
         def upstream(request):
             calls.append(request)
-            return httpx.Response(200, json={'object': 'response', 'output': []})
+            return httpx.Response(200, json=_supplier_response() if complete_usage else {'object': 'response', 'output': []})
 
         client = httpx.Client(transport=httpx.MockTransport(upstream))
         opened.append(client)

@@ -48,7 +48,7 @@ def test_limits_are_strict_positive_integers_without_extra_policy_fields(value):
 
 
 def test_actual_forwarded_output_is_clamped_and_equivalent_inputs_replay(execution):
-    run = execution()
+    run = execution(complete_usage=True)
     install_limits(run)
     first = run.proxy.respond(run.token, dict(run.body, max_output_tokens=32768))
     assert json.loads(run.calls[0].content)['max_output_tokens'] == 8192
@@ -62,7 +62,7 @@ def test_actual_forwarded_output_is_clamped_and_equivalent_inputs_replay(executi
 
 
 def test_per_job_calls_stop_before_contact_and_replay_does_not_spend(execution):
-    run = execution()
+    run = execution(complete_usage=True)
     install_limits(run)
     first = run.proxy.respond(run.token, run.body)
     run.proxy.respond(run.token, dict(run.body, input='second'))
@@ -74,7 +74,7 @@ def test_per_job_calls_stop_before_contact_and_replay_does_not_spend(execution):
 
 
 def test_response_admission_locks_job_before_attempt_and_counting(execution):
-    run = execution()
+    run = execution(complete_usage=True)
     install_limits(run)
     locked = []
     def observe(_connection, statement, *_args):
@@ -89,7 +89,7 @@ def test_response_admission_locks_job_before_attempt_and_counting(execution):
 
 
 def test_uncertain_admission_retains_its_job_slot_across_proxy_restart(execution):
-    run = execution()
+    run = execution(complete_usage=True)
     install_limits(run, max_requests=1)
     client = httpx.Client(transport=httpx.MockTransport(
         lambda _: (_ for _ in ()).throw(httpx.ReadError('offline uncertain'))))
@@ -107,8 +107,28 @@ def test_uncertain_admission_retains_its_job_slot_across_proxy_restart(execution
     assert run.calls == []
 
 
-def test_prior_attempt_admissions_count_toward_the_same_job_cap(execution):
+@pytest.mark.parametrize('prior_state', ['uncertain', 'complete_without_usage'])
+def test_any_new_unknown_request_blocks_further_paid_bodies_inside_the_worker(execution, prior_state):
     run = execution()
+    install_limits(run, max_requests=8)
+    if prior_state == 'uncertain':
+        with run.store.engine.begin() as db:
+            db.execute(insert(requests).values(attempt_id=run.envelope.attempt_id,
+                body_sha256='b' * 64, state='admitted', created_at=0))
+    else:
+        original = run.proxy.respond(run.token, run.body)
+        # A complete body without standard usage still replays without spending.
+        assert run.proxy.respond(run.token, run.body) == original
+    before = len(run.calls)
+    with pytest.raises(ServiceError, match='model_admission_uncertain'):
+        run.proxy.respond(run.token, dict(run.body, input='a different paid turn'))
+    assert len(run.calls) == before
+    with run.store.engine.connect() as db:
+        assert db.execute(select(func.count()).select_from(requests)).scalar_one() == 1
+
+
+def test_prior_attempt_admissions_count_toward_the_same_job_cap(execution):
+    run = execution(complete_usage=True)
     install_limits(run, max_requests=1)
     with run.store.engine.begin() as db:
         original = dict(db.execute(select(attempts)).mappings().one())
@@ -122,7 +142,7 @@ def test_prior_attempt_admissions_count_toward_the_same_job_cap(execution):
 
 
 def test_per_job_limits_cannot_raise_global_or_profile_limits(execution):
-    run = execution(max_calls_per_attempt=1, max_output_tokens=2048)
+    run = execution(complete_usage=True, max_calls_per_attempt=1, max_output_tokens=2048)
     install_limits(run, max_requests=8, max_output_tokens=8192)
     run.proxy.respond(run.token, run.body)
     assert json.loads(run.calls[0].content)['max_output_tokens'] == 2048
@@ -131,7 +151,7 @@ def test_per_job_limits_cannot_raise_global_or_profile_limits(execution):
 
 
 def test_persisted_invalid_limit_fails_closed_before_upstream(execution):
-    run = execution()
+    run = execution(complete_usage=True)
     request = install_limits(run)
     request['model_limits']['max_requests'] = True
     with run.store.engine.begin() as db:
@@ -184,7 +204,7 @@ def test_api_freezes_and_projects_limits_for_scoped_execution_without_task_echo(
 @pytest.mark.parametrize('output_tokens, verified', [(3, True), (9000, False)])
 def test_stopped_new_job_proves_actual_durable_limits_without_trusting_worker_usage(execution, output_tokens, verified):
     from test_model_proxy import _supplier_response, _usage_stopped
-    run = execution()
+    run = execution(complete_usage=True)
     limits = install_limits(run)['model_limits']
     client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200,
         json=_supplier_response(output_tokens=output_tokens))))

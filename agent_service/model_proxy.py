@@ -694,6 +694,17 @@ class ModelProxy:
                     attempts.c.job_id == grant['job'])).scalar_one()
                 if job_count >= grant['model_limits']['max_requests']:
                     raise ServiceError('model_job_budget_exhausted', 429)
+                previous = select(requests.c.state, requests.c.status, requests.c.media_type,
+                    requests.c.response).join(attempts, requests.c.attempt_id == attempts.c.id).where(
+                    attempts.c.job_id == grant['job'])
+                # Limited jobs run serial model turns. Missing/uncertain prior
+                # usage must stop new spending inside the worker too, rather
+                # than waiting for the application's final job settlement.
+                with db.execute(previous.execution_options(stream_results=True, yield_per=1)) as rows:
+                    for row in rows.mappings():
+                        if (row['state'] != 'complete' or row['status'] != 200
+                                or _response_usage(bytes(row['response'] or b''), row['media_type'] or '') is None):
+                            raise ServiceError('model_admission_uncertain', 409)
             db.execute(insert(requests).values(attempt_id=grant['attempt'], body_sha256=identity,
                 state='admitted', created_at=time.time()))
             if grant.get('model_limits'):

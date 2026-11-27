@@ -17,6 +17,9 @@ or raise them. Admission locks the job and counts all of its attempts, including
 uncertain requests. Proxy/process restart does not replenish the allowance.
 Completed identical requests replay without another admission or provider call.
 Existing global and per-profile limits still apply and may be stricter.
+Limited jobs use serial model turns. An uncertain prior admission, or a retained
+response without complete standard supplier usage, blocks every new request body
+across all attempts. It is never assigned zero spending to let a worker continue.
 
 Before forwarding, the proxy lowers a valid requested output maximum to the
 smaller of the original maximum and the job maximum. This supports existing
