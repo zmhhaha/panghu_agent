@@ -54,6 +54,148 @@ image_inputs = Table('agent_model_image_inputs', metadata,
     Column('byte_length', Integer, nullable=False))
 
 
+def _usage_counter(value):
+    return type(value) is int and 0 <= value <= 2**63 - 1
+
+
+def _response_usage(raw, media_type):
+    """Read supplier terminal Responses usage, never assistant/tool output."""
+    if not raw or len(raw) > 32 * 1024 * 1024:
+        return None
+    candidates = []
+    try:
+        if media_type.split(';', 1)[0].strip() == 'text/event-stream':
+            text = raw.decode('utf-8').replace('\r\n', '\n').replace('\r', '\n')
+            for block in text.split('\n\n'):
+                data = '\n'.join(line[5:].lstrip(' ') for line in block.split('\n') if line.startswith('data:'))
+                if not data or data.strip() == '[DONE]':
+                    continue
+                value = json.loads(data)
+                if isinstance(value, dict) and value.get('type') == 'response.completed':
+                    candidates.append(value.get('response'))
+        else:
+            value = json.loads(raw)
+            if isinstance(value, dict) and value.get('object') == 'response':
+                candidates.append(value)
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+    # Repeated identical terminal events do not multiply a single request.
+    if not candidates or any(not isinstance(v, dict) for v in candidates):
+        return None
+    try:
+        if len({digest(v) for v in candidates}) != 1:
+            return None
+    except (ValueError, TypeError, RecursionError):
+        return None
+    value = candidates[0]
+    usage = value.get('usage')
+    if value.get('status', 'completed') != 'completed' or not isinstance(usage, dict):
+        return None
+    counters = {key: usage.get(key) for key in ('input_tokens', 'output_tokens', 'total_tokens')}
+    if (not all(_usage_counter(v) for v in counters.values())
+            or counters['input_tokens'] + counters['output_tokens'] != counters['total_tokens']):
+        return None
+    detail = usage.get('input_tokens_details')
+    detail = detail if isinstance(detail, dict) else {}
+    for name, source in (('cache_read_tokens', 'cached_tokens'), ('cache_write_tokens', 'cache_write_tokens')):
+        count = detail.get(source)
+        if count is not None and (not _usage_counter(count) or count > counters['input_tokens']):
+            return None
+        counters[name] = count
+    model = value.get('model')
+    if isinstance(model, str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,100}', model):
+        counters['model'] = model
+    return counters
+
+
+def _attempt_usage_custody(attempt, allocation, job, has_requests):
+    """Only control-validated stopped execution can close a usage snapshot."""
+    outcome = attempt.get('outcome') or {}
+    if (not has_requests and outcome.get('_service_not_started') is True
+            and attempt['state'] in {'cancelled', 'timed_out'}):
+        return True
+    receipt = outcome.get('stop_receipt') or {}
+    candidate = (allocation or {}).get('candidate_result') or {}
+    return (attempt['state'] in {'completed', 'needs_input', 'failed', 'cancelled', 'timed_out'}
+        and outcome.get('_service_stop_proven') is True
+        and allocation is not None
+        and allocation['job_id'] == job['id'] and allocation['fence'] == attempt['fence']
+        and receipt.get('job_id') == job['id'] and receipt.get('attempt_id') == attempt['id']
+        and receipt.get('fence') == attempt['fence']
+        and receipt.get('engine') == job['pins'].get('engine')
+        and receipt.get('request_sha256') == allocation['request_sha256']
+        and candidate.get('stop_receipt') == receipt)
+
+
+def usage_evidence_for_job(store, job):
+    """Fresh, read-only accounting from every original request of every attempt.
+
+    The authorized job is rechecked against current control identity. Old worker
+    outcomes and immutable model responses remain untouched. Missing or uncertain
+    requests stay partial; an empty ledger never becomes invented zero usage.
+    """
+    job_id = job.get('job_id', job.get('id'))
+    with store.engine.connect() as db:
+        current = db.execute(select(jobs).where(jobs.c.id == job_id)).mappings().one_or_none()
+        if current is None or any(current[key] != job.get(key) for key in ('attempt_id', 'fence', 'state')):
+            return None
+        current = dict(current)
+        attempts_seen = [dict(row) for row in db.execute(select(attempts).where(
+            attempts.c.job_id == job_id).order_by(attempts.c.fence)).mappings()]
+        rows = db.execute(select(requests, attempts.c.fence).join(
+            attempts, requests.c.attempt_id == attempts.c.id).where(
+            attempts.c.job_id == job_id).order_by(requests.c.created_at,
+                requests.c.attempt_id, requests.c.body_sha256)).mappings().all()
+        if not rows:
+            return None
+        allocations = {row['attempt_id']: dict(row) for row in db.execute(select(worker_allocations).where(
+            worker_allocations.c.job_id == job_id)).mappings()}
+    request_attempts = {row['attempt_id'] for row in rows}
+    attempt_proofs = []
+    for attempt in attempts_seen[:1024]:
+        allocation = allocations.get(attempt['id'])
+        attempt_proofs.append(dict(attempt_id=attempt['id'], fence=attempt['fence'], state=attempt['state'],
+            stop_proven=_attempt_usage_custody(attempt, allocation, current, attempt['id'] in request_attempts),
+            execution_request_sha256=(allocation or {}).get('request_sha256'),
+            stop_result_sha256=((attempt.get('outcome') or {}).get('stop_receipt') or {}).get('result_sha256')))
+    custody = bool(attempts_seen) and all(_attempt_usage_custody(
+        attempt, allocations.get(attempt['id']), current, attempt['id'] in request_attempts)
+        for attempt in attempts_seen)
+    active_attempt = next((row for row in attempts_seen if row['id'] == current['attempt_id']), None)
+    custody = custody and current['state'] in {'completed', 'needs_input', 'failed', 'cancelled', 'timed_out'} \
+        and (current.get('outcome') or {}).get('_service_stop_proven') is True \
+        and active_attempt is not None \
+        and (current.get('outcome') or {}).get('stop_receipt') == (active_attempt.get('outcome') or {}).get('stop_receipt')
+    # Keep the business-facing proof bounded even for a corrupted/legacy ledger.
+    bounded = len(rows) <= 1024 and len(attempts_seen) <= 1024
+    records = []
+    for row in rows[:1024]:
+        raw = bytes(row['response'] or b'')
+        usage = (_response_usage(raw, row['media_type'] or '')
+                 if row['state'] == 'complete' and row['status'] == 200 else None)
+        records.append(dict(attempt_id=row['attempt_id'], fence=row['fence'], body_sha256=row['body_sha256'],
+            execution_request_sha256=allocations.get(row['attempt_id'], {}).get('request_sha256'),
+            state=row['state'], status=row['status'], response_sha256=hashlib.sha256(raw).hexdigest(),
+            usage_complete=usage is not None, **(usage or {})))
+    complete = bounded and custody and all(row['usage_complete'] for row in records)
+    totals = {}
+    for key in ('input_tokens', 'output_tokens', 'total_tokens', 'cache_read_tokens', 'cache_write_tokens'):
+        values = [row.get(key) for row in records]
+        total = sum(values) if bounded and all(_usage_counter(value) for value in values) else None
+        totals[key] = total if _usage_counter(total) else None
+    complete = complete and all(totals[key] is not None for key in ('input_tokens', 'output_tokens', 'total_tokens'))
+    models = {row.get('model') for row in records}
+    evidence = dict(schema='agent-model-usage-evidence.v1', job_id=job_id,
+        attempt_id=current['attempt_id'], fence=current['fence'], state=current['state'],
+        execution_binding_sha256=(current['pins'].get('execution_binding') or {}).get('sha256'),
+        stop_proven=custody, all_attempts=True, authoritative=custody and bounded,
+        completeness='complete' if complete else 'partial', request_count=len(rows), attempt_count=len(attempts_seen),
+        **totals, reported_cost=None, cost_status='unknown', attempts=attempt_proofs, requests=records)
+    if len(models) == 1 and None not in models:
+        evidence['model'] = next(iter(models))
+    return dict(evidence, sha256=digest(evidence))
+
+
 def _image_inputs(value):
     """Hash the self-contained image bytes in an already validated request."""
     if not isinstance(value, list):

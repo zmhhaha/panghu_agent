@@ -15,12 +15,13 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import httpx
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import insert, select, update
 
 from agent_service.contracts import ExecutionBindingPins, ServiceError, canonical_bytes, digest
 from agent_service.model_proxy import (
     ModelGrantIssuer, ModelProxy, ModelProxySettings, create_model_proxy_app,
     image_evidence_for_job, image_inputs, observations, requests,
+    usage_evidence_for_job,
 )
 from agent_service.registry import DeploymentRegistry
 from agent_service.store import Store, attempts, jobs, worker_allocations
@@ -1001,3 +1002,224 @@ def test_http_boundary_lists_only_granted_model_and_enforces_request_size(execut
         assert client.post('/v1/responses', headers=headers, content=b'{' * 33).status_code == 413
         assert client.post('/v1/responses', headers=headers, content=b'{invalid').status_code == 422
     assert run.calls == []
+
+
+def _supplier_response(input_tokens=10, output_tokens=3, cached_tokens=2):
+    return dict(object='response', id='resp_offline', status='completed', model='fixture-model',
+        output=[dict(type='message', content='private source must never leave the ledger')],
+        usage=dict(input_tokens=input_tokens, output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            input_tokens_details=dict(cached_tokens=cached_tokens, cache_write_tokens=0)))
+
+
+def _usage_ledger(run, value=None, *, state='complete', status=200, sse=True, suffix='one', attempt_id=None):
+    value = _supplier_response() if value is None else value
+    raw = (b'data: ' + canonical_bytes(dict(type='response.completed', response=value)) + b'\n\ndata: [DONE]\n\n'
+           if sse else canonical_bytes(value))
+    with run.store.engine.begin() as db:
+        db.execute(insert(requests).values(attempt_id=attempt_id or run.envelope.attempt_id,
+            body_sha256=hashlib.sha256(suffix.encode()).hexdigest(), state=state, created_at=time.time(),
+            status=status, media_type='text/event-stream' if sse else 'application/json', response=raw))
+    return raw
+
+
+def _usage_stopped(run, *, forged_usage=None):
+    """Synthetic control custody; this fixture does not establish native admission."""
+    envelope = run.envelope
+    receipt = dict(job_id=envelope.job_id, attempt_id=envelope.attempt_id, fence=envelope.fence,
+        engine=envelope.engine, request_sha256=envelope.request_sha256, result_sha256='b' * 64,
+        resource_ids=['k8s:offline:stopped'], observed_at=time.time(), signature='c' * 64)
+    outcome = dict(state='completed', error_code=None, usage=forged_usage,
+                   stop_receipt=receipt, _service_stop_proven=True)
+    with run.store.engine.begin() as db:
+        db.execute(update(jobs).where(jobs.c.id == envelope.job_id).values(state='completed', outcome=outcome))
+        db.execute(update(attempts).where(attempts.c.id == envelope.attempt_id).values(state='completed', outcome=outcome))
+        db.execute(update(worker_allocations).where(worker_allocations.c.attempt_id == envelope.attempt_id)
+                   .values(candidate_result=dict(state='completed', usage=forged_usage, stop_receipt=receipt), retired=True))
+    return run.store.get_job('tenant', 'business', envelope.job_id)
+
+
+def test_stopped_usage_comes_from_all_supplier_requests_without_rewriting_outcome(execution):
+    run = execution()
+    for index, (input_count, output_count, cache_count) in enumerate(
+            [(7985, 39, 0), (20236, 10638, 2048), (30898, 9931, 14080), (40846, 95, 24832)]):
+        _usage_ledger(run, _supplier_response(input_count, output_count, cache_count), suffix=str(index))
+    job = _usage_stopped(run, forged_usage={'input_tokens': 1, 'output_tokens': 1})
+    before = deepcopy(job)
+    proof = usage_evidence_for_job(run.store, job)
+    assert proof['authoritative'] is proof['stop_proven'] is True
+    assert proof['all_attempts'] is True and proof['completeness'] == 'complete'
+    assert (proof['request_count'], proof['input_tokens'], proof['output_tokens'], proof['total_tokens']) == (4, 99965, 20703, 120668)
+    assert proof['cache_read_tokens'] == 40960  # Already included in input_tokens.
+    assert proof['reported_cost'] is None and proof['cost_status'] == 'unknown'
+    assert proof['execution_binding_sha256'] == job['pins']['execution_binding']['sha256']
+    assert proof['sha256'] == digest({k: v for k, v in proof.items() if k != 'sha256'})
+    assert 'private source' not in json.dumps(proof)
+    assert usage_evidence_for_job(run.store, job) == proof
+    assert run.store.get_job('tenant', 'business', run.envelope.job_id) == before
+    assert run.calls == []
+
+
+@pytest.mark.parametrize('state,status', [('admitted', None), ('uncertain', None), ('complete', 500)])
+def test_uncertain_or_failed_supplier_request_keeps_job_usage_partial(execution, state, status):
+    run = execution(); _usage_ledger(run); _usage_ledger(run, state=state, status=status, suffix='unsettled')
+    proof = usage_evidence_for_job(run.store, _usage_stopped(run))
+    assert proof['request_count'] == 2 and proof['completeness'] == 'partial'
+    assert proof['input_tokens'] is proof['output_tokens'] is proof['total_tokens'] is None
+
+
+@pytest.mark.parametrize('mutate', [
+    lambda value: value.pop('usage'),
+    lambda value: value['usage'].update(input_tokens=True),
+    lambda value: value['usage'].update(output_tokens=-1),
+    lambda value: value['usage'].update(total_tokens=999),
+    lambda value: value['usage'].update(output_tokens=2**64),
+    lambda value: value['usage']['input_tokens_details'].update(cached_tokens=100),
+    lambda value: value.update(status='in_progress'),
+])
+def test_missing_invalid_or_nonterminal_supplier_counters_are_never_invented(execution, mutate):
+    run = execution(); value = _supplier_response(); mutate(value); _usage_ledger(run, value)
+    proof = usage_evidence_for_job(run.store, _usage_stopped(run))
+    assert proof['completeness'] == 'partial' and proof['total_tokens'] is None
+
+
+def test_empty_ledger_and_changed_job_identity_do_not_trust_worker_usage(execution):
+    run = execution(); job = _usage_stopped(run, forged_usage={'request_count': 1, 'completeness': 'complete',
+                                                             'input_tokens': 1, 'output_tokens': 1})
+    assert usage_evidence_for_job(run.store, job) is None
+    _usage_ledger(run)
+    assert usage_evidence_for_job(run.store, dict(job, fence=job['fence'] + 1)) is None
+    assert usage_evidence_for_job(run.store, dict(job, attempt_id='foreign')) is None
+
+
+def test_live_or_unproven_attempt_never_claims_complete_usage(execution):
+    run = execution(); _usage_ledger(run)
+    active = run.store.get_job('tenant', 'business', run.envelope.job_id)
+    proof = usage_evidence_for_job(run.store, active)
+    assert proof['completeness'] == 'partial' and proof['stop_proven'] is proof['authoritative'] is False
+    job = _usage_stopped(run)
+    with run.store.engine.begin() as db:
+        db.execute(update(worker_allocations).where(worker_allocations.c.attempt_id == run.envelope.attempt_id)
+                   .values(request_sha256='d' * 64))
+    assert usage_evidence_for_job(run.store, job)['completeness'] == 'partial'
+
+
+def test_expired_historical_grants_and_leases_do_not_hide_stopped_supplier_usage(execution):
+    run = execution(); _usage_ledger(run); _usage_stopped(run)
+    with run.store.engine.begin() as db:
+        db.execute(update(jobs).where(jobs.c.id == run.envelope.job_id).values(deadline_at=1, lease_expires_at=1))
+        db.execute(update(attempts).where(attempts.c.id == run.envelope.attempt_id)
+                   .values(deadline_at=1, lease_expires_at=1))
+    job = run.store.get_job('tenant', 'business', run.envelope.job_id)
+    proof = usage_evidence_for_job(run.store, job)
+    assert proof['completeness'] == 'complete' and proof['stop_proven'] is True
+    assert proof['total_tokens'] == 13
+
+
+def test_fresh_reader_reflects_complete_ledger_without_backfilling_worker_outcome(execution):
+    run = execution(); _usage_ledger(run, state='admitted', status=None); job = _usage_stopped(run)
+    first = usage_evidence_for_job(run.store, job)
+    with run.store.engine.begin() as db:
+        db.execute(update(requests).where(requests.c.attempt_id == run.envelope.attempt_id)
+                   .values(state='complete', status=200))
+    second = usage_evidence_for_job(run.store, job)
+    assert first['completeness'] == 'partial' and second['completeness'] == 'complete'
+    assert first['sha256'] != second['sha256']
+    assert run.store.get_job('tenant', 'business', run.envelope.job_id)['outcome']['usage'] is None
+
+
+def test_terminal_json_sse_duplicates_and_missing_cache_counters(execution):
+    run = execution(); value = _supplier_response(); value['usage'].pop('input_tokens_details')
+    _usage_ledger(run, value, sse=False)
+    duplicate = b'data: ' + canonical_bytes(dict(type='response.completed', response=_supplier_response())) + b'\n\n'
+    _usage_ledger(run, suffix='duplicate')
+    with run.store.engine.begin() as db:
+        db.execute(update(requests).where(requests.c.body_sha256 == hashlib.sha256(b'duplicate').hexdigest())
+                   .values(response=duplicate + duplicate))
+    proof = usage_evidence_for_job(run.store, _usage_stopped(run))
+    assert proof['completeness'] == 'complete' and proof['request_count'] == 2
+    assert proof['total_tokens'] == 26 and proof['cache_read_tokens'] is None
+
+
+def test_conflicting_or_malformed_sse_terminal_events_are_partial(execution):
+    run = execution(); _usage_ledger(run)
+    raw = b'\n\n'.join(b'data: ' + canonical_bytes(dict(type='response.completed', response=value))
+                      for value in (_supplier_response(), _supplier_response(20, 5)))
+    with run.store.engine.begin() as db:
+        db.execute(update(requests).where(requests.c.attempt_id == run.envelope.attempt_id).values(response=raw))
+    job = _usage_stopped(run)
+    assert usage_evidence_for_job(run.store, job)['completeness'] == 'partial'
+    with run.store.engine.begin() as db:
+        db.execute(update(requests).where(requests.c.attempt_id == run.envelope.attempt_id).values(response=b'data: {broken\n\n'))
+    assert usage_evidence_for_job(run.store, job)['completeness'] == 'partial'
+
+
+def test_aggregate_overflow_and_excessive_request_inventory_stay_partial(execution):
+    run = execution()
+    for index in range(3):
+        _usage_ledger(run, _supplier_response(2**62, 0, 0), suffix=str(index))
+    proof = usage_evidence_for_job(run.store, _usage_stopped(run))
+    assert proof['completeness'] == 'partial' and proof['input_tokens'] is proof['total_tokens'] is None
+    other = execution(); raw = canonical_bytes(_supplier_response())
+    with other.store.engine.begin() as db:
+        db.execute(insert(requests), [dict(attempt_id=other.envelope.attempt_id,
+            body_sha256=hashlib.sha256(str(index).encode()).hexdigest(), state='complete', created_at=1,
+            status=200, media_type='application/json', response=raw) for index in range(1025)])
+    proof = usage_evidence_for_job(other.store, _usage_stopped(other))
+    assert proof['completeness'] == 'partial' and proof['authoritative'] is False
+    assert proof['request_count'] == 1025 and len(proof['requests']) == 1024
+
+
+def test_all_attempts_are_accounted_and_missing_old_stop_custody_blocks_completeness(execution):
+    from uuid import uuid4
+    run = execution(); _usage_ledger(run); old_job = _usage_stopped(run)
+    prior_id = str(uuid4()); prior_request = 'd' * 64
+    receipt = dict(job_id=run.envelope.job_id, attempt_id=prior_id, fence=0, engine='pi',
+        request_sha256=prior_request, result_sha256='e' * 64)
+    outcome = dict(state='failed', _service_stop_proven=True, stop_receipt=receipt)
+    with run.store.engine.begin() as db:
+        db.execute(insert(attempts).values(id=prior_id, job_id=run.envelope.job_id, fence=0, state='failed',
+            created_at=time.time()-10, lease_expires_at=time.time(), deadline_at=time.time(), dispatch_intent={}, outcome=outcome))
+        db.execute(insert(worker_allocations).values(attempt_id=prior_id, job_id=run.envelope.job_id, fence=0,
+            engine='pi', request_sha256=prior_request, pool_id='old-pool', namespace='agent-workers',
+            pod_name='prior-stopped', intent_sha256='f'*64, candidate_result=dict(stop_receipt=receipt),
+            retired=True, created_at=time.time()-10))
+    _usage_ledger(run, _supplier_response(100, 20, 0), attempt_id=prior_id, suffix='prior')
+    proof = usage_evidence_for_job(run.store, old_job)
+    assert proof['completeness'] == 'complete' and proof['attempt_count'] == 2
+    assert proof['request_count'] == 2 and proof['total_tokens'] == 133
+    with run.store.engine.begin() as db:
+        db.execute(update(attempts).where(attempts.c.id == prior_id).values(outcome={}))
+    proof = usage_evidence_for_job(run.store, old_job)
+    assert proof['completeness'] == 'partial' and proof['authoritative'] is False
+    assert proof['total_tokens'] == 133  # Known subtotal is retained, never a complete claim.
+
+
+def test_authorized_get_and_lookup_supply_fresh_evidence_and_client_preserves_extra_fields(execution):
+    from agent_service.api import ApiSettings, create_app
+    from agent_service.client import AgentClient
+    from agent_service.contracts import Principal
+    run = execution(); _usage_ledger(run); _usage_stopped(run)
+    registry = DeploymentRegistry.from_config(**{k:v for k,v in make_catalog('pi',True).items() if k!='schema_version'}).profiles()
+    configured = ApiSettings({'a'*40:Principal('tenant','business',frozenset({'workspace-task.v1'})),
+        'b'*40:Principal('other','business',frozenset({'workspace-task.v1'})),
+        'c'*40:Principal('tenant','other',frozenset({'workspace-task.v1'})),
+        'd'*40:Principal('tenant','business',frozenset())})
+    with TestClient(create_app(configured,run.store,registry)) as control:
+        path='/v1/jobs/'+run.envelope.job_id
+        assert control.get(path).status_code==401
+        for token in ('b'*40,'c'*40,'d'*40):
+            assert control.get(path,headers={'Authorization':'Bearer '+token}).status_code==404
+            assert control.get('/v1/jobs/by-idempotency/one',headers={'Authorization':'Bearer '+token}).status_code==404
+        def forward(request):
+            assert request.method=='GET'
+            response=control.get(request.url.path,headers=request.headers)
+            return httpx.Response(response.status_code,json=response.json())
+        with AgentClient('http://control.invalid','a'*40,transport=httpx.MockTransport(forward)) as client:
+            value=client.get_job(run.envelope.job_id)
+            assert value==client.lookup_job('one')
+            assert value['usage']['completeness']=='complete' and value['usage']['request_count']==1
+            assert value['usage']['input_tokens']==10 and value['usage']['output_tokens']==3
+            assert value['usage_evidence']['sha256']==digest({k:v for k,v in value['usage_evidence'].items() if k!='sha256'})
+            assert 'private source' not in json.dumps(value)
+    assert run.store.get_job('tenant','business',run.envelope.job_id)['outcome']['usage'] is None

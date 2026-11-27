@@ -28,7 +28,7 @@ from .contracts import (MAX_INPUT_BYTES, ExecutionBindingPins, JobRequest, Princ
                         ServiceError)
 from .artifacts import relative_path
 from .storage import execution_fields
-from .model_proxy import image_evidence_for_job
+from .model_proxy import image_evidence_for_job, usage_evidence_for_job
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ def _usage(value):
     return result or None
 
 
-def public_job(job: dict) -> dict:
+def public_job(job: dict, *, usage_evidence=None) -> dict:
     outcome = job.get('outcome') or {}
     pins = job.get('pins') or {}
     visible_pins = {k: pins[k] for k in ('profile', 'profile_revision', 'engine',
@@ -109,7 +109,7 @@ def public_job(job: dict) -> dict:
         # configuration; the business caller receives every pinned identifier.
         visible_pins['execution_binding'] = binding.model_dump(mode='json')
     proof = _public_stop_proof(job, outcome)
-    return {
+    value = {
         'api_version': '1', 'job_id': job.get('job_id', job.get('id')),
         'state': job['state'],
         'pins': visible_pins,
@@ -126,6 +126,10 @@ def public_job(job: dict) -> dict:
         'artifact_manifest_sha256': outcome.get('_service_artifact_manifest_sha256'),
         'checkpoint_ref': job['request'].get('checkpoint_ref'),
     }
+    if usage_evidence is not None:
+        value['usage'] = _usage(usage_evidence)
+        value['usage_evidence'] = usage_evidence
+    return value
 
 
 def _public_stop_proof(job, outcome):
@@ -336,7 +340,8 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
         job = await run_in_threadpool(store.lookup_job, principal.tenant, principal.caller, key)
         if job['request']['profile'] not in principal.profiles:
             raise ServiceError('not_found', 404)
-        return public_job(job)
+        evidence = await run_in_threadpool(usage_evidence_for_job, store, job)
+        return public_job(job, usage_evidence=evidence)
 
     @app.post('/v1/jobs')
     async def submit(request: Request):
@@ -368,7 +373,8 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
     async def get_job(request: Request, job_id: str):
         principal = request.state.principal
         job = await authorized_job(principal, job_id)
-        return public_job(job)
+        evidence = await run_in_threadpool(usage_evidence_for_job, store, job)
+        return public_job(job, usage_evidence=evidence)
 
     @app.get('/v1/jobs/{job_id}/events')
     async def events(request: Request, job_id: str, after: int = Query(0, ge=0, le=2**63 - 1),
