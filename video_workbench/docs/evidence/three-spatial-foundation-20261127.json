@@ -298,5 +298,169 @@
     "WikiSkill publication",
     "new content validation",
     "DOF/motion blur/PBR/shadows/GPU admission"
-  ]
+  ],
+  "source_byte_scope": {
+    "schema": "video.local-vs-committed-source-byte-scope.v1",
+    "validated_source_origin": "local_working_tree_bytes_at_recorded_tests_and_native_captures",
+    "committed_source_revision": "550813d7d1e924ff35a231b0198f548a4a99ad4b",
+    "native_not_executed_from_clean_committed_checkout": true,
+    "normalization": "only CRLF sequences replaced with LF; normalized source bytes compared exactly; Python ASTs also compared",
+    "cryptographic_byte_identity_claimed": false,
+    "all_source_and_library_assets_normalized_equal": true,
+    "non_crlf_differences": [],
+    "source_files": [
+      {
+        "file": "video_workbench/spatial_three_library.py",
+        "local_sha256": "71136b5769c30e8a336fc9d578b4bf22e51d865a1ebad15ee33bde4ec2e86c9f",
+        "committed_sha256": "71136b5769c30e8a336fc9d578b4bf22e51d865a1ebad15ee33bde4ec2e86c9f",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0,
+        "python_ast_equal": true
+      },
+      {
+        "file": "video_workbench/animation_runtime_capabilities.py",
+        "local_sha256": "b178f15c76459d6b1d56c595b477af054fe049efafef94eff1f3ef3467b34153",
+        "committed_sha256": "7d963c779371ec024586199793d0d69ef52efb10ec1f49e47c73d18f5d32b1b1",
+        "exact_bytes_match": false,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 96,
+        "python_ast_equal": true
+      },
+      {
+        "file": "video_workbench/film_creation_store.py",
+        "local_sha256": "ba22a149e4464af64ea185460ad8680fb667b351efa8164fb9b0fff994acd733",
+        "committed_sha256": "fd77a1abaecfb30e2cd1c8f3b0035cecfec9c43f01e52b096afac30236e65da0",
+        "exact_bytes_match": false,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 1000,
+        "python_ast_equal": true
+      },
+      {
+        "file": "video_workbench/film_production_config.py",
+        "local_sha256": "9988367561e92de826091e08b3bf31121b0db9088275c8517f3d42be789caf47",
+        "committed_sha256": "6787a1ac3228b5f2ae4f481dd21800f5b48a51ac154b9d08466071409fb6d272",
+        "exact_bytes_match": false,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 193,
+        "python_ast_equal": true
+      },
+      {
+        "file": "video_workbench/spatial_rendering_route.py",
+        "local_sha256": "ea2e5b25e5fc22f58d128eb3c8f9f22bf9d3addf419445857d9a1dc82a7ee864",
+        "committed_sha256": "4ef64e65693e654ab2c79d00b8ffc8dd73141019324a36a6806daa99d9976807",
+        "exact_bytes_match": false,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 87,
+        "python_ast_equal": true
+      },
+      {
+        "file": "video_workbench/hyperframes_film_browser.py",
+        "local_sha256": "57adf516a1db2e6fcdcef0773edfe4a9bcac220e4a995a3b55b1246073cc680d",
+        "committed_sha256": "03b922786ba8bafca453b95dd0946346b51a9aa124010e7e6f755ef41b7f614d",
+        "exact_bytes_match": false,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 105,
+        "python_ast_equal": true
+      },
+      {
+        "file": "video_workbench/motion_renderer/hyperframes_film_realm.mjs",
+        "local_sha256": "0fa99b63055ace95e2a725f25acac76178839e9f3d602a61c9486aae9265c61d",
+        "committed_sha256": "ba9b5e7afce6a9b332037c913ee848b115189c49491f26021fa67246b1c552e7",
+        "exact_bytes_match": false,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 76
+      },
+      {
+        "file": "video_workbench/motion_renderer/spatial_three_adapter.mjs",
+        "local_sha256": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed",
+        "committed_sha256": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0
+      },
+      {
+        "file": "video_workbench/examples/build_three_spatial_film_probe.py",
+        "local_sha256": "684db531984b4d6af7b6bc95a98a7c273c269cd27765bdd116eb8ae23bee29cc",
+        "committed_sha256": "684db531984b4d6af7b6bc95a98a7c273c269cd27765bdd116eb8ae23bee29cc",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0,
+        "python_ast_equal": true
+      },
+      {
+        "file": "tests/video_workbench/test_spatial_three_library.py",
+        "local_sha256": "c270e61dc5121cb826418374517e9e4e0fd2c9f39e8017761b764fc6af96d219",
+        "committed_sha256": "c270e61dc5121cb826418374517e9e4e0fd2c9f39e8017761b764fc6af96d219",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0,
+        "python_ast_equal": true
+      },
+      {
+        "file": "tests/video_workbench/test_film_creation_api.py",
+        "local_sha256": "b16f71ac5613f40e5beb7b77f6582433019bfec3f41991ad37598233e6845845",
+        "committed_sha256": "94611fe320fac9d61fdbb6fec7387686587a53e2f0aba48144fa77d94c95942f",
+        "exact_bytes_match": false,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 166,
+        "python_ast_equal": true
+      },
+      {
+        "file": "tests/video_workbench/spatial-three-adapter.test.mjs",
+        "local_sha256": "3c9d0286f1472f954daefaf1ded9cd616edd0f82e1d50b05bda95e89a74b7196",
+        "committed_sha256": "3c9d0286f1472f954daefaf1ded9cd616edd0f82e1d50b05bda95e89a74b7196",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0
+      }
+    ],
+    "library_code_assets": {
+      "scene_space_surface.mjs": {
+        "validated_local_sha256": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+        "committed_sha256": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0
+      },
+      "scene_space_surface_budget.mjs": {
+        "validated_local_sha256": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+        "committed_sha256": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0
+      },
+      "spatial_three_adapter.mjs": {
+        "validated_local_sha256": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed",
+        "committed_sha256": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed",
+        "exact_bytes_match": true,
+        "normalized_crlf_to_lf_bytes_equal": true,
+        "local_crlf_count": 0
+      }
+    },
+    "native_four_asset_descriptor_preserved": true,
+    "admission_scope": "All three code assets and regenerated metadata match the actual local native asset pins. Seven host/wiring/test source files differ only by CRLF/LF; the clean committed host checkout was not natively executed and this is not production admission.",
+    "committed_library_code_asset_pins_match_validated_local_pins": true,
+    "committed_generated_metadata_bytes_equal_native_metadata": true,
+    "committed_generated_metadata_sha256": "493d1b7848d50c3779c4416e62a5226ce45bd92b2f9d7f46f9bd3883e5055ac8"
+  },
+  "committed_source_files_sha256": {
+    "video_workbench/spatial_three_library.py": "71136b5769c30e8a336fc9d578b4bf22e51d865a1ebad15ee33bde4ec2e86c9f",
+    "video_workbench/animation_runtime_capabilities.py": "7d963c779371ec024586199793d0d69ef52efb10ec1f49e47c73d18f5d32b1b1",
+    "video_workbench/film_creation_store.py": "fd77a1abaecfb30e2cd1c8f3b0035cecfec9c43f01e52b096afac30236e65da0",
+    "video_workbench/film_production_config.py": "6787a1ac3228b5f2ae4f481dd21800f5b48a51ac154b9d08466071409fb6d272",
+    "video_workbench/spatial_rendering_route.py": "4ef64e65693e654ab2c79d00b8ffc8dd73141019324a36a6806daa99d9976807",
+    "video_workbench/hyperframes_film_browser.py": "03b922786ba8bafca453b95dd0946346b51a9aa124010e7e6f755ef41b7f614d",
+    "video_workbench/motion_renderer/hyperframes_film_realm.mjs": "ba9b5e7afce6a9b332037c913ee848b115189c49491f26021fa67246b1c552e7",
+    "video_workbench/motion_renderer/spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed",
+    "video_workbench/examples/build_three_spatial_film_probe.py": "684db531984b4d6af7b6bc95a98a7c273c269cd27765bdd116eb8ae23bee29cc",
+    "tests/video_workbench/test_spatial_three_library.py": "c270e61dc5121cb826418374517e9e4e0fd2c9f39e8017761b764fc6af96d219",
+    "tests/video_workbench/test_film_creation_api.py": "94611fe320fac9d61fdbb6fec7387686587a53e2f0aba48144fa77d94c95942f",
+    "tests/video_workbench/spatial-three-adapter.test.mjs": "3c9d0286f1472f954daefaf1ded9cd616edd0f82e1d50b05bda95e89a74b7196"
+  },
+  "committed_library_code_assets_sha256": {
+    "scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+    "scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+    "spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+  }
 }

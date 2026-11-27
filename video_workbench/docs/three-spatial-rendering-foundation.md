@@ -83,3 +83,18 @@ Origin 和 issuer，八项定向通过。原失败报告保留，没有修改生
 `formal-realm-evidence.json`、`formal-realm-observation.json`。图片/视频学习和效果库不会因为这个
 正式 Three 描述符自动获得新资产；其各自运行准入及能力快照仍需单独验证。WikiSkill 发布、
 换内容验证、连续观感和用户艺术认可均不是本项的完成结论。
+
+## 已验证本地字节与 Git 提交字节
+
+上述测试和原生捕获针对当时本地工作区的实际字节，原 `source_files_sha256`、原四资产描述符
+和全部 native hash 保留。提交 `550813d7d1e924ff35a231b0198f548a4a99ad4b` 后逐文件审计发现，
+12 个记录源码中有 7 个既有宿主/接线/测试文件被 Git 从 CRLF 规范化为 LF，故原始摘要不同。
+逐字节检查确认差异只限 CRLF→LF，归一化后的完整源码字节相同，Python 文件的 AST 也相同，
+未发现其他功能差异。
+
+三个库代码资产原始字节与提交 blob 完全相同；按提交代码摘要与原策略重新构造的 JSON
+元数据也与实际 native 四资产中的原摘要一致。宿主接线文件的原始摘要仍分别记录，不能
+把原本地宿主摘要替换成尚未执行过的 Git LF 摘要。证据新增 `source_byte_scope`、
+`committed_source_files_sha256` 和 `committed_library_code_assets_sha256`，并明确
+`native_not_executed_from_clean_committed_checkout=true`。这项是字节来源范围的校正，
+不把换行等价当成完整提交检出的新原生验收，也没有为此重新渲染十秒影片。
