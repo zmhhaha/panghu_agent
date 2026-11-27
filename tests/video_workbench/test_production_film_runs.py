@@ -155,7 +155,8 @@ def test_resume_expired_unregistered_resource_plan_keeps_recordings_and_graph(en
     ledger = env.runs.resource_stage.ledger.get(OWNER, run['id'])
     assert ledger['request_sha256'] == checkpoint['request_sha256']
     assert ledger['budget'] == original_request['budget']
-    assert [node['definition'] for node in ledger['nodes'].values()] == original_request['nodes']
+    assert {key: node['definition'] for key, node in ledger['nodes'].items()} == {
+        node['id']: node for node in original_request['nodes']}
 
 
 def test_resume_resources_rejects_existing_ledger_even_if_registration_is_pending(env):

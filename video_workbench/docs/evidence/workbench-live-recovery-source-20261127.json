@@ -1,0 +1,108 @@
+{
+  "schema": "video.workbench-live-recovery-source-integration.v1",
+  "base_revision": "d19b518b45776fae561cb87212279d3ded9eb3dc",
+  "origin_revisions": [
+    "63297b57b367c573eb747d07ee389652fb13c90a",
+    "19e2ba0c886f1e26179c0b8319770829c8004fea",
+    "d2f29f98e7e58f1e521b76d3a50ca173b8cc902d"
+  ],
+  "live_image": "arm-cluster-master:5000/video-workbench@sha256:b50b22226379e5c58ee94cf72dda0ef10e51db9ad20ac3be2db088c90c077f8b",
+  "live_pod_uid": "2b4607dc-9532-4f6f-b160-fbc42e0c140e",
+  "live_runtime_file_count": 887,
+  "original_workbench_and_auth_files": 516,
+  "original_files_identical_raw": 511,
+  "changed_live_runtime_files": [
+    "video_workbench/app.py",
+    "video_workbench/audio_store.py",
+    "video_workbench/audio_workflow.py",
+    "video_workbench/production_run_store.py",
+    "video_workbench/speech.py"
+  ],
+  "conflict_resolution": "production_run_store.public retains both original SceneSpace fields and resource_deadline_resumes; no runtime feature deleted",
+  "retained_d19_mechanisms": [
+    {
+      "path": "service_auth/__init__.py",
+      "git_bytes_equal_to_d19": true
+    },
+    {
+      "path": "video_workbench/config.py",
+      "git_bytes_equal_to_d19": true
+    },
+    {
+      "path": "video_workbench/hyperframes_film_limits.py",
+      "git_bytes_equal_to_d19": true
+    },
+    {
+      "path": "video_workbench/spatial_rendering_route.py",
+      "git_bytes_equal_to_d19": true
+    },
+    {
+      "path": "video_workbench/scene_space_production.py",
+      "git_bytes_equal_to_d19": true
+    },
+    {
+      "path": "video_workbench/web/",
+      "git_bytes_equal_to_d19": true
+    }
+  ],
+  "unchanged_scene_methods": [
+    "_uses_scene_space",
+    "_scene_space_service",
+    "_has_planned_resources"
+  ],
+  "actual_live_source_equality": [
+    {
+      "path": "video_workbench/audio_store.py",
+      "live_raw_sha256": "dc08012acbb25cbc1145247d21eb9d3f8d34124fe618727dca3483eaccf4db27",
+      "integrated_raw_sha256": "dc08012acbb25cbc1145247d21eb9d3f8d34124fe618727dca3483eaccf4db27",
+      "normalized_source_equal": true
+    },
+    {
+      "path": "video_workbench/audio_workflow.py",
+      "live_raw_sha256": "2d8004d46cd20370f3bc3e2170448ec79f3cdde8cac01c2560297bf616f1968d",
+      "integrated_raw_sha256": "2d8004d46cd20370f3bc3e2170448ec79f3cdde8cac01c2560297bf616f1968d",
+      "normalized_source_equal": true
+    },
+    {
+      "path": "video_workbench/speech.py",
+      "live_raw_sha256": "2d9ff6e815174326cd1a584af3e6b6fadcc9a2cbb574c6825636373cf07941e5",
+      "integrated_raw_sha256": "2d9ff6e815174326cd1a584af3e6b6fadcc9a2cbb574c6825636373cf07941e5",
+      "normalized_source_equal": true
+    }
+  ],
+  "source_patch_scope": [
+    "tests/video_workbench/test_production_film_runs.py",
+    "tests/video_workbench/test_production_runs.py",
+    "tests/video_workbench/test_speech.py",
+    "video_workbench/app.py",
+    "video_workbench/audio_store.py",
+    "video_workbench/audio_workflow.py",
+    "video_workbench/production_run_store.py",
+    "video_workbench/speech.py"
+  ],
+  "test_fixes": [
+    "Legacy HTTP fixture explicitly configures shared SDK issuer, HTTPS and same-origin CSRF transport",
+    "Resource recovery compares full graph definitions by stable node ID, independent of random UUID object order"
+  ],
+  "validation": {
+    "unique_test_cases": 117,
+    "passed_after_focused_resolution": 116,
+    "skipped": [
+      {
+        "name": "test_credential_file_and_optional_projected_symlink",
+        "reason": "Creating a projected-secret symlink requires Windows privileges"
+      }
+    ],
+    "original_suite_passed": 114,
+    "original_suite_failed": 2,
+    "focused_recheck_passed": 2,
+    "unresolved_failures": 0,
+    "full_suite_rerun_claimed": false,
+    "original_junit_sha256": "fc343d5a37de7feaa261f07f770c520d7782ff811f49afabcb6176f99eb8e1b9",
+    "focused_junit_sha256": "1f2e00d49f7a40490463da09027bbde0a94659c041fd06d0ebdb2c66a11b1f69"
+  },
+  "build_executed": false,
+  "deployment_executed": false,
+  "model_calls": 0,
+  "main_merged": false
+}

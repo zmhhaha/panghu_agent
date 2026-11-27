@@ -693,13 +693,16 @@ def test_default_new_admission_requires_motion_gate(tmp_path):
         assert client.get('/api/session').json()['production_runs_enabled'] is False
 
 
-def test_owner_csrf_request_key_and_gate_api(tmp_path):
+def test_owner_csrf_request_key_and_gate_api(tmp_path, monkeypatch):
+    monkeypatch.setenv('SERVICE_AUTH_ISSUER', 'https://issuer.test')
     app = create_app(db_path=tmp_path / 'api.db', local_mode=False, background=False,
         production_runs_enabled=True, trusted_hosts={'testserver'})
     project = seed(app.state.store, app.state.joint_plan_store)
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         client.headers['x-forwarded-user'] = OWNER
-        session = client.get('/api/session').json()
+        session_response = client.get('/api/session')
+        assert session_response.status_code == 200
+        session = session_response.json()
         assert session['production_runs_enabled'] is True
         url = f'/api/projects/{project["id"]}/production-runs'
         request = dict(expected_revision=project['revision'], joint_plan_version_id='adopted-plan-1')
