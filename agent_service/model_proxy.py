@@ -613,10 +613,6 @@ class ModelProxy:
         identity = digest(value)
         key = (observations.c.attempt_id == grant['attempt']) & (observations.c.call_sha256 == identity)
         with self.store.engine.begin() as db:
-            if grant.get('model_limits'):
-                # Serialize all attempts of this job, including uncertain
-                # admissions. A restarted attempt never receives eight more.
-                db.execute(select(jobs.c.id).where(jobs.c.id == grant['job']).with_for_update()).first()
             db.execute(select(attempts.c.id).where(attempts.c.id == grant['attempt']).with_for_update()).first()
             old = db.execute(select(observations).where(key)).mappings().first()
             if old:
@@ -676,6 +672,10 @@ class ModelProxy:
         key = (requests.c.attempt_id == grant['attempt']) & (requests.c.body_sha256 == identity)
         # Locking the attempt serializes admission and the per-attempt budget.
         with self.store.engine.begin() as db:
+            if grant.get('model_limits'):
+                # Serialize all attempts of this job, including uncertain
+                # admissions. A restarted attempt never receives eight more.
+                db.execute(select(jobs.c.id).where(jobs.c.id == grant['job']).with_for_update()).first()
             db.execute(select(attempts.c.id).where(attempts.c.id == grant['attempt']).with_for_update()).first()
             old = db.execute(select(requests).where(key)).mappings().first()
             if old:

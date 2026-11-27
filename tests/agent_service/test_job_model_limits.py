@@ -6,7 +6,7 @@ from uuid import uuid4
 import httpx
 from pydantic import ValidationError
 import pytest
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, event, func, insert, select, update
 
 from agent_service.contracts import JobModelLimits, JobRequest, ServiceError
 from agent_service.model_proxy import ModelProxy, request_limits, requests, usage_evidence_for_job
@@ -71,6 +71,21 @@ def test_per_job_calls_stop_before_contact_and_replay_does_not_spend(execution):
     assert run.proxy.respond(run.token, run.body) == first and len(run.calls) == 2
     with run.store.engine.connect() as db:
         assert db.execute(select(func.count()).select_from(requests)).scalar_one() == 2
+
+
+def test_response_admission_locks_job_before_attempt_and_counting(execution):
+    run = execution()
+    install_limits(run)
+    locked = []
+    def observe(_connection, statement, *_args):
+        if getattr(statement, '_for_update_arg', None) is not None:
+            locked.append([table.name for table in statement.get_final_froms()])
+    event.listen(run.store.engine, 'before_execute', observe)
+    try:
+        run.proxy.respond(run.token, run.body)
+    finally:
+        event.remove(run.store.engine, 'before_execute', observe)
+    assert locked == [[jobs.name], [attempts.name]]
 
 
 def test_uncertain_admission_retains_its_job_slot_across_proxy_restart(execution):
