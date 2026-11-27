@@ -1,0 +1,567 @@
+{
+  "schema": "video.scene-review-continuation-validation.v1",
+  "date": "2026-11-27",
+  "record_type": "derived_index_of_actual_receipts_not_new_authority",
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "change_id": "improve-video-spatial-rendering-foundation",
+    "task": "6.1",
+    "completed": false,
+    "total_tasks_completed": 16,
+    "total_tasks": 26
+  },
+  "run_id": "a7b49db0-55ed-40e3-a216-6fc3cf69d10a",
+  "parent_run_id": "6a935d07-cb98-4684-90f4-22c2917dfd15",
+  "original_run_id": "4ac2f4ca-22de-4b0a-b8ba-0abac3f13e36",
+  "review_job_id": "2d6d7b2f-e55d-43f7-b94f-6aa1ddd8ac9d",
+  "status": "failed",
+  "error": "scene_space_preview_quality_not_met",
+  "actual_formal_export": false,
+  "new_render_id": null,
+  "authorized_limits": {
+    "review_jobs": 1,
+    "requests": 8,
+    "output_tokens_per_request": 8192,
+    "execution_seconds": 3600,
+    "render_seconds": 600,
+    "exports": 1,
+    "author_jobs": 0,
+    "repair_jobs": 0,
+    "distinct_lineage_jobs": 7
+  },
+  "actual": {
+    "review_jobs": 1,
+    "attempts": 1,
+    "requests": 3,
+    "input_tokens": 59110,
+    "output_tokens": 1044,
+    "total_tokens": 60154,
+    "new_author_jobs": 0,
+    "new_repair_jobs": 0,
+    "new_render_seconds": 0,
+    "exports": 0,
+    "distinct_lineage_jobs": 6,
+    "new_token_usage_complete": true,
+    "model_limits_verified": true
+  },
+  "cumulative_cost_status": "unknown",
+  "original_total_token_cap_proven": false,
+  "reported_monetary_cost": null,
+  "monetary_cost_status": "unknown",
+  "quality": {
+    "score": 83,
+    "configured_min_score": 80,
+    "issues": [
+      "Compare preview-0.png with clip-0-0.png. The broad light and dark facets on the tallest summit change shape through the middle and lower face. Near the smaller pine, the foreground ledge has a different sequence of steps on its way down to the right. These differences affect visible form and coverage at the same nominal frame, even though subject placement and scale look consistent. Checking the two frame-0 capture paths against the same authored geometry is the clearest follow-up.",
+      "The four peaks repeat a similar needle profile, with long dark faces and nearly parallel zigzag seams. The hard, broad facets dominate the more varied fine marks and give the range a cut-paper quality. More differentiated shoulders and a few broken, uneven ink deposits following the main folds would make the connected range read more convincingly as brush-painted rock.",
+      "The mist establishes a clear depth break, but its thickest strip hides most of the joining feet and softens several bases to a similar degree. The skyline holds the range together while the lower structure reads more like separate wedges. Alternating brief exposed footholds with soft cloud crossings would make the connection clearer."
+    ],
+    "gate": "score >= minimum and issues is empty",
+    "issues_severity_schema": null,
+    "stop_recommended": false,
+    "evidence_scope": "sampled_images_only",
+    "continuous_video_observation": false,
+    "user_artistic_acceptance": false
+  },
+  "actual_agent_stop_proofs": {
+    "2d6d7b2f-e55d-43f7-b94f-6aa1ddd8ac9d": true,
+    "31bfdd60-50f7-482b-a296-b050c01280dc": true,
+    "ebe8e78a-8171-4fa1-9270-71b32ac6d636": true
+  },
+  "release_roles": [
+    {
+      "role": "api",
+      "namespace": "agent-service",
+      "deployment": "agent-service-api",
+      "deployment_uid": "222a2027-1231-4233-8635-efafc0ec1ce6",
+      "full_spec_sha256": "4e3d1b6509be6720ca8d037f6f7ed7733b665022cd375fcc87b74a6072800a31",
+      "generation": 90,
+      "plan_directory": "rollout-review-continuation-api-r1",
+      "manifest_sha256": "11c4d4b41986ac2a578523fc78f6f938abf63a3b2b8648135f858efca8e601f9",
+      "pod": "agent-service-api-7c855bf8db-ctkgs",
+      "pod_uid": "03a094c5-5dbd-412b-830d-9182e66e4d16",
+      "replicaset": "agent-service-api-7c855bf8db",
+      "replicaset_uid": "c012d4da-0ca3-479a-964c-bd9236f1f55f",
+      "image": "arm-cluster-master:5000/agent-service-control:latest@sha256:b45be0e7336b3b64fb8f9cfac0c984f51aeaaee4f5e16bcf6c0d73e031522c57",
+      "image_id": "docker-pullable://arm-cluster-master:5000/agent-service-control@sha256:b45be0e7336b3b64fb8f9cfac0c984f51aeaaee4f5e16bcf6c0d73e031522c57",
+      "ready": true,
+      "restart_count": 0,
+      "config_maps": [
+        "agent-service-resource-88a587f43b4d605d"
+      ],
+      "gates": null,
+      "binding_unchanged_during_read": true
+    },
+    {
+      "role": "dispatcher",
+      "namespace": "agent-service",
+      "deployment": "agent-service-dispatcher",
+      "deployment_uid": "b4220509-452d-4771-ab74-898014cbe4bd",
+      "full_spec_sha256": "b88945255f5e0472154cfdc7d066974c9849bcb9cc0444a2c5ae185a5d8ceb25",
+      "generation": 195,
+      "plan_directory": "rollout-resource-dispatcher-r1",
+      "manifest_sha256": "a296405529b6ba0e6a130c79b95a0976d0067ca21b93448d67184989b7eada4c",
+      "pod": "agent-service-dispatcher-7d9d96d588-ppngq",
+      "pod_uid": "4e7ed18d-4d3e-49da-9d00-ea13f58b6123",
+      "replicaset": "agent-service-dispatcher-7d9d96d588",
+      "replicaset_uid": "e7582df5-d498-4516-8c38-4fcea7b1775f",
+      "image": "arm-cluster-master:5000/agent-service-control:latest@sha256:b073e576c12a8a4b5d977c7623c4036b8d2847606857d5bc97ef5645d858776d",
+      "image_id": "docker-pullable://arm-cluster-master:5000/agent-service-control@sha256:b073e576c12a8a4b5d977c7623c4036b8d2847606857d5bc97ef5645d858776d",
+      "ready": true,
+      "restart_count": 0,
+      "config_maps": [
+        "agent-service-resource-88a587f43b4d605d"
+      ],
+      "gates": null,
+      "binding_unchanged_during_read": true
+    },
+    {
+      "role": "model-proxy",
+      "namespace": "agent-service",
+      "deployment": "agent-model-proxy",
+      "deployment_uid": "f84882d5-95d8-4b7e-9cb3-800abc94b16a",
+      "full_spec_sha256": "250690747863550df6eac7a30940d11c09fbb512c40d4f564297dc5dd9803fcc",
+      "generation": 75,
+      "plan_directory": "rollout-review-continuation-proxy-r1",
+      "manifest_sha256": "f032ac9ee81156e1f808ddc7dddb2a919183ca506ab46117832eeb38fc3ff6c9",
+      "pod": "agent-model-proxy-5f588bccdc-6dxtp",
+      "pod_uid": "99bfa4b6-ad43-4ab1-ae4d-53f55e1122ad",
+      "replicaset": "agent-model-proxy-5f588bccdc",
+      "replicaset_uid": "5f013ce0-d72f-48f4-b1d1-c9ea24d473a2",
+      "image": "arm-cluster-master:5000/agent-service-control:latest@sha256:b45be0e7336b3b64fb8f9cfac0c984f51aeaaee4f5e16bcf6c0d73e031522c57",
+      "image_id": "docker-pullable://arm-cluster-master:5000/agent-service-control@sha256:b45be0e7336b3b64fb8f9cfac0c984f51aeaaee4f5e16bcf6c0d73e031522c57",
+      "ready": true,
+      "restart_count": 0,
+      "config_maps": [
+        "agent-service-wkhour-a61e2b966bd90f9c"
+      ],
+      "gates": null,
+      "binding_unchanged_during_read": true
+    },
+    {
+      "role": "workbench",
+      "namespace": "video-workbench",
+      "deployment": "video-workbench",
+      "deployment_uid": "77ca24d0-4f87-4fcf-b7cc-150336b98d07",
+      "full_spec_sha256": "7a29c566ba61a4b1e07d54286ff81616347f2e669657437a0e35f2b348521b3e",
+      "generation": 135,
+      "plan_directory": "rollout-review-continuation-workbench-r1",
+      "manifest_sha256": "8d3efb0b35c6b5902a06b66dec9515c277c460fd7db1e0fd990fd5f724653f6f",
+      "pod": "video-workbench-67697cb7f8-rrbdl",
+      "pod_uid": "e3bfc2b4-2aeb-4e90-a6ee-c73374d475f5",
+      "replicaset": "video-workbench-67697cb7f8",
+      "replicaset_uid": "adfa788a-5423-4e0a-8552-7d07ce099230",
+      "image": "arm-cluster-master:5000/video-workbench:latest@sha256:75060c55661e507e05f155e1e2a26d0babc920048d2957d7a305b569a13b4a6e",
+      "image_id": "docker-pullable://arm-cluster-master:5000/video-workbench@sha256:75060c55661e507e05f155e1e2a26d0babc920048d2957d7a305b569a13b4a6e",
+      "ready": true,
+      "restart_count": 0,
+      "config_maps": [],
+      "gates": {
+        "VIDEO_SPATIAL_FOUNDATION_PLANNING_ENABLED": "1",
+        "VIDEO_SCENE_SPACE_PRODUCTION_ENABLED": "1"
+      },
+      "binding_unchanged_during_read": true
+    },
+    {
+      "role": "executor",
+      "deployment_uid": "dcbcebe4-5f08-48b4-95ce-6fba693836b0",
+      "deployment_spec_sha256": "761d72eb008627fd2bcd3579b98320974bbde4b7bf5632d8e2319012f30c2bd6",
+      "pod_uid": "59bf1c95-40bd-4836-9607-0834ce298bca",
+      "pod": "video-animation-creation-6c4cb49f49-h92zt",
+      "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:99ba59c573ab4ebc2672d8f4b05a1b17227ca942790aa0103d43e9a4cba7fe0a",
+      "image_id": "docker-pullable://arm-cluster-master:5000/video-animation-creation@sha256:99ba59c573ab4ebc2672d8f4b05a1b17227ca942790aa0103d43e9a4cba7fe0a",
+      "ready": true,
+      "replicaset_uid": "dd950478-658c-4a05-903d-6e7a52d556c5"
+    }
+  ],
+  "new_three_host_deployed": false,
+  "narrow_ddl": {
+    "status": "only_limits_table_created_or_existing_shape_reconciled",
+    "table": "agent_model_request_limits",
+    "created": true,
+    "before_sha256": "301c98caceaa21b4b08f80af580cdee6d1df57cc3e160b35df83219b8a5f2408",
+    "after_sha256": "301c98caceaa21b4b08f80af580cdee6d1df57cc3e160b35df83219b8a5f2408",
+    "old_tables_preserved": 19,
+    "old_visible_rows_preserved": 169069,
+    "old_rows_validation_scope": "existing_columns_constraints_indexes_and_visible_ctid_xmin_tuples_not_raw_blob_rehash",
+    "new_table": {
+      "shape": {
+        "columns": [
+          {
+            "name": "attempt_id",
+            "type": "VARCHAR(36)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "body_sha256",
+            "type": "VARCHAR(64)",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "max_requests",
+            "type": "INTEGER",
+            "nullable": false,
+            "default": null
+          },
+          {
+            "name": "max_output_tokens",
+            "type": "INTEGER",
+            "nullable": false,
+            "default": null
+          }
+        ],
+        "primary_key": [
+          "attempt_id",
+          "body_sha256"
+        ],
+        "foreign_keys": [
+          {
+            "columns": [
+              "attempt_id"
+            ],
+            "referred_schema": "public",
+            "referred_table": "agent_attempts",
+            "referred_columns": [
+              "id"
+            ]
+          }
+        ],
+        "indexes": []
+      },
+      "rows": 0
+    },
+    "unrelated_table_initialization": false,
+    "model_requests": 0
+  },
+  "archived": {
+    "workspace_files": 406,
+    "control_files": 40,
+    "original_files_byte_identical": 355,
+    "workspace_tar_sha256": "d40f0dd6c4c9c7e6036bafaa64c0f9ccc8dfc9cdd9819deafe81f21d3932f01b",
+    "control_tar_sha256": "8b2f4d29d36d3687889739dca36345dfcb32e936f20842ee4e5aae024d758844",
+    "original_tar_sha256": "04bd7772c9d696fbc87d3f99104053ed4e7a777c11e4435cb68719699c997a6e",
+    "scope": "temporary_workspace_and_server_controls_not_all_persistent_artifacts"
+  },
+  "original_six_business_rows_unchanged": true,
+  "observer": {
+    "original_r1_exit": 1,
+    "original_error": "TypeError_duplicate_status_argument",
+    "r1_failure_preserved": true,
+    "readonly_r2_exit": 0,
+    "business_reposts": 0,
+    "observer_provider_requests": 0
+  },
+  "no_main_merge": true,
+  "no_wikiskill_publication": true,
+  "no_new_content_validation": true,
+  "five_minute_film_remains_paused": true,
+  "operations_root": "D:\\codex-work\\operations\\video-next-work-20261127",
+  "references": {
+    "continuation-submit-r1.json": {
+      "bytes": 455,
+      "sha256": "a007738bd1fe3e0b51bb24097f7f7cca740c57a68f141cc5c08496ef0d7f5143"
+    },
+    "continuation-final-review-authority-r1.json": {
+      "bytes": 35902,
+      "sha256": "f32d6eeb4ae803b2f83e71cd998e3ce12d1c825dd2cb6ce41db733732de8dd4f"
+    },
+    "continuation-observer-r2-status-reviewed-r1.json": {
+      "bytes": 7543,
+      "sha256": "88427f08e7f48dc2f251253a7fd13a2530e44adb27e00050a408a5626405e2ef"
+    },
+    "continuation-terminal-archive-r1.json": {
+      "bytes": 2324,
+      "sha256": "9dbd59b4a1cdec9fce6b968ee8aa674d7984a63f504e4c1d0f8f244f47feeae5"
+    },
+    "continuation-terminal-archive-r1/verification.json": {
+      "bytes": 813,
+      "sha256": "8d1ff7d698e2eed8e2e496128fb4cf17a8ededfa49d66ca5950c6400e0ffa192"
+    },
+    "final-roles-continuation-r1.json": {
+      "bytes": 62281,
+      "sha256": "d803438f43a89710efa2e552a6a3e3cd43a7544c218b38b8c705dffa3d1ca235"
+    },
+    "actual-continuation-workbench-binding-r1.json": {
+      "bytes": 703,
+      "sha256": "df9253b19ced326bfe96f3e35c6a4508280635befd946bf6ea20cca4fceb32d6"
+    },
+    "proxy-model-limits-ddl-applied-r1.json": {
+      "bytes": 2941,
+      "sha256": "144ead4ab5e367a2096a79ab78880d30f4ad2b10ddab3237f3a0d6c188f7c720"
+    },
+    "continuation-quality-gate-independent-review-r1.md": {
+      "bytes": 6039,
+      "sha256": "fa6acb9e88ba91a765bf0cccfae15b0e678e602f6a2a156551f77717a38fee03"
+    },
+    "continuation-terminal-stop-and-row-authority-r1.json": {
+      "bytes": 26046,
+      "sha256": "4ceb6f5c7a978c67e533583adcc82708e7e7e083eec97b5d8732358cb01670b2"
+    },
+    "history-review-continuation-r1/before.json": {
+      "bytes": 4139580,
+      "sha256": "5388f4efd02e5928ea5ed9222aaa154c919e9ab334099363cf996a8d80e7d8b5"
+    },
+    "history-review-continuation-r1/after-terminal-r1.json": {
+      "bytes": 4142972,
+      "sha256": "7993b516a6733de1e74a7e97afc91421b2beb53415cf8b1212b2ef2c2941bb01"
+    },
+    "history-review-continuation-r1/allowed-four-actual-continuation-rows-r1.json": {
+      "bytes": 2119,
+      "sha256": "2ad493e54ca918e84ccfec6be68ca8f86b516da65137eab55eba19b8c534d1fc"
+    },
+    "history-review-continuation-r1/compare-terminal-r1.json": {
+      "bytes": 960,
+      "sha256": "a2d2b7cd5aa8118c24dba70bb4d1077b2308ab2438dc667eae8d5c19dae05811"
+    },
+    "history-review-continuation-r1/compare-terminal-r1.strict.json": {
+      "bytes": 392,
+      "sha256": "3598b8429ffc31df949d9197c5e2adb6b18041310c8574260ed7d4c919c82ca8"
+    },
+    "history-review-continuation-r1/quiet-terminal-r1.json": {
+      "bytes": 14249,
+      "sha256": "f2a397eeb8abc14c5507879ec8d01255e288a476b2b9d4fb7c41c21a013f105a"
+    },
+    "continuation-frame0-inputs-r1/extraction-receipt.json": {
+      "bytes": 2860,
+      "sha256": "e2342e5a42fcf529f07dab50251872120e5e34928b8a31b9c464ba63836258c0"
+    },
+    "continuation-frame0-inputs-r1/pixel-comparison.json": {
+      "bytes": 21137,
+      "sha256": "311d32952d803a99fb9c7110e6feb6fd7701be2086ec8cd97ba7f8d7f691a739"
+    },
+    "continuation-frame0-inputs-r1/FINDINGS.md": {
+      "bytes": 6306,
+      "sha256": "4cb9093007ad6942368752f92f40a1f39874c67011ab9e72776d0695c9695f2f"
+    },
+    "continuation-frame0-inputs-r1/diagnostic-inventory.json": {
+      "bytes": 2826,
+      "sha256": "4e4724226c1cd34b23f25802c7d17b9ec71ca52ef2bbf85d90bbc86753709999"
+    },
+    "continuation-frame0-inputs-r1/preview-0.png": {
+      "bytes": 838118,
+      "sha256": "429426327af72716ddccbe9451cfeee41181eb5244a89a19000ff10219fe77b6"
+    },
+    "continuation-frame0-inputs-r1/clip-0-0.png": {
+      "bytes": 547661,
+      "sha256": "3b134caac947194da1b8348866477f05d5101921fb7d1077bc67260d264f79c2"
+    },
+    "final-workbench-secret-preservation-r1.json": {
+      "bytes": 386,
+      "sha256": "912f810e830b4a8d80e8f1e8580d99ca1c290e1ae3da1a534c715e2ad3be1fc4"
+    }
+  },
+  "history": {
+    "strict": {
+      "schema": "video.application-history-comparison.v1",
+      "passed": true,
+      "existing_databases": 58,
+      "after_databases": 58,
+      "preserved_rows": 9210,
+      "allowed_added_rows": 4,
+      "failures": [],
+      "model_requests": 0,
+      "media_files_read": 0,
+      "artifact_scope": "Existing reference fields are bound by unchanged row fingerprints and path-set inclusion; no media bytes are recomputed."
+    },
+    "sequence_guard": {
+      "schema": "video.application-history-sequence-guard.v1",
+      "passed": true,
+      "strict_passed": true,
+      "strict_failure_count": 0,
+      "exact_internal_sequence_failures_resolved": [],
+      "sequence_changes": [],
+      "sequence_evidence_failures": [],
+      "remaining_strict_failures": [],
+      "model_requests": 0,
+      "media_files_read": 0,
+      "scope": "Only exact verified sqlite_sequence rows; no existing business-row or schema exception.",
+      "raw_strict_report": "D:\\codex-work\\operations\\video-next-work-20261127\\history-review-continuation-r1\\compare-terminal-r1.strict.json",
+      "raw_strict_report_sha256": "3598b8429ffc31df949d9197c5e2adb6b18041310c8574260ed7d4c919c82ca8",
+      "before_file_sha256": "5388f4efd02e5928ea5ed9222aaa154c919e9ab334099363cf996a8d80e7d8b5",
+      "after_file_sha256": "7993b516a6733de1e74a7e97afc91421b2beb53415cf8b1212b2ef2c2941bb01",
+      "allowed_additions_file_sha256": "2ad493e54ca918e84ccfec6be68ca8f86b516da65137eab55eba19b8c534d1fc"
+    }
+  },
+  "renderer_stop": {
+    "status": "actual_terminal_four_rows_limits_and_physical_stops_independently_verified",
+    "renderer": {
+      "status": "three_original_renderers_actual_docker_404_verified",
+      "operations": [
+        {
+          "operation_id": "ss-2a5818073ceb1c6332c1d156e859d2bde6d8bf8c0413eff8",
+          "queue_status": "completed",
+          "queue_stop_proven": true,
+          "request_sha256": "1084560dd75f1750c5939db10c86222537fc6528965a2f1eac39a3de57e61540",
+          "source_sha256": "6dd43af07bf9b0c050037e6679c7b23906b22b3fb68c91cfe5d1012ebee7dfa5",
+          "plan_sha256": "0045b4acdbe9069d3b40686ef53b6eb2d6e3f57e5818b1220e606c698cbd346f",
+          "claim_sha256": "d0059309592c9473204f424fc286f175c68b83fb151ac5efc50e2e05a610d72a",
+          "outcome_sha256": "fbab320c8fe78678edfd96c1ca5877f0d3f5a738a6fd969b85252b52b6cc02f2",
+          "container_id": "521354ecabeaddc4fa8d02516c88b0ae4bfff4b270d6c4dd0ae24e690205c92c",
+          "docker_get_status": 404,
+          "exact_container_id_absent": true,
+          "one_queue_row": true,
+          "one_renderer_claim": true,
+          "lookup_only": true,
+          "all_original_frozen_file_hashes_unchanged": true,
+          "private_cleanup_token_excluded_from_public_outcome": true
+        },
+        {
+          "operation_id": "ss-bc2108aff27faab905644dfdac94ed9e1626dcc1398e0d78",
+          "queue_status": "completed",
+          "queue_stop_proven": true,
+          "request_sha256": "022887ee809b6cf9ae16a555bffee0716352683c2ab02f2b9d3ef3af6b00c41d",
+          "source_sha256": "6dd43af07bf9b0c050037e6679c7b23906b22b3fb68c91cfe5d1012ebee7dfa5",
+          "plan_sha256": "0045b4acdbe9069d3b40686ef53b6eb2d6e3f57e5818b1220e606c698cbd346f",
+          "claim_sha256": "e54bdc2b685bed30169713890e7cf2c3d06af8dbe00dc4c7db7e41db14a409dc",
+          "outcome_sha256": "aae71234f74a5f00fa0f9128702e98bdd336c0c214ca5cc16b88864c35ca503f",
+          "container_id": "76c6996cb723dde1be5639d00a4221732629f4565dff98d52ef0f153ebcbd8b0",
+          "docker_get_status": 404,
+          "exact_container_id_absent": true,
+          "one_queue_row": true,
+          "one_renderer_claim": true,
+          "lookup_only": true,
+          "all_original_frozen_file_hashes_unchanged": true,
+          "private_cleanup_token_excluded_from_public_outcome": true
+        },
+        {
+          "operation_id": "ss-cf964be7a9d63feff100bd7aed8a622d1b948d603f410e16",
+          "queue_status": "completed",
+          "queue_stop_proven": true,
+          "request_sha256": "7516b44e32796d980739c277007b9831a123e5e342c16b95acf6a4e0c5110b49",
+          "source_sha256": "6dd43af07bf9b0c050037e6679c7b23906b22b3fb68c91cfe5d1012ebee7dfa5",
+          "plan_sha256": "0045b4acdbe9069d3b40686ef53b6eb2d6e3f57e5818b1220e606c698cbd346f",
+          "claim_sha256": "0bce2e09a347bd2f39746c8f1be4bf155c535799f5033792bd2fb2dbce8965be",
+          "outcome_sha256": "4e3f62f068a200b62689d066b185b30158f1e0f29d820dc8e035a4c41ddbb6ba",
+          "container_id": "b6ceb0867711dd2b2362f5e759559d271f9b904239c40b1702c4d20264335d8f",
+          "docker_get_status": 404,
+          "exact_container_id_absent": true,
+          "one_queue_row": true,
+          "one_renderer_claim": true,
+          "lookup_only": true,
+          "all_original_frozen_file_hashes_unchanged": true,
+          "private_cleanup_token_excluded_from_public_outcome": true
+        }
+      ],
+      "database_writes": 0,
+      "model_requests": 0,
+      "http_posts": 0,
+      "new_render_requests": 0
+    },
+    "agent_physical_stops": [
+      {
+        "job_id": "31bfdd60-50f7-482b-a296-b050c01280dc",
+        "resource_id": "k8s:agent-workers:595f6502-b12f-4645-aea2-e9139c3558fd",
+        "physical_pod_absent": true
+      },
+      {
+        "job_id": "ebe8e78a-8171-4fa1-9270-71b32ac6d636",
+        "resource_id": "k8s:agent-workers:46fea283-9afc-4bc9-85f3-ce3ebc30d01f",
+        "physical_pod_absent": true
+      },
+      {
+        "job_id": "2d6d7b2f-e55d-43f7-b94f-6aa1ddd8ac9d",
+        "resource_id": "k8s:agent-workers:d21ae296-d54d-40bb-8711-9cd7e493a51e",
+        "physical_pod_absent": true
+      }
+    ],
+    "binding_unchanged": true
+  },
+  "frame_diagnostics": {
+    "status": "offline_same_frame_actual_model_input_comparison",
+    "conclusion": "geometry_change_not_established_by_actual_input_comparison",
+    "source_sha256": "6dd43af07bf9b0c050037e6679c7b23906b22b3fb68c91cfe5d1012ebee7dfa5",
+    "plan_sha256": "0045b4acdbe9069d3b40686ef53b6eb2d6e3f57e5818b1220e606c698cbd346f",
+    "configuration_sha256": "9f93153b0ef65d724486bcba8bdfe430bdef1a2c81bf2913938277458a14c65b",
+    "actual_input_files": {
+      "preview-0.png": {
+        "bytes": 838118,
+        "sha256": "429426327af72716ddccbe9451cfeee41181eb5244a89a19000ff10219fe77b6"
+      },
+      "clip-0-0.png": {
+        "bytes": 547661,
+        "sha256": "3b134caac947194da1b8348866477f05d5101921fb7d1077bc67260d264f79c2"
+      }
+    },
+    "clip_png_was_in_existing_archive": false,
+    "clip_png_readonly_copy_pinned_to_actual_workbench": true,
+    "capture_paths": {
+      "static": "PNG",
+      "clip": "JPEG quality 88 then RGB PNG"
+    },
+    "actual_review_input_comparison": {
+      "rgb_mean_absolute_error": 1.3609649884259258,
+      "rgb_rmse": 1.9343285348634645,
+      "rgb_psnr_db": 42.40019883875645,
+      "absolute_component_error_percentiles": {
+        "50": 1.0,
+        "90": 3.0,
+        "95": 4.0,
+        "99": 7.0,
+        "99.9": 11.0
+      },
+      "pixels_with_any_component_error_gt_10_fraction": 0.0016015625,
+      "gaussian_luminance_ssim": 0.9729543015995115,
+      "gaussian_sigma_5_low_frequency_luminance_mae": 0.11444551560231513,
+      "symmetric_strong_smoothed_edge_distance_px": {
+        "50": 0.0,
+        "95": 0.0,
+        "99": 0.0
+      },
+      "edge_method": "luminance Gaussian sigma1.5, Sobel magnitude>=40, nearest-edge EDT; diagnostic only"
+    },
+    "crop_metrics": {
+      "tallest_peak": {
+        "rgb_mean_absolute_error": 1.5557422222222221,
+        "rgb_rmse": 2.167137384764622,
+        "rgb_psnr_db": 41.41307472650148,
+        "absolute_component_error_percentiles": {
+          "50": 1.0,
+          "90": 3.0,
+          "95": 4.0,
+          "99": 7.0,
+          "99.9": 10.0
+        },
+        "pixels_with_any_component_error_gt_10_fraction": 0.00158,
+        "gaussian_luminance_ssim": 0.9691835713657072,
+        "gaussian_sigma_5_low_frequency_luminance_mae": 0.10773546110785981,
+        "symmetric_strong_smoothed_edge_distance_px": {
+          "50": 0.0,
+          "95": 0.0,
+          "99": 0.0
+        },
+        "edge_method": "luminance Gaussian sigma1.5, Sobel magnitude>=40, nearest-edge EDT; diagnostic only"
+      },
+      "near_small_pine_ledge": {
+        "rgb_mean_absolute_error": 1.749111880046136,
+        "rgb_rmse": 2.5944933256939318,
+        "rgb_psnr_db": 39.849752452388756,
+        "absolute_component_error_percentiles": {
+          "50": 1.0,
+          "90": 4.0,
+          "95": 6.0,
+          "99": 9.0,
+          "99.9": 13.0
+        },
+        "pixels_with_any_component_error_gt_10_fraction": 0.006482122260668973,
+        "gaussian_luminance_ssim": 0.9666194324970796,
+        "gaussian_sigma_5_low_frequency_luminance_mae": 0.14006137891629336,
+        "symmetric_strong_smoothed_edge_distance_px": {
+          "50": 0.0,
+          "95": 0.0,
+          "99": 0.0
+        },
+        "edge_method": "luminance Gaussian sigma1.5, Sobel magnitude>=40, nearest-edge EDT; diagnostic only"
+      }
+    },
+    "limitations": [
+      "Pixel metrics and immutable-input equality do not independently prove artistic quality.",
+      "No pre-JPEG raw clip framebuffer is retained here; exact uncompressed framebuffer equality is not directly measured.",
+      "Edge distance is a diagnostic for visible displacement, not a mesh reconstruction or a formal geometry guarantee."
+    ],
+    "original_review_and_failed_gate_unchanged": true,
+    "new_provider_requests": 0,
+    "new_renderer_requests": 0
+  }
+}

@@ -117,3 +117,10 @@ The 195 related source-recovery, scene production, budget/store and existing
 gateway regression cases also passed, without skips. An initial HTTP fixture
 used an invalid short idempotency key; its failed report is retained and the
 fixture was corrected without relaxing the production key validator.
+
+The explicitly authorized live continuation was executed once on 2026-11-27.
+The new reviewer completed with verified limits and complete new token usage
+(3 requests, 60154 tokens), but its 83-point review contained three issues.
+The ordinary quality gate rejected the run; no repair, render or export followed.
+The original unknown usage remains unknown and OpenSpec task 6.1 remains open.
+See [the actual release and terminal evidence](scene-review-continuation-validation-20261127.md).
