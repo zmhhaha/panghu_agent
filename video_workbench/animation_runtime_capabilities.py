@@ -44,15 +44,20 @@ def with_drawing_context_guidance(instruction, allowed_engines):
 def validate_runtime_capabilities(value):
     from .animejs_library import ASSETS as ANIME_ASSETS, validate_libraries
     from .ink_landscape_library import ASSETS as INK_ASSETS
+    from .spatial_three_library import ASSET_NAMES as SPATIAL_ASSETS
+    v4 = type(value) is dict and value.get('schema') == 'video.animation-runtime-capabilities.v4'
     v3 = type(value) is dict and value.get('schema') == 'video.animation-runtime-capabilities.v3'
     v2 = type(value) is dict and value.get('schema') == 'video.animation-runtime-capabilities.v2'
     fields = {'schema', 'allowed_engines', 'assets', 'runtime_identity'}
-    if v2 or v3:
+    if v2 or v3 or v4:
         fields.add('authoring_libraries')
-    if v3:
+    if v3 or v4:
         fields.add('drawing_libraries')
+    if v4:
+        fields.add('spatial_libraries')
     valid = type(value) is dict and set(value) == fields and type(value['schema']) is str and value['schema'] in {
-        SCHEMA, 'video.animation-runtime-capabilities.v2', 'video.animation-runtime-capabilities.v3'}
+        SCHEMA, 'video.animation-runtime-capabilities.v2', 'video.animation-runtime-capabilities.v3',
+        'video.animation-runtime-capabilities.v4'}
     if not valid:
         raise ServiceError('animation_runtime_capabilities_invalid', 422)
     engines, assets = value['allowed_engines'], value['assets']
@@ -60,20 +65,32 @@ def validate_runtime_capabilities(value):
             and all(type(engine) is str and engine in ENGINES for engine in engines)
             and len(engines) == len(set(engines))
             and type(assets) is dict and set(assets) <= (
+                ASSETS | set(ANIME_ASSETS) | set(INK_ASSETS) | SPATIAL_ASSETS if v4 else
                 ASSETS | set(ANIME_ASSETS) | set(INK_ASSETS) if v3 else
                 ASSETS | set(ANIME_ASSETS) if v2 else ASSETS)
             and all(type(checksum) is str and SHA.fullmatch(checksum) for checksum in assets.values())):
         raise ServiceError('animation_runtime_capabilities_invalid', 422)
     validate_runtime_identity(value['runtime_identity'])
-    if v2 or v3 and (value['authoring_libraries'] or set(assets) & set(ANIME_ASSETS)):
+    if v2 or v3 or v4:
+        if type(value['authoring_libraries']) is not dict:
+            raise ServiceError('animation_runtime_capabilities_invalid', 422)
+    if v2 or (v3 or v4) and (value['authoring_libraries'] or set(assets) & set(ANIME_ASSETS)):
         validate_libraries(value['authoring_libraries'], assets)
-    elif v3 and value['authoring_libraries'] != {}:
+    elif (v3 or v4) and value['authoring_libraries'] != {}:
         raise ServiceError('animation_runtime_capabilities_invalid', 422)
-    if v3:
+    if v3 or v4:
+        if type(value['drawing_libraries']) is not dict:
+            raise ServiceError('animation_runtime_capabilities_invalid', 422)
+    if v3 or (v4 and (value['drawing_libraries'] or set(assets) & set(INK_ASSETS))):
         from .formal_drawing_libraries import validate_libraries as validate_drawing_libraries
         validate_drawing_libraries(value['drawing_libraries'], assets)
         if 'canvas' not in engines:
             raise ServiceError('film_drawing_library_not_admitted', 422)
     if 'three' in engines and assets.get('three.module.min.js') != THREE_ASSET_SHA256:
         raise ServiceError('animation_runtime_three_asset_not_admitted', 422)
+    if v4:
+        from .spatial_three_library import validate_libraries as validate_spatial_libraries
+        validate_spatial_libraries(value['spatial_libraries'], assets, frozen=True)
+        if 'three' not in engines:
+            raise ServiceError('film_spatial_library_not_admitted', 422)
     return deepcopy(value)

@@ -1,0 +1,108 @@
+{
+  "schema": "video.three-spatial-local-evidence.v1",
+  "scope": "actual_local_cpu_browser_not_production_admission_or_artistic_acceptance",
+  "model_requests": 0,
+  "production_posts": 0,
+  "seed": 631907,
+  "baseline_source_sha256": "1b6693b620f576dacf2b328367999a00458b8440f3f86ff825e996b153734be0",
+  "original_baseline_file_sha256": "2e811bba83f7b8a6187dcac791353501ea03ce5f69ac5d05ba5facc1d7489492",
+  "original_scene_js_sha256": "3629650f786404ede5a57b1bd570ee944e6a9b1e2160e168d6ad4d6d0576cad4",
+  "plan_file_sha256": "e847b0f9db5ae4f6cae85eb385f4d33f95fabc5855dbbd533aa3bb4756dcdf7f",
+  "controlled_differences": [
+    "Three indexed vertex-normal surfaces replace the Canvas mountain ink shader",
+    "Authored per-mass orthographic projections are mapped into one Three world with explicit world matrices",
+    "Original non-mountain painters become static Three textures; 0.28-height clipping replaces the original foot alpha fade",
+    "Seeded appearance is per-vertex linear color; it is not equivalent to original brush strokes or PBR"
+  ],
+  "supported": [
+    "world normal/light guidance",
+    "fixed object-coordinate material",
+    "distance and height color atmosphere",
+    "native opaque depth coverage",
+    "explicit native transparency",
+    "absolute-frame camera reconstruction"
+  ],
+  "not_claimed": [
+    "artistic reproduction",
+    "physical shadow transport",
+    "pixel texture",
+    "skinning",
+    "morphing",
+    "new GPU admission",
+    "production rollout",
+    "motion acceptance"
+  ],
+  "checks": {
+    "native_swiftshader": true,
+    "mechanism_diagnostics": true,
+    "repeat": true,
+    "reverse": true,
+    "reload": true,
+    "planned_camera_changes_pixels": true,
+    "full_decode": true
+  },
+  "sampled_frame_png_sha256": {
+    "0": "2845c17978539cffff3b20093b8485a5d5613680f0b862c11ea49ffcc01082e1",
+    "18": "2845c17978539cffff3b20093b8485a5d5613680f0b862c11ea49ffcc01082e1",
+    "80": "aa11a12bcc9d9c42e05ba9e59d027c7ae1cf28edfcf88ba3f1d551c836d8a7c6",
+    "120": "334c073220b2f894b49a7a0611588c742a4065fb6d219e8e07188d3818f8c24c",
+    "216": "bcd62788e3657cf294747fd74b81ea33bccd934f2a4bb1448c4f71307823cfe9",
+    "239": "bcd62788e3657cf294747fd74b81ea33bccd934f2a4bb1448c4f71307823cfe9"
+  },
+  "preview": {
+    "sha256": "35e97b0c5aa4e91dbbfbc8b3213f66af671547f6b4a89d8ee29568114946ef45",
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "frames": 240,
+    "seconds": 10,
+    "audio": false
+  },
+  "resource_inventory": {
+    "/study.html": {
+      "bytes": 270,
+      "sha256": "e9205a4096347a3a083707ba44395915c6c1b8b51db27d029c95523e222aa769"
+    },
+    "/study.mjs": {
+      "bytes": 11047,
+      "sha256": "0bfdf708db0822b03e80905c5fee0febbbb7d9e8748b8bfc903ffcd31773cd54"
+    },
+    "/plan.json": {
+      "bytes": 15674,
+      "sha256": "e847b0f9db5ae4f6cae85eb385f4d33f95fabc5855dbbd533aa3bb4756dcdf7f"
+    },
+    "/baseline-scene.js": {
+      "bytes": 40575,
+      "sha256": "25e22b331ec8819bea902439cbe0689f1ecdfd61b397968b065e3d01cff94f2a"
+    },
+    "/three.module.min.js": {
+      "bytes": 691648,
+      "sha256": "08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7"
+    },
+    "/spatial_three_adapter.mjs": {
+      "bytes": 16154,
+      "sha256": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+    },
+    "/scene_space_surface.mjs": {
+      "bytes": 24599,
+      "sha256": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991"
+    },
+    "/scene_space_surface_budget.mjs": {
+      "bytes": 6014,
+      "sha256": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1"
+    },
+    "/assets/ink-landscape.mjs": {
+      "bytes": 530517,
+      "sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6"
+    },
+    "/assets/ink-landscape.LICENSE.txt": {
+      "bytes": 1083,
+      "sha256": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108"
+    }
+  },
+  "elapsed_seconds": 99.0396378,
+  "browser_executable": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "browser_version": "158.0.8127.88",
+  "whole_video_watched": false,
+  "user_artistic_acceptance": false
+}

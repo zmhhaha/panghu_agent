@@ -1,0 +1,1138 @@
+{
+  "schema": "video.hyperframes-film-technical-probe.v1",
+  "bundle_sha256": "898517e2742988fe08b890f31308c90959aafcffe5cc8bcc2db6ea2a61632202",
+  "core_sha256": "675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc",
+  "observations": [
+    {
+      "protocol": "hyperframes-composable-film-host-1",
+      "status": "idle",
+      "completed_frame": 0,
+      "completed_seeks": 1,
+      "manifest_sha256": "b98f7a8428d678d70a88865655e301648cb45d80e01c2ed37f2a390e4a074ca2",
+      "film_sha256": "36f7a53b25af64e309c32e75e0575e27a759c0408e37c7c8b7158fbdf91eebe1",
+      "live_roots": 1,
+      "pending_cleanup_modules": 1,
+      "package_execution_status": "not_executed",
+      "evidence_scope": "lifecycle_calls_not_capture_visual_proof_or_runtime_admission",
+      "requested_frame": 0,
+      "actual_seconds": 0,
+      "core_seek_count": 1,
+      "dispatch_count": 1,
+      "core_binding": "supplied_trusted_core_methods",
+      "realms": [
+        {
+          "module_id": "three-spatial-probe",
+          "module_sha256": "179f400c0c26ffd7637fc4b0a3d370ca17d7cef8776afe905a15d5fb8f4a0535",
+          "instance_id": 1,
+          "sandbox": "allow-scripts",
+          "realm_origin": "null",
+          "context": {
+            "global_frame": 0,
+            "local_frame": 0,
+            "phase": "active"
+          },
+          "observation": {
+            "revision": "film-opaque-realm-guard-1",
+            "engine": "three",
+            "service_worker_available": false,
+            "pending_animation_frames": 0,
+            "contexts": [
+              {
+                "kind": "webgl2",
+                "width": 1280,
+                "height": 720,
+                "connected": true,
+                "visible": true,
+                "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+                "software": true,
+                "context_lost": false,
+                "gl_error": 0
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 720,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 54,
+                "height": 54,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 112,
+                "height": 76,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 185,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 240,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 710,
+                "height": 210,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 0,
+                "height": 0,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 95,
+                "height": 102,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 145,
+                "height": 135,
+                "connected": false,
+                "visible": false
+              }
+            ],
+            "spatial_appearance": {
+              "library": {
+                "assets": {
+                  "scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+                  "scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+                  "spatial-three-library.json": "493d1b7848d50c3779c4416e62a5226ce45bd92b2f9d7f46f9bd3883e5055ac8",
+                  "spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+                },
+                "engines": [
+                  "three"
+                ],
+                "entrypoint": "./assets/spatial_three_adapter.mjs",
+                "features": [
+                  "atmosphere",
+                  "lighting",
+                  "texture"
+                ],
+                "library_id": "three-spatial",
+                "revision": 1,
+                "schema": "video.three-spatial-library.v1",
+                "scope": "bounded_cpu_vertex_colors_fixed_object_material_world_light_and_distance_color"
+              },
+              "material": {
+                "schema": "video.scene-appearance-observation.v1",
+                "scope": "per_page_cache_initialization",
+                "policy": {
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "estimated_material_samples": 1000000,
+                  "material_noise_limit": 3000000,
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "schema": "video.scene-appearance-policy.v1"
+                },
+                "requested_parameters": {
+                  "material_quality": "full"
+                },
+                "actual_parameters": {
+                  "material_quality": "full"
+                },
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "material_gradient_components": 0,
+                "material_noise_limit": 3000000,
+                "accounting": "charged_before_material_evaluation_no_refund"
+              },
+              "adapter": {
+                "schema": "video.spatial-three-realm-observation.v1",
+                "revision": "spatial-three-appearance-1",
+                "create_attempts": 2,
+                "instances_reserved": 2,
+                "instances_created": 2,
+                "instances_disposed": 0,
+                "vertices_reserved": 10330,
+                "vertex_updates_reserved": 10330,
+                "updates": 2,
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "lighting_evaluations": 10330,
+                "atmosphere_evaluations": 10330,
+                "limits": {
+                  "maxInstances": 64,
+                  "maxVertices": 262144,
+                  "maxVertexUpdates": 16777216
+                },
+                "material_policy": {
+                  "schema": "video.scene-appearance-observation.v1",
+                  "scope": "per_page_cache_initialization",
+                  "policy": {
+                    "actual_parameters": {
+                      "material_quality": "full"
+                    },
+                    "estimated_material_samples": 1000000,
+                    "material_noise_limit": 3000000,
+                    "requested_parameters": {
+                      "material_quality": "full"
+                    },
+                    "schema": "video.scene-appearance-policy.v1"
+                  },
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "material_samples": 10330,
+                  "material_noise_evaluations": 30990,
+                  "material_lattice_evaluations": 247920,
+                  "material_derivative_evaluations": 0,
+                  "material_gradient_components": 0,
+                  "material_noise_limit": 3000000,
+                  "accounting": "charged_before_material_evaluation_no_refund"
+                },
+                "accounting": "monotonic_canonical_module_reservations_no_dispose_refund_or_source_reset",
+                "scope": "one_module_realm_adapter_operations_not_whole_film_cpu_or_visual_acceptance"
+              },
+              "scope": "actual_helper_operations_not_pixels_or_artistic_acceptance"
+            }
+          }
+        }
+      ],
+      "execution_scope": "technical_realm_lifecycle_not_formal_film_delivery",
+      "frame_sha256": "609b3f51ad4b74aa78566586777ca3c67fa94e87084dc57653745c365ee4f6b0"
+    },
+    {
+      "protocol": "hyperframes-composable-film-host-1",
+      "status": "idle",
+      "completed_frame": 120,
+      "completed_seeks": 2,
+      "manifest_sha256": "b98f7a8428d678d70a88865655e301648cb45d80e01c2ed37f2a390e4a074ca2",
+      "film_sha256": "36f7a53b25af64e309c32e75e0575e27a759c0408e37c7c8b7158fbdf91eebe1",
+      "live_roots": 1,
+      "pending_cleanup_modules": 1,
+      "package_execution_status": "not_executed",
+      "evidence_scope": "lifecycle_calls_not_capture_visual_proof_or_runtime_admission",
+      "requested_frame": 120,
+      "actual_seconds": 5,
+      "core_seek_count": 2,
+      "dispatch_count": 2,
+      "core_binding": "supplied_trusted_core_methods",
+      "realms": [
+        {
+          "module_id": "three-spatial-probe",
+          "module_sha256": "179f400c0c26ffd7637fc4b0a3d370ca17d7cef8776afe905a15d5fb8f4a0535",
+          "instance_id": 2,
+          "sandbox": "allow-scripts",
+          "realm_origin": "null",
+          "context": {
+            "global_frame": 120,
+            "local_frame": 120,
+            "phase": "active"
+          },
+          "observation": {
+            "revision": "film-opaque-realm-guard-1",
+            "engine": "three",
+            "service_worker_available": false,
+            "pending_animation_frames": 0,
+            "contexts": [
+              {
+                "kind": "webgl2",
+                "width": 1280,
+                "height": 720,
+                "connected": true,
+                "visible": true,
+                "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+                "software": true,
+                "context_lost": false,
+                "gl_error": 0
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 720,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 54,
+                "height": 54,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 112,
+                "height": 76,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 185,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 240,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 710,
+                "height": 210,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 0,
+                "height": 0,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 95,
+                "height": 102,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 145,
+                "height": 135,
+                "connected": false,
+                "visible": false
+              }
+            ],
+            "spatial_appearance": {
+              "library": {
+                "assets": {
+                  "scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+                  "scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+                  "spatial-three-library.json": "493d1b7848d50c3779c4416e62a5226ce45bd92b2f9d7f46f9bd3883e5055ac8",
+                  "spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+                },
+                "engines": [
+                  "three"
+                ],
+                "entrypoint": "./assets/spatial_three_adapter.mjs",
+                "features": [
+                  "atmosphere",
+                  "lighting",
+                  "texture"
+                ],
+                "library_id": "three-spatial",
+                "revision": 1,
+                "schema": "video.three-spatial-library.v1",
+                "scope": "bounded_cpu_vertex_colors_fixed_object_material_world_light_and_distance_color"
+              },
+              "material": {
+                "schema": "video.scene-appearance-observation.v1",
+                "scope": "per_page_cache_initialization",
+                "policy": {
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "estimated_material_samples": 1000000,
+                  "material_noise_limit": 3000000,
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "schema": "video.scene-appearance-policy.v1"
+                },
+                "requested_parameters": {
+                  "material_quality": "full"
+                },
+                "actual_parameters": {
+                  "material_quality": "full"
+                },
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "material_gradient_components": 0,
+                "material_noise_limit": 3000000,
+                "accounting": "charged_before_material_evaluation_no_refund"
+              },
+              "adapter": {
+                "schema": "video.spatial-three-realm-observation.v1",
+                "revision": "spatial-three-appearance-1",
+                "create_attempts": 2,
+                "instances_reserved": 2,
+                "instances_created": 2,
+                "instances_disposed": 0,
+                "vertices_reserved": 10330,
+                "vertex_updates_reserved": 10330,
+                "updates": 2,
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "lighting_evaluations": 10330,
+                "atmosphere_evaluations": 10330,
+                "limits": {
+                  "maxInstances": 64,
+                  "maxVertices": 262144,
+                  "maxVertexUpdates": 16777216
+                },
+                "material_policy": {
+                  "schema": "video.scene-appearance-observation.v1",
+                  "scope": "per_page_cache_initialization",
+                  "policy": {
+                    "actual_parameters": {
+                      "material_quality": "full"
+                    },
+                    "estimated_material_samples": 1000000,
+                    "material_noise_limit": 3000000,
+                    "requested_parameters": {
+                      "material_quality": "full"
+                    },
+                    "schema": "video.scene-appearance-policy.v1"
+                  },
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "material_samples": 10330,
+                  "material_noise_evaluations": 30990,
+                  "material_lattice_evaluations": 247920,
+                  "material_derivative_evaluations": 0,
+                  "material_gradient_components": 0,
+                  "material_noise_limit": 3000000,
+                  "accounting": "charged_before_material_evaluation_no_refund"
+                },
+                "accounting": "monotonic_canonical_module_reservations_no_dispose_refund_or_source_reset",
+                "scope": "one_module_realm_adapter_operations_not_whole_film_cpu_or_visual_acceptance"
+              },
+              "scope": "actual_helper_operations_not_pixels_or_artistic_acceptance"
+            }
+          }
+        }
+      ],
+      "execution_scope": "technical_realm_lifecycle_not_formal_film_delivery",
+      "frame_sha256": "85d2d0b338552785e65d3ad0944acc579ad6beaddf547ed05776cc7064846bf7"
+    },
+    {
+      "protocol": "hyperframes-composable-film-host-1",
+      "status": "idle",
+      "completed_frame": 239,
+      "completed_seeks": 3,
+      "manifest_sha256": "b98f7a8428d678d70a88865655e301648cb45d80e01c2ed37f2a390e4a074ca2",
+      "film_sha256": "36f7a53b25af64e309c32e75e0575e27a759c0408e37c7c8b7158fbdf91eebe1",
+      "live_roots": 1,
+      "pending_cleanup_modules": 1,
+      "package_execution_status": "not_executed",
+      "evidence_scope": "lifecycle_calls_not_capture_visual_proof_or_runtime_admission",
+      "requested_frame": 239,
+      "actual_seconds": 9.958333333333334,
+      "core_seek_count": 3,
+      "dispatch_count": 3,
+      "core_binding": "supplied_trusted_core_methods",
+      "realms": [
+        {
+          "module_id": "three-spatial-probe",
+          "module_sha256": "179f400c0c26ffd7637fc4b0a3d370ca17d7cef8776afe905a15d5fb8f4a0535",
+          "instance_id": 3,
+          "sandbox": "allow-scripts",
+          "realm_origin": "null",
+          "context": {
+            "global_frame": 239,
+            "local_frame": 239,
+            "phase": "active"
+          },
+          "observation": {
+            "revision": "film-opaque-realm-guard-1",
+            "engine": "three",
+            "service_worker_available": false,
+            "pending_animation_frames": 0,
+            "contexts": [
+              {
+                "kind": "webgl2",
+                "width": 1280,
+                "height": 720,
+                "connected": true,
+                "visible": true,
+                "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+                "software": true,
+                "context_lost": false,
+                "gl_error": 0
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 720,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 54,
+                "height": 54,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 112,
+                "height": 76,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 185,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 240,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 710,
+                "height": 210,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 0,
+                "height": 0,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 95,
+                "height": 102,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 145,
+                "height": 135,
+                "connected": false,
+                "visible": false
+              }
+            ],
+            "spatial_appearance": {
+              "library": {
+                "assets": {
+                  "scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+                  "scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+                  "spatial-three-library.json": "493d1b7848d50c3779c4416e62a5226ce45bd92b2f9d7f46f9bd3883e5055ac8",
+                  "spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+                },
+                "engines": [
+                  "three"
+                ],
+                "entrypoint": "./assets/spatial_three_adapter.mjs",
+                "features": [
+                  "atmosphere",
+                  "lighting",
+                  "texture"
+                ],
+                "library_id": "three-spatial",
+                "revision": 1,
+                "schema": "video.three-spatial-library.v1",
+                "scope": "bounded_cpu_vertex_colors_fixed_object_material_world_light_and_distance_color"
+              },
+              "material": {
+                "schema": "video.scene-appearance-observation.v1",
+                "scope": "per_page_cache_initialization",
+                "policy": {
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "estimated_material_samples": 1000000,
+                  "material_noise_limit": 3000000,
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "schema": "video.scene-appearance-policy.v1"
+                },
+                "requested_parameters": {
+                  "material_quality": "full"
+                },
+                "actual_parameters": {
+                  "material_quality": "full"
+                },
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "material_gradient_components": 0,
+                "material_noise_limit": 3000000,
+                "accounting": "charged_before_material_evaluation_no_refund"
+              },
+              "adapter": {
+                "schema": "video.spatial-three-realm-observation.v1",
+                "revision": "spatial-three-appearance-1",
+                "create_attempts": 2,
+                "instances_reserved": 2,
+                "instances_created": 2,
+                "instances_disposed": 0,
+                "vertices_reserved": 10330,
+                "vertex_updates_reserved": 10330,
+                "updates": 2,
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "lighting_evaluations": 10330,
+                "atmosphere_evaluations": 10330,
+                "limits": {
+                  "maxInstances": 64,
+                  "maxVertices": 262144,
+                  "maxVertexUpdates": 16777216
+                },
+                "material_policy": {
+                  "schema": "video.scene-appearance-observation.v1",
+                  "scope": "per_page_cache_initialization",
+                  "policy": {
+                    "actual_parameters": {
+                      "material_quality": "full"
+                    },
+                    "estimated_material_samples": 1000000,
+                    "material_noise_limit": 3000000,
+                    "requested_parameters": {
+                      "material_quality": "full"
+                    },
+                    "schema": "video.scene-appearance-policy.v1"
+                  },
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "material_samples": 10330,
+                  "material_noise_evaluations": 30990,
+                  "material_lattice_evaluations": 247920,
+                  "material_derivative_evaluations": 0,
+                  "material_gradient_components": 0,
+                  "material_noise_limit": 3000000,
+                  "accounting": "charged_before_material_evaluation_no_refund"
+                },
+                "accounting": "monotonic_canonical_module_reservations_no_dispose_refund_or_source_reset",
+                "scope": "one_module_realm_adapter_operations_not_whole_film_cpu_or_visual_acceptance"
+              },
+              "scope": "actual_helper_operations_not_pixels_or_artistic_acceptance"
+            }
+          }
+        }
+      ],
+      "execution_scope": "technical_realm_lifecycle_not_formal_film_delivery",
+      "frame_sha256": "9c5edd050462c6a41da62d9c0d59e320fd0863ac02d4229ae5d6e117a8cc7ea3"
+    },
+    {
+      "protocol": "hyperframes-composable-film-host-1",
+      "status": "idle",
+      "completed_frame": 120,
+      "completed_seeks": 4,
+      "manifest_sha256": "b98f7a8428d678d70a88865655e301648cb45d80e01c2ed37f2a390e4a074ca2",
+      "film_sha256": "36f7a53b25af64e309c32e75e0575e27a759c0408e37c7c8b7158fbdf91eebe1",
+      "live_roots": 1,
+      "pending_cleanup_modules": 1,
+      "package_execution_status": "not_executed",
+      "evidence_scope": "lifecycle_calls_not_capture_visual_proof_or_runtime_admission",
+      "requested_frame": 120,
+      "actual_seconds": 5,
+      "core_seek_count": 4,
+      "dispatch_count": 4,
+      "core_binding": "supplied_trusted_core_methods",
+      "realms": [
+        {
+          "module_id": "three-spatial-probe",
+          "module_sha256": "179f400c0c26ffd7637fc4b0a3d370ca17d7cef8776afe905a15d5fb8f4a0535",
+          "instance_id": 4,
+          "sandbox": "allow-scripts",
+          "realm_origin": "null",
+          "context": {
+            "global_frame": 120,
+            "local_frame": 120,
+            "phase": "active"
+          },
+          "observation": {
+            "revision": "film-opaque-realm-guard-1",
+            "engine": "three",
+            "service_worker_available": false,
+            "pending_animation_frames": 0,
+            "contexts": [
+              {
+                "kind": "webgl2",
+                "width": 1280,
+                "height": 720,
+                "connected": true,
+                "visible": true,
+                "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+                "software": true,
+                "context_lost": false,
+                "gl_error": 0
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 720,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 54,
+                "height": 54,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 112,
+                "height": 76,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 185,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 240,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 710,
+                "height": 210,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 0,
+                "height": 0,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 95,
+                "height": 102,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 145,
+                "height": 135,
+                "connected": false,
+                "visible": false
+              }
+            ],
+            "spatial_appearance": {
+              "library": {
+                "assets": {
+                  "scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+                  "scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+                  "spatial-three-library.json": "493d1b7848d50c3779c4416e62a5226ce45bd92b2f9d7f46f9bd3883e5055ac8",
+                  "spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+                },
+                "engines": [
+                  "three"
+                ],
+                "entrypoint": "./assets/spatial_three_adapter.mjs",
+                "features": [
+                  "atmosphere",
+                  "lighting",
+                  "texture"
+                ],
+                "library_id": "three-spatial",
+                "revision": 1,
+                "schema": "video.three-spatial-library.v1",
+                "scope": "bounded_cpu_vertex_colors_fixed_object_material_world_light_and_distance_color"
+              },
+              "material": {
+                "schema": "video.scene-appearance-observation.v1",
+                "scope": "per_page_cache_initialization",
+                "policy": {
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "estimated_material_samples": 1000000,
+                  "material_noise_limit": 3000000,
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "schema": "video.scene-appearance-policy.v1"
+                },
+                "requested_parameters": {
+                  "material_quality": "full"
+                },
+                "actual_parameters": {
+                  "material_quality": "full"
+                },
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "material_gradient_components": 0,
+                "material_noise_limit": 3000000,
+                "accounting": "charged_before_material_evaluation_no_refund"
+              },
+              "adapter": {
+                "schema": "video.spatial-three-realm-observation.v1",
+                "revision": "spatial-three-appearance-1",
+                "create_attempts": 2,
+                "instances_reserved": 2,
+                "instances_created": 2,
+                "instances_disposed": 0,
+                "vertices_reserved": 10330,
+                "vertex_updates_reserved": 10330,
+                "updates": 2,
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "lighting_evaluations": 10330,
+                "atmosphere_evaluations": 10330,
+                "limits": {
+                  "maxInstances": 64,
+                  "maxVertices": 262144,
+                  "maxVertexUpdates": 16777216
+                },
+                "material_policy": {
+                  "schema": "video.scene-appearance-observation.v1",
+                  "scope": "per_page_cache_initialization",
+                  "policy": {
+                    "actual_parameters": {
+                      "material_quality": "full"
+                    },
+                    "estimated_material_samples": 1000000,
+                    "material_noise_limit": 3000000,
+                    "requested_parameters": {
+                      "material_quality": "full"
+                    },
+                    "schema": "video.scene-appearance-policy.v1"
+                  },
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "material_samples": 10330,
+                  "material_noise_evaluations": 30990,
+                  "material_lattice_evaluations": 247920,
+                  "material_derivative_evaluations": 0,
+                  "material_gradient_components": 0,
+                  "material_noise_limit": 3000000,
+                  "accounting": "charged_before_material_evaluation_no_refund"
+                },
+                "accounting": "monotonic_canonical_module_reservations_no_dispose_refund_or_source_reset",
+                "scope": "one_module_realm_adapter_operations_not_whole_film_cpu_or_visual_acceptance"
+              },
+              "scope": "actual_helper_operations_not_pixels_or_artistic_acceptance"
+            }
+          }
+        }
+      ],
+      "execution_scope": "technical_realm_lifecycle_not_formal_film_delivery",
+      "frame_sha256": "85d2d0b338552785e65d3ad0944acc579ad6beaddf547ed05776cc7064846bf7"
+    },
+    {
+      "protocol": "hyperframes-composable-film-host-1",
+      "status": "idle",
+      "completed_frame": 0,
+      "completed_seeks": 5,
+      "manifest_sha256": "b98f7a8428d678d70a88865655e301648cb45d80e01c2ed37f2a390e4a074ca2",
+      "film_sha256": "36f7a53b25af64e309c32e75e0575e27a759c0408e37c7c8b7158fbdf91eebe1",
+      "live_roots": 1,
+      "pending_cleanup_modules": 1,
+      "package_execution_status": "not_executed",
+      "evidence_scope": "lifecycle_calls_not_capture_visual_proof_or_runtime_admission",
+      "requested_frame": 0,
+      "actual_seconds": 0,
+      "core_seek_count": 5,
+      "dispatch_count": 5,
+      "core_binding": "supplied_trusted_core_methods",
+      "realms": [
+        {
+          "module_id": "three-spatial-probe",
+          "module_sha256": "179f400c0c26ffd7637fc4b0a3d370ca17d7cef8776afe905a15d5fb8f4a0535",
+          "instance_id": 5,
+          "sandbox": "allow-scripts",
+          "realm_origin": "null",
+          "context": {
+            "global_frame": 0,
+            "local_frame": 0,
+            "phase": "active"
+          },
+          "observation": {
+            "revision": "film-opaque-realm-guard-1",
+            "engine": "three",
+            "service_worker_available": false,
+            "pending_animation_frames": 0,
+            "contexts": [
+              {
+                "kind": "webgl2",
+                "width": 1280,
+                "height": 720,
+                "connected": true,
+                "visible": true,
+                "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+                "software": true,
+                "context_lost": false,
+                "gl_error": 0
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 720,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 54,
+                "height": 54,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 112,
+                "height": 76,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 185,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 1280,
+                "height": 240,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 710,
+                "height": 210,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 0,
+                "height": 0,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 95,
+                "height": 102,
+                "connected": false,
+                "visible": false
+              },
+              {
+                "kind": "2d",
+                "width": 145,
+                "height": 135,
+                "connected": false,
+                "visible": false
+              }
+            ],
+            "spatial_appearance": {
+              "library": {
+                "assets": {
+                  "scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+                  "scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+                  "spatial-three-library.json": "493d1b7848d50c3779c4416e62a5226ce45bd92b2f9d7f46f9bd3883e5055ac8",
+                  "spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+                },
+                "engines": [
+                  "three"
+                ],
+                "entrypoint": "./assets/spatial_three_adapter.mjs",
+                "features": [
+                  "atmosphere",
+                  "lighting",
+                  "texture"
+                ],
+                "library_id": "three-spatial",
+                "revision": 1,
+                "schema": "video.three-spatial-library.v1",
+                "scope": "bounded_cpu_vertex_colors_fixed_object_material_world_light_and_distance_color"
+              },
+              "material": {
+                "schema": "video.scene-appearance-observation.v1",
+                "scope": "per_page_cache_initialization",
+                "policy": {
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "estimated_material_samples": 1000000,
+                  "material_noise_limit": 3000000,
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "schema": "video.scene-appearance-policy.v1"
+                },
+                "requested_parameters": {
+                  "material_quality": "full"
+                },
+                "actual_parameters": {
+                  "material_quality": "full"
+                },
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "material_gradient_components": 0,
+                "material_noise_limit": 3000000,
+                "accounting": "charged_before_material_evaluation_no_refund"
+              },
+              "adapter": {
+                "schema": "video.spatial-three-realm-observation.v1",
+                "revision": "spatial-three-appearance-1",
+                "create_attempts": 2,
+                "instances_reserved": 2,
+                "instances_created": 2,
+                "instances_disposed": 0,
+                "vertices_reserved": 10330,
+                "vertex_updates_reserved": 10330,
+                "updates": 2,
+                "material_samples": 10330,
+                "material_noise_evaluations": 30990,
+                "material_lattice_evaluations": 247920,
+                "material_derivative_evaluations": 0,
+                "lighting_evaluations": 10330,
+                "atmosphere_evaluations": 10330,
+                "limits": {
+                  "maxInstances": 64,
+                  "maxVertices": 262144,
+                  "maxVertexUpdates": 16777216
+                },
+                "material_policy": {
+                  "schema": "video.scene-appearance-observation.v1",
+                  "scope": "per_page_cache_initialization",
+                  "policy": {
+                    "actual_parameters": {
+                      "material_quality": "full"
+                    },
+                    "estimated_material_samples": 1000000,
+                    "material_noise_limit": 3000000,
+                    "requested_parameters": {
+                      "material_quality": "full"
+                    },
+                    "schema": "video.scene-appearance-policy.v1"
+                  },
+                  "requested_parameters": {
+                    "material_quality": "full"
+                  },
+                  "actual_parameters": {
+                    "material_quality": "full"
+                  },
+                  "material_samples": 10330,
+                  "material_noise_evaluations": 30990,
+                  "material_lattice_evaluations": 247920,
+                  "material_derivative_evaluations": 0,
+                  "material_gradient_components": 0,
+                  "material_noise_limit": 3000000,
+                  "accounting": "charged_before_material_evaluation_no_refund"
+                },
+                "accounting": "monotonic_canonical_module_reservations_no_dispose_refund_or_source_reset",
+                "scope": "one_module_realm_adapter_operations_not_whole_film_cpu_or_visual_acceptance"
+              },
+              "scope": "actual_helper_operations_not_pixels_or_artistic_acceptance"
+            }
+          }
+        }
+      ],
+      "execution_scope": "technical_realm_lifecycle_not_formal_film_delivery",
+      "frame_sha256": "609b3f51ad4b74aa78566586777ca3c67fa94e87084dc57653745c365ee4f6b0"
+    }
+  ],
+  "cleanup": {
+    "remaining_iframes": 0,
+    "protocol": "hyperframes-composable-film-host-1",
+    "status": "disposed",
+    "completed_frame": null,
+    "completed_seeks": 5,
+    "manifest_sha256": "b98f7a8428d678d70a88865655e301648cb45d80e01c2ed37f2a390e4a074ca2",
+    "film_sha256": "36f7a53b25af64e309c32e75e0575e27a759c0408e37c7c8b7158fbdf91eebe1",
+    "live_roots": 0,
+    "pending_cleanup_modules": 0,
+    "package_execution_status": "not_executed",
+    "evidence_scope": "lifecycle_calls_not_capture_visual_proof_or_runtime_admission"
+  },
+  "errors": [],
+  "blocked": [],
+  "service_worker_accessor_disabled": true,
+  "loaded_resources": [
+    "/host/config.json",
+    "/host/hyperframes_film.mjs",
+    "/host/hyperframes_film_channel.mjs",
+    "/host/hyperframes_film_realm.mjs",
+    "/host/hyperframes_film_realm_guard.mjs",
+    "/host/hyperframes_film_root.mjs",
+    "/host/index.html",
+    "/project/assets/ink-landscape.mjs",
+    "/project/assets/scene_space_surface.mjs",
+    "/project/assets/scene_space_surface_budget.mjs",
+    "/project/assets/spatial_three_adapter.mjs",
+    "/project/assets/three.module.min.js",
+    "/project/manifest.json",
+    "/project/modules/three_spatial_probe/baseline.mjs",
+    "/project/modules/three_spatial_probe/entry.mjs",
+    "/realms/three_spatial_probe/index.html",
+    "/runtime/hyperframes.js"
+  ],
+  "evidence_scope": "real_core_and_technical_fixture_not_agent_visual_or_formal_delivery"
+}

@@ -1,0 +1,28 @@
+{
+  "schema": "video.three-retained-geometry-comparison.v1",
+  "passed": true,
+  "baseline_source_sha256": "1b6693b620f576dacf2b328367999a00458b8440f3f86ff825e996b153734be0",
+  "baseline_file_sha256": "2e811bba83f7b8a6187dcac791353501ea03ce5f69ac5d05ba5facc1d7489492",
+  "source_meshes_file_sha256": "e97cbdc0169ccc719a05b505122ef5f64b8c6d35a16cb16eccf6f8a3ba98208b",
+  "scope": "all_native_input_vertices_and_triangle_counts_against_retained_heightfields_not_artistic_equivalence",
+  "meshes": [
+    {
+      "id": "right-mass",
+      "vertices": 3477,
+      "indices": 20160,
+      "every_native_position_matches_authored_float32": true,
+      "maximum_float32_rounding_error": 2.314182001583731e-7,
+      "position_sha256": "598260317dc0abed5a5068a56909403662d90c25c8fd417c5ae5d6c9e7ce8863"
+    },
+    {
+      "id": "main-mass",
+      "vertices": 6853,
+      "indices": 40128,
+      "every_native_position_matches_authored_float32": true,
+      "maximum_float32_rounding_error": 4.7634811117802656e-7,
+      "position_sha256": "2d820edd20c12f39220ecdc7dacb9ab7f1b96a508fcb41151ae57a86d171466a"
+    }
+  ],
+  "render_calls": 0,
+  "model_calls": 0
+}

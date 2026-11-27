@@ -1,0 +1,80 @@
+{
+  "engine": "three",
+  "revision": "animation-engine-runtime-1",
+  "contexts": [
+    {
+      "kind": "webgl2",
+      "width": 1280,
+      "height": 720,
+      "connected": true,
+      "visible": true,
+      "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "software": true,
+      "context_lost": false,
+      "gl_error": 0
+    },
+    {
+      "kind": "2d",
+      "width": 1280,
+      "height": 720,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 54,
+      "height": 54,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 112,
+      "height": 76,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 1280,
+      "height": 185,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 1280,
+      "height": 240,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 710,
+      "height": 210,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 0,
+      "height": 0,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 95,
+      "height": 102,
+      "connected": false,
+      "visible": false
+    },
+    {
+      "kind": "2d",
+      "width": 145,
+      "height": 135,
+      "connected": false,
+      "visible": false
+    }
+  ]
+}

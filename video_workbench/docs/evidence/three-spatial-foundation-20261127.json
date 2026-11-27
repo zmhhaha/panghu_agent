@@ -1,0 +1,302 @@
+{
+  "schema": "video.three-spatial-foundation-evidence.v1",
+  "date": "2026-11-27",
+  "openspec_project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+  "change": "improve-video-spatial-rendering-foundation",
+  "task": "4.1",
+  "scope": "local_concrete_three_appearance_and_formal_host_execution_not_production_release_or_artistic_acceptance",
+  "model_requests": 0,
+  "production_posts": 0,
+  "source_files_sha256": {
+    "video_workbench/spatial_three_library.py": "71136b5769c30e8a336fc9d578b4bf22e51d865a1ebad15ee33bde4ec2e86c9f",
+    "video_workbench/animation_runtime_capabilities.py": "b178f15c76459d6b1d56c595b477af054fe049efafef94eff1f3ef3467b34153",
+    "video_workbench/film_creation_store.py": "ba22a149e4464af64ea185460ad8680fb667b351efa8164fb9b0fff994acd733",
+    "video_workbench/film_production_config.py": "9988367561e92de826091e08b3bf31121b0db9088275c8517f3d42be789caf47",
+    "video_workbench/spatial_rendering_route.py": "ea2e5b25e5fc22f58d128eb3c8f9f22bf9d3addf419445857d9a1dc82a7ee864",
+    "video_workbench/hyperframes_film_browser.py": "57adf516a1db2e6fcdcef0773edfe4a9bcac220e4a995a3b55b1246073cc680d",
+    "video_workbench/motion_renderer/hyperframes_film_realm.mjs": "0fa99b63055ace95e2a725f25acac76178839e9f3d602a61c9486aae9265c61d",
+    "video_workbench/motion_renderer/spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed",
+    "video_workbench/examples/build_three_spatial_film_probe.py": "684db531984b4d6af7b6bc95a98a7c273c269cd27765bdd116eb8ae23bee29cc",
+    "tests/video_workbench/test_spatial_three_library.py": "c270e61dc5121cb826418374517e9e4e0fd2c9f39e8017761b764fc6af96d219",
+    "tests/video_workbench/test_film_creation_api.py": "b16f71ac5613f40e5beb7b77f6582433019bfec3f41991ad37598233e6845845",
+    "tests/video_workbench/spatial-three-adapter.test.mjs": "3c9d0286f1472f954daefaf1ded9cd616edd0f82e1d50b05bda95e89a74b7196"
+  },
+  "library": {
+    "schema": "video.three-spatial-library.v1",
+    "library_id": "three-spatial",
+    "revision": 1,
+    "engines": [
+      "three"
+    ],
+    "entrypoint": "./assets/spatial_three_adapter.mjs",
+    "features": [
+      "atmosphere",
+      "lighting",
+      "texture"
+    ],
+    "scope": "bounded_cpu_vertex_colors_fixed_object_material_world_light_and_distance_color",
+    "assets": {
+      "scene_space_surface.mjs": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991",
+      "scene_space_surface_budget.mjs": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1",
+      "spatial_three_adapter.mjs": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed",
+      "spatial-three-library.json": "493d1b7848d50c3779c4416e62a5226ce45bd92b2f9d7f46f9bd3883e5055ac8"
+    }
+  },
+  "python": {
+    "scope": "unique_classname_testname_after_targeted_fixture_corrections_not_a_repeated_full_suite",
+    "unique_cases": 169,
+    "passed": 169,
+    "remaining_failed": [],
+    "skipped": 0,
+    "reports": [
+      {
+        "file": "three-spatial-initial-tests.xml",
+        "sha256": "ec87ab1e0a0fa549cce179a1ebee48e0cb9d238d42c50a167db6ff3d5307460b",
+        "passed": 28,
+        "failed": 1
+      },
+      {
+        "file": "three-spatial-regression-tests.xml",
+        "sha256": "d424f9dcef9d94ba4411ed31af1a611a2d83ad236b052394a0be45f105ec6ee4",
+        "passed": 54
+      },
+      {
+        "file": "three-spatial-compatibility-tests.xml",
+        "sha256": "4087a6ddceec04fee96c9fcbecbb31697e6b0339547d0748e0cbceb706162ebc",
+        "passed": 85,
+        "failed": 6
+      },
+      {
+        "file": "three-spatial-http-fixture-fixed-tests.xml",
+        "sha256": "879e3f9e1d8d74ce576eded7c0b6cda9db433fe4e8bfb6ffb8bf8f1f91d8e430",
+        "passed": 8
+      },
+      {
+        "file": "three-spatial-v2-v3-upgrade-tests.xml",
+        "sha256": "caf83c797e91c55aaa882ad0202d82fc6892c6f71c8a4e099549e579db98bc7f",
+        "passed": 2
+      }
+    ],
+    "initial_failures_preserved": [
+      {
+        "report": "three-spatial-initial-tests.xml",
+        "classname": "tests.video_workbench.test_spatial_three_library",
+        "name": "test_frozen_pending_submission_recovers_without_current_assets_policy_or_new_admission"
+      },
+      {
+        "report": "three-spatial-compatibility-tests.xml",
+        "classname": "tests.video_workbench.test_film_creation_api",
+        "name": "test_whole_project_draft_uses_existing_list_download_and_range_routes"
+      },
+      {
+        "report": "three-spatial-compatibility-tests.xml",
+        "classname": "tests.video_workbench.test_film_creation_api",
+        "name": "test_legacy_not_ready_does_not_fall_through_to_new_renderer"
+      },
+      {
+        "report": "three-spatial-compatibility-tests.xml",
+        "classname": "tests.video_workbench.test_film_creation_api",
+        "name": "test_cancel_is_explicit_and_csrf_protected"
+      },
+      {
+        "report": "three-spatial-compatibility-tests.xml",
+        "classname": "tests.video_workbench.test_film_creation_api",
+        "name": "test_deleted_project_hides_new_media_and_restore_preserves_it"
+      },
+      {
+        "report": "three-spatial-compatibility-tests.xml",
+        "classname": "tests.video_workbench.test_film_creation_api",
+        "name": "test_inflight_film_children_block_project_removal_in_same_transaction[film_module_operations]"
+      },
+      {
+        "report": "three-spatial-compatibility-tests.xml",
+        "classname": "tests.video_workbench.test_film_creation_api",
+        "name": "test_inflight_film_children_block_project_removal_in_same_transaction[film_render_operations]"
+      }
+    ]
+  },
+  "node": {
+    "adapter_cases_passed": 14,
+    "adapter_command": "node --test tests/video_workbench/spatial-three-adapter.test.mjs",
+    "adapter_evidence_origin": "actual_terminal_run_14_passed_zero_failed_20261127",
+    "legacy_lifecycle_guard_channel_cases_passed": 49,
+    "legacy_report_sha256": "50b70395eed107f3c2f77744471875d542e5aefd335e933a62b9c5875cfa9797",
+    "remaining_failed": 0,
+    "skipped": 0
+  },
+  "standalone_native_evidence": {
+    "schema": "video.three-spatial-local-evidence.v1",
+    "scope": "actual_local_cpu_browser_not_production_admission_or_artistic_acceptance",
+    "model_requests": 0,
+    "production_posts": 0,
+    "seed": 631907,
+    "baseline_source_sha256": "1b6693b620f576dacf2b328367999a00458b8440f3f86ff825e996b153734be0",
+    "original_baseline_file_sha256": "2e811bba83f7b8a6187dcac791353501ea03ce5f69ac5d05ba5facc1d7489492",
+    "original_scene_js_sha256": "3629650f786404ede5a57b1bd570ee944e6a9b1e2160e168d6ad4d6d0576cad4",
+    "plan_file_sha256": "e847b0f9db5ae4f6cae85eb385f4d33f95fabc5855dbbd533aa3bb4756dcdf7f",
+    "controlled_differences": [
+      "Three indexed vertex-normal surfaces replace the Canvas mountain ink shader",
+      "Authored per-mass orthographic projections are mapped into one Three world with explicit world matrices",
+      "Original non-mountain painters become static Three textures; 0.28-height clipping replaces the original foot alpha fade",
+      "Seeded appearance is per-vertex linear color; it is not equivalent to original brush strokes or PBR"
+    ],
+    "supported": [
+      "world normal/light guidance",
+      "fixed object-coordinate material",
+      "distance and height color atmosphere",
+      "native opaque depth coverage",
+      "explicit native transparency",
+      "absolute-frame camera reconstruction"
+    ],
+    "not_claimed": [
+      "artistic reproduction",
+      "physical shadow transport",
+      "pixel texture",
+      "skinning",
+      "morphing",
+      "new GPU admission",
+      "production rollout",
+      "motion acceptance"
+    ],
+    "checks": {
+      "native_swiftshader": true,
+      "mechanism_diagnostics": true,
+      "repeat": true,
+      "reverse": true,
+      "reload": true,
+      "planned_camera_changes_pixels": true,
+      "full_decode": true
+    },
+    "sampled_frame_png_sha256": {
+      "0": "2845c17978539cffff3b20093b8485a5d5613680f0b862c11ea49ffcc01082e1",
+      "18": "2845c17978539cffff3b20093b8485a5d5613680f0b862c11ea49ffcc01082e1",
+      "80": "aa11a12bcc9d9c42e05ba9e59d027c7ae1cf28edfcf88ba3f1d551c836d8a7c6",
+      "120": "334c073220b2f894b49a7a0611588c742a4065fb6d219e8e07188d3818f8c24c",
+      "216": "bcd62788e3657cf294747fd74b81ea33bccd934f2a4bb1448c4f71307823cfe9",
+      "239": "bcd62788e3657cf294747fd74b81ea33bccd934f2a4bb1448c4f71307823cfe9"
+    },
+    "preview": {
+      "sha256": "35e97b0c5aa4e91dbbfbc8b3213f66af671547f6b4a89d8ee29568114946ef45",
+      "width": 1280,
+      "height": 720,
+      "fps": 24,
+      "frames": 240,
+      "seconds": 10,
+      "audio": false
+    },
+    "resource_inventory": {
+      "/study.html": {
+        "bytes": 270,
+        "sha256": "e9205a4096347a3a083707ba44395915c6c1b8b51db27d029c95523e222aa769"
+      },
+      "/study.mjs": {
+        "bytes": 11047,
+        "sha256": "0bfdf708db0822b03e80905c5fee0febbbb7d9e8748b8bfc903ffcd31773cd54"
+      },
+      "/plan.json": {
+        "bytes": 15674,
+        "sha256": "e847b0f9db5ae4f6cae85eb385f4d33f95fabc5855dbbd533aa3bb4756dcdf7f"
+      },
+      "/baseline-scene.js": {
+        "bytes": 40575,
+        "sha256": "25e22b331ec8819bea902439cbe0689f1ecdfd61b397968b065e3d01cff94f2a"
+      },
+      "/three.module.min.js": {
+        "bytes": 691648,
+        "sha256": "08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7"
+      },
+      "/spatial_three_adapter.mjs": {
+        "bytes": 16154,
+        "sha256": "55aa6d912d17628a61821d7b5411b5a4dea4334d551556168602ba9489502eed"
+      },
+      "/scene_space_surface.mjs": {
+        "bytes": 24599,
+        "sha256": "e73e4b0e7b16b662ef162835b1a9792fc63888c5d186b670844ee0e50e286991"
+      },
+      "/scene_space_surface_budget.mjs": {
+        "bytes": 6014,
+        "sha256": "710113a316c4b16c1cd21c6ebd4882a39645ae6b59cecb35b49e452a2e6f45e1"
+      },
+      "/assets/ink-landscape.mjs": {
+        "bytes": 530517,
+        "sha256": "c6bb3f07c09776beddddf04a7e7d9faae38ec8b6f3499abd8e6722d2115d46f6"
+      },
+      "/assets/ink-landscape.LICENSE.txt": {
+        "bytes": 1083,
+        "sha256": "b4c356e924703056db7f4392488d1911d3a532d83b752cfa8af9369d2c543108"
+      }
+    },
+    "elapsed_seconds": 99.0396378,
+    "browser_executable": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "browser_version": "158.0.8127.88",
+    "whole_video_watched": false,
+    "user_artistic_acceptance": false
+  },
+  "formal_host_native_evidence": {
+    "schema": "video.three-spatial-formal-realm-local-evidence.v1",
+    "scope": "actual_local_formal_browser_host_and_assets_not_operator_admission_or_formal_user_run",
+    "model_requests": 0,
+    "production_posts": 0,
+    "provenance": {
+      "baseline_source_sha256": "1b6693b620f576dacf2b328367999a00458b8440f3f86ff825e996b153734be0",
+      "bundle_sha256": "898517e2742988fe08b890f31308c90959aafcffe5cc8bcc2db6ea2a61632202",
+      "controlled_changes": [
+        "Original study drawing moved into mount/renderAt/dispose without its standalone policy installer.",
+        "Only baseline drawing-library URL changes to the declared formal assets path.",
+        "The trusted realm freezes the four-asset metadata policy before author import."
+      ],
+      "model_requests": 0,
+      "original_scene_js_sha256": "3629650f786404ede5a57b1bd570ee944e6a9b1e2160e168d6ad4d6d0576cad4",
+      "production_posts": 0,
+      "runtime_fingerprint_scope": "retained_packaging_input_not_a_current_local_container_or_browser_identity",
+      "runtime_input_file_sha256": "98a1a5b537faec8a6651406b7a7e3f4824de9f1b0763ddf8ed2f30d13495db12",
+      "scope": "local_same_content_formal_realm_probe_not_production_admission",
+      "study_mjs_sha256": "0bfdf708db0822b03e80905c5fee0febbbb7d9e8748b8bfc903ffcd31773cd54"
+    },
+    "frames": [
+      0,
+      120,
+      239,
+      120,
+      0
+    ],
+    "frame_sha256": {
+      "0": "609b3f51ad4b74aa78566586777ca3c67fa94e87084dc57653745c365ee4f6b0",
+      "120": "85d2d0b338552785e65d3ad0944acc579ad6beaddf547ed05776cc7064846bf7",
+      "239": "9c5edd050462c6a41da62d9c0d59e320fd0863ac02d4229ae5d6e117a8cc7ea3"
+    },
+    "checks": {
+      "actual_core": true,
+      "opaque_module_realm": true,
+      "native_swiftshader": true,
+      "all_four_assets_frozen": true,
+      "original_metadata_policy": true,
+      "canonical_actual_helper_counts": true,
+      "repeat_reverse_and_fresh_reconstruction": true,
+      "planned_camera_changes_pixels": true,
+      "no_external_or_undeclared_resource": true,
+      "all_iframes_disposed": true
+    },
+    "metadata_role": "compiled_into_frozen_realm_config_not_a_required_browser_fetch",
+    "runtime_fingerprint_scope": "retained_packaging_input_not_a_current_local_container_or_browser_identity",
+    "elapsed_seconds": 14.9589103
+  },
+  "artifact_files_sha256": {
+    "video_workbench/examples/three-spatial-foundation-study/preview.mp4": "35e97b0c5aa4e91dbbfbc8b3213f66af671547f6b4a89d8ee29568114946ef45",
+    "video_workbench/examples/three-spatial-foundation-study/preview.png": "334c073220b2f894b49a7a0611588c742a4065fb6d219e8e07188d3818f8c24c",
+    "video_workbench/examples/three-spatial-foundation-study/formal-realm-evidence.json": "90b62e6e71a9b4d514fcc6f360715437319ae44b41a3f617ea8765ef4ba4c28a",
+    "video_workbench/examples/three-spatial-foundation-study/formal-realm-observation.json": "70628c9afcd79a9808bec2d6c9d14b11e3ed7950ab67e2463cba99f7f25b1a9e",
+    "video_workbench/examples/three-spatial-foundation-study/formal-realm-provenance.json": "b2a547c3dec14e58871cea8de508465c79fcdaea788526d0c270db4ae8125f4f",
+    "video_workbench/examples/three-spatial-foundation-study/formal-realm-preview.png": "85d2d0b338552785e65d3ad0944acc579ad6beaddf547ed05776cc7064846bf7"
+  },
+  "not_claimed": [
+    "new runtime or role admission",
+    "production rollout",
+    "formal user run success",
+    "artistic approval",
+    "automatic learning-library integration",
+    "WikiSkill publication",
+    "new content validation",
+    "DOF/motion blur/PBR/shadows/GPU admission"
+  ]
+}

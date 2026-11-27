@@ -16,6 +16,11 @@ FILM_FEATURES = {
 }
 
 
+def film_features(capabilities, engine, *, frozen=False):
+    from .spatial_three_library import available_features
+    return FILM_FEATURES[engine] | available_features(capabilities, engine, frozen=frozen)
+
+
 def preferred_route(intent):
     value = validate_rendering_intent(intent)
     features = set(value['required_features'])
@@ -55,7 +60,7 @@ def admit_route(intent, configuration, *, audio_mode):
         engines = caps.get('allowed_engines', configuration.get('allowed_engines', []))
         if value['engine'] not in engines:
             raise ServiceError('spatial_rendering_engine_unavailable', 409)
-        available = set(FILM_FEATURES[value['engine']])
+        available = set(film_features(caps, value['engine']))
         evidence = 'admitted_module_engine_authoring_not_pixel_or_artistic_proof'
     quality = resolve_quality(value, available)
     return dict(schema='video.spatial-rendering-route.v1', intent=deepcopy(value),

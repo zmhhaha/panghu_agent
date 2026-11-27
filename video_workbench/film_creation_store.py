@@ -600,7 +600,7 @@ class FilmCreationStore:
         return module, reference
 
     @staticmethod
-    def _spatial_offer(request, capabilities):
+    def _spatial_offer(request, capabilities, *, frozen=False):
         """Resolve only the admitted film backend's authorable feature boundary."""
         require(('rendering_intent' in request) == ('rendering_quality' in request),
             'film_creation_rendering_requirements_incomplete')
@@ -608,10 +608,10 @@ class FilmCreationStore:
             return None
         from agent_service.spatial_rendering_contract import validate_rendering_intent, resolve_quality
         from agent_service.profiles.video_animation_film_module_spatial import make_spatial_offer
-        from .spatial_rendering_route import FILM_FEATURES
+        from .spatial_rendering_route import film_features
         intent = validate_rendering_intent(request['rendering_intent'])
         require(intent['engine'] in capabilities['allowed_engines'], 'film_creation_rendering_engine_not_admitted', 409)
-        quality = resolve_quality(intent, FILM_FEATURES[intent['engine']])
+        quality = resolve_quality(intent, film_features(capabilities, intent['engine'], frozen=frozen))
         require(request['rendering_quality'] == quality, 'film_creation_rendering_quality_changed', 409)
         return make_spatial_offer(intent, quality)
 
@@ -626,7 +626,7 @@ class FilmCreationStore:
         require(op['request_sha256'] == digest(op['request']) and actual == expected
             and core['constraints']['allowed_engines'] == [expected['intent']['engine']],
             'film_creation_rendering_requirements_changed', 409)
-        requested = self._spatial_offer(op['request'], op['configuration']['runtime_capabilities'])
+        requested = self._spatial_offer(op['request'], op['configuration']['runtime_capabilities'], frozen=True)
         require(requested is None or requested == expected, 'film_creation_rendering_requirements_changed', 409)
         return expected
 
@@ -713,6 +713,8 @@ class FilmCreationStore:
                 base_module=base_module, spatial_rendering=spatial_offer)
             from .film_authoring_resources import attach_authoring_libraries
             core = attach_authoring_libraries(core, caps)
+            from .spatial_three_library import attach_spatial_libraries
+            core = attach_spatial_libraries(core, caps)
             from .formal_drawing_libraries import attach_drawing_libraries
             if spatial_offer is None or spatial_offer['intent']['engine'] == 'canvas':
                 core = attach_drawing_libraries(core, caps)

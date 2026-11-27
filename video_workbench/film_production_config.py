@@ -107,7 +107,8 @@ class FilmProductionSettings:
             # Version 2 only admits the complete, pinned optional library.
             # Image digest and the frozen project asset inventory bind these
             # bytes without changing the legacy motion-runtime.v3 schema.
-            if capabilities['schema'] in {'video.animation-runtime-capabilities.v2', 'video.animation-runtime-capabilities.v3'}:
+            if capabilities['schema'] in {'video.animation-runtime-capabilities.v2',
+                    'video.animation-runtime-capabilities.v3', 'video.animation-runtime-capabilities.v4'}:
                 from .animejs_library import ASSETS as ANIME_ASSETS
                 expected_assets.update(ANIME_ASSETS)
             if capabilities.get('drawing_libraries'):
@@ -115,6 +116,13 @@ class FilmProductionSettings:
                 drawing_assets = read_drawing_assets()
                 expected_assets.update({name: hashlib.sha256(raw).hexdigest() for name, raw in drawing_assets.items()})
                 if any(assets.get('assets/' + name) != raw for name, raw in drawing_assets.items()):
+                    raise ValueError()
+            if capabilities.get('spatial_libraries'):
+                from .spatial_three_library import read_assets as read_spatial_assets, validate_libraries
+                validate_libraries(capabilities['spatial_libraries'], capabilities['assets'])
+                spatial_assets = read_spatial_assets()
+                expected_assets.update({name: hashlib.sha256(raw).hexdigest() for name, raw in spatial_assets.items()})
+                if any(assets.get('assets/' + name) != raw for name, raw in spatial_assets.items()):
                     raise ValueError()
             if any(checksum != expected_assets[key] for key, checksum in capabilities['assets'].items()):
                 raise ValueError()

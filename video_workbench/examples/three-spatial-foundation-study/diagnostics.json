@@ -1,0 +1,90 @@
+{
+  "pale_solid": {
+    "with_rear": [
+      230,
+      237,
+      220,
+      255
+    ],
+    "without_rear": [
+      230,
+      237,
+      220,
+      255
+    ],
+    "passed": true
+  },
+  "fog_preserves_coverage": {
+    "with_rear": [
+      212,
+      224,
+      232,
+      255
+    ],
+    "without_rear": [
+      212,
+      224,
+      232,
+      255
+    ],
+    "changed_color": true,
+    "passed": true
+  },
+  "explicit_transparency": {
+    "with_rear": [
+      208,
+      132,
+      124,
+      255
+    ],
+    "without_rear": [
+      115,
+      119,
+      110,
+      128
+    ],
+    "passed": true
+  },
+  "world_light": {
+    "lit": [
+      230,
+      237,
+      220,
+      255
+    ],
+    "dark": [
+      0,
+      0,
+      0,
+      255
+    ],
+    "relit": [
+      230,
+      237,
+      220,
+      255
+    ],
+    "passed": true
+  },
+  "nonuniform_normal_transform": {
+    "pixel": [
+      217,
+      217,
+      217,
+      255
+    ],
+    "expected_linear_dot": 0.6951132626768673,
+    "expected_srgb": 217.1727034983991,
+    "passed": true
+  },
+  "fixed_object_material": {
+    "passed": true,
+    "material_samples": 4
+  },
+  "actual_backend": {
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "webgl2": true,
+    "context_lost": false,
+    "gl_error": 0
+  }
+}

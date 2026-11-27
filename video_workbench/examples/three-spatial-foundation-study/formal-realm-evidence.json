@@ -1,0 +1,49 @@
+{
+  "schema": "video.three-spatial-formal-realm-local-evidence.v1",
+  "scope": "actual_local_formal_browser_host_and_assets_not_operator_admission_or_formal_user_run",
+  "model_requests": 0,
+  "production_posts": 0,
+  "provenance": {
+    "baseline_source_sha256": "1b6693b620f576dacf2b328367999a00458b8440f3f86ff825e996b153734be0",
+    "bundle_sha256": "898517e2742988fe08b890f31308c90959aafcffe5cc8bcc2db6ea2a61632202",
+    "controlled_changes": [
+      "Original study drawing moved into mount/renderAt/dispose without its standalone policy installer.",
+      "Only baseline drawing-library URL changes to the declared formal assets path.",
+      "The trusted realm freezes the four-asset metadata policy before author import."
+    ],
+    "model_requests": 0,
+    "original_scene_js_sha256": "3629650f786404ede5a57b1bd570ee944e6a9b1e2160e168d6ad4d6d0576cad4",
+    "production_posts": 0,
+    "runtime_fingerprint_scope": "retained_packaging_input_not_a_current_local_container_or_browser_identity",
+    "runtime_input_file_sha256": "98a1a5b537faec8a6651406b7a7e3f4824de9f1b0763ddf8ed2f30d13495db12",
+    "scope": "local_same_content_formal_realm_probe_not_production_admission",
+    "study_mjs_sha256": "0bfdf708db0822b03e80905c5fee0febbbb7d9e8748b8bfc903ffcd31773cd54"
+  },
+  "frames": [
+    0,
+    120,
+    239,
+    120,
+    0
+  ],
+  "frame_sha256": {
+    "0": "609b3f51ad4b74aa78566586777ca3c67fa94e87084dc57653745c365ee4f6b0",
+    "120": "85d2d0b338552785e65d3ad0944acc579ad6beaddf547ed05776cc7064846bf7",
+    "239": "9c5edd050462c6a41da62d9c0d59e320fd0863ac02d4229ae5d6e117a8cc7ea3"
+  },
+  "checks": {
+    "actual_core": true,
+    "opaque_module_realm": true,
+    "native_swiftshader": true,
+    "all_four_assets_frozen": true,
+    "original_metadata_policy": true,
+    "canonical_actual_helper_counts": true,
+    "repeat_reverse_and_fresh_reconstruction": true,
+    "planned_camera_changes_pixels": true,
+    "no_external_or_undeclared_resource": true,
+    "all_iframes_disposed": true
+  },
+  "metadata_role": "compiled_into_frozen_realm_config_not_a_required_browser_fetch",
+  "runtime_fingerprint_scope": "retained_packaging_input_not_a_current_local_container_or_browser_identity",
+  "elapsed_seconds": 14.9589103
+}

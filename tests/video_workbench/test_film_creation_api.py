@@ -42,12 +42,13 @@ class FilmAccess:
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, monkeypatch):
+    monkeypatch.setenv('SERVICE_AUTH_ISSUER', 'https://issuer.test')
     film = FilmAccess()
     app = create_app(db_path=tmp_path / 'video.db', local_mode=True, background=False,
                      trusted_hosts={'testserver'}, film_creation=film)
     film.store = app.state.store
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         client.headers['X-CSRF-Token'] = client.get('/api/session').json()['csrf_token']
         project = client.post('/api/projects', json={'title': '统一草稿', 'script': '完整讲解。'}).json()
         film.rows['film-render'] = dict(id='film-render', project_id=project['id'],

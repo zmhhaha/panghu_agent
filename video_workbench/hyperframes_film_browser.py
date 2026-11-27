@@ -58,6 +58,10 @@ def compile_film_browser_bundle(project_files, *, expected_project_manifest_sha2
         namespace = module['namespace']
         config = {key: module[key] for key in ('module_id', 'module_sha256', 'film_sha256', 'engine', 'entry', 'assets')}
         config.update(width=width, height=height)
+        from .spatial_three_library import module_policy
+        spatial = module_policy(module['engine'], module['assets'], project_files)
+        if spatial is not None:
+            config['spatial_appearance'] = spatial
         # Metadata has already passed the project verifier; escape HTML delimiters
         # even though the protocol uses bounded ASCII module/entry identifiers.
         text = canonical_bytes(config).decode().replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
