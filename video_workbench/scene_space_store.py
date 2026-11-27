@@ -75,6 +75,25 @@ class SceneSpaceStore:
         validate_usage(record['usage'])
         _require(record['frozen']['plan_sha256']==record['usage']['plan_sha256'],
             'scene_space_record_changed')
+        _require(('continuation_usage' in record)==bool(record.get('review_continuation')),
+            'scene_review_continuation_usage_changed')
+        if record.get('review_continuation'):
+            from .scene_review_continuation import validate_grant, new_usage
+            grant=validate_grant(record['review_continuation'])
+            fresh=new_usage(record['frozen'],grant_sha256=grant['sha256'])
+            current=validate_usage(record['continuation_usage'])
+            _require(current['limits']==fresh['limits'] and current['baseline']==fresh['baseline']
+                and current['lineage_id']==fresh['lineage_id'] and not current['history']
+                and current['plan_sha256']==record['frozen']['plan_sha256'],
+                'scene_review_continuation_usage_changed')
+            parent=db.execute('SELECT document FROM scene_tasks WHERE owner=? AND task_id=?',
+                (owner,grant['parent_run_id'])).fetchone()
+            _require(parent is not None and digest(json.loads(parent[0]))==grant['parent_task_sha256'],
+                'scene_review_continuation_parent_changed')
+            previous=json.loads(parent[0])
+            _require(record['usage']==previous['usage'] and record['frozen']==previous['frozen']
+                and record['legacy_reservations']==previous['reservations'],
+                'scene_review_continuation_legacy_changed')
         return record
 
     def _put(self,db,record):
@@ -87,8 +106,14 @@ class SceneSpaceStore:
     def _view(record):
         value=deepcopy(record)
         value['usage_status']=usage_status(value['usage'])
+        if value.get('review_continuation'):
+            from .scene_review_continuation import cumulative_status, execution_status
+            value['usage_status']=cumulative_status(value)
+            value['continuation_usage_status']=execution_status(value)
         if _active_model(value['reservations']):
             value['usage_status']['can_start_export']=False
+            if 'continuation_usage_status' in value:
+                value['continuation_usage_status']['can_start_export']=False
         return value
 
     def freeze(self,owner,task_id,plan):
@@ -162,12 +187,46 @@ class SceneSpaceStore:
             _require(row is not None,'scene_space_plan_not_found',404)
             return technical_retry(json.loads(row['document']),plan_sha256)
 
+    def continue_review(self,owner,task_id,*,grant):
+        """Install one grant without changing any legacy event or frozen plan."""
+        from .scene_review_continuation import validate_grant, new_usage
+        grant=validate_grant(grant)
+        owner_id(owner);identifier(task_id)
+        with self._db() as db:
+            prior=db.execute('SELECT document FROM scene_tasks WHERE owner=? AND task_id=?',
+                (owner,task_id)).fetchone()
+            if prior:
+                record=self._load(db,owner,task_id)
+                _require(record.get('review_continuation')==grant,'scene_review_continuation_conflict')
+                return self._view(record)
+            parent=self._load(db,owner,grant['parent_run_id'])
+            _require(not parent.get('review_continuation')
+                and digest(parent)==grant['parent_task_sha256']
+                and parent['usage']['sha256']==grant['legacy_usage_sha256']
+                and not any(r['status']=='active' for r in parent['reservations']),
+                'scene_review_continuation_parent_changed')
+            usage=deepcopy(parent['usage'])
+            record=dict(schema='video.scene-space-task.v1',owner=owner,task_id=task_id,
+                frozen=deepcopy(parent['frozen']),usage=usage,
+                continuation_usage=new_usage(parent['frozen'],grant_sha256=grant['sha256']),
+                review_continuation=deepcopy(grant),legacy_reservations=deepcopy(parent['reservations']),
+                revision=1,created_at=self.clock(),updated_at=self.clock(),reservations=[],
+                previews=deepcopy(parent['previews']))
+            db.execute('INSERT INTO scene_tasks VALUES (?,?,?)',(owner,task_id,_json(record)))
+            db.execute('INSERT INTO scene_plans VALUES (?,?,?,?)',
+                (owner,task_id,record['frozen']['plan_sha256'],_json(record['frozen'])))
+            return self._view(record)
+
     def reserve(self,owner,task_id,operation_id,*,phase,model_calls=0,model_tokens=0,render_seconds=0):
         identifier(operation_id)
         hold=validate_reservation(id=operation_id,phase=phase,model_calls=model_calls,
             model_tokens=model_tokens,render_seconds=render_seconds)
         with self._db() as db:
             record=self._load(db,owner,task_id)
+            if record.get('review_continuation'):
+                _require(phase in {'review','export'},'scene_review_continuation_operation_not_allowed')
+                _require(not any(row['phase']==phase and row['id']!=operation_id
+                    for row in record['reservations']),'scene_review_continuation_operation_limit')
             reservation=dict(hold,status='active')
             for previous in record['reservations']:
                 if previous['id']==operation_id:
@@ -183,13 +242,15 @@ class SceneSpaceStore:
             elif phase in MODEL_PHASES or model_calls or model_tokens:
                 _require(not any(row['status']=='active' and row['phase']=='export'
                     for row in record['reservations']),'scene_space_operations_still_active')
-            status=usage_status(record['usage'])
+            from .scene_review_continuation import execution_status
+            status=execution_status(record)
             diagnostic_preview=(phase=='preview' and model_calls==0 and model_tokens==0
                 and status['status']=='usage_unknown' and status['used']['render_seconds'] is not None)
             _require(status['status']=='within_budget' or diagnostic_preview,'scene_space_budget_unavailable')
             _require(status['available_event_slots']>sum(r['status']=='active' for r in record['reservations']),
                 'scene_space_usage_event_limit')
-            _require(not any(e['id']==operation_id for e in record['usage']['events']),
+            spending=record.get('continuation_usage',record['usage'])
+            _require(not any(e['id']==operation_id for e in spending['events']),
                 'scene_space_operation_already_settled')
             for key,amount in [('model_calls',model_calls),('model_tokens',model_tokens),
                                ('render_seconds',render_seconds)]:
@@ -206,9 +267,14 @@ class SceneSpaceStore:
     def record_usage(self,owner,task_id,**event):
         with self._db() as db:
             record=self._load(db,owner,task_id)
-            updated=record_usage(record['usage'],**event)
-            if updated==record['usage']:return self._view(record)
-            record['usage']=updated
+            key='continuation_usage' if record.get('review_continuation') else 'usage'
+            if key=='continuation_usage':
+                _require(event['phase'] in {'review','export'},'scene_review_continuation_operation_not_allowed')
+                _require(any(r['id']==event['id'] and r['phase']==event['phase']
+                    for r in record['reservations']),'scene_review_continuation_reservation_missing')
+            updated=record_usage(record[key],**event)
+            if updated==record[key]:return self._view(record)
+            record[key]=updated
             for reservation in record['reservations']:
                 if reservation['id']==event['id']:
                     _require(reservation['phase']==event['phase'],'scene_space_reservation_conflict')
@@ -219,7 +285,7 @@ class SceneSpaceStore:
     def require_export(self,owner,task_id,*,reserve_seconds=0):
         with self._db() as db:
             record=self._load(db,owner,task_id)
-            status=require_export_budget(record['usage'],reserve_seconds=reserve_seconds)
+            status=require_export_budget(record.get('continuation_usage',record['usage']),reserve_seconds=reserve_seconds)
             _require(not _active_model(record['reservations']),'scene_space_operations_still_active')
             held=sum(r['render_seconds'] for r in record['reservations'] if r['status']=='active')
             _require(held+reserve_seconds<=status['remaining']['render_seconds'],
@@ -229,6 +295,7 @@ class SceneSpaceStore:
     def retry(self,owner,task_id,expected_plan_sha256):
         with self._db() as db:
             record=self._load(db,owner,task_id)
+            _require(not record.get('review_continuation'),'scene_review_continuation_retry_forbidden')
             _require(not any(r['status']=='active' for r in record['reservations']),
                 'scene_space_operations_still_active')
             prepared=prepare_retry(record['usage'],record['frozen'],expected_plan_sha256)
@@ -237,6 +304,7 @@ class SceneSpaceStore:
     def revise(self,owner,task_id,replacement,*,reason,expected_plan_sha256):
         with self._db() as db:
             record=self._load(db,owner,task_id)
+            _require(not record.get('review_continuation'),'scene_review_continuation_revision_forbidden')
             _require(record['frozen']['plan_sha256']==expected_plan_sha256,'scene_space_plan_revision_conflict')
             _require(not any(r['status']=='active' for r in record['reservations']),
                 'scene_space_operations_still_active')

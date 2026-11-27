@@ -75,6 +75,8 @@ class ProductionRunStore:
                 'source_usage_sha256','author_job_id','author_input_sha256','author_result_sha256',
                 'source_sha256','plan_sha256','configuration_sha256','film_sha256',
                 'measured_author_usage','original_deadline_at','execution_deadline_at','extra_author_jobs')}
+        if 'scene_review_continuation' in run:
+            result['scene_review_continuation']=deepcopy(run['scene_review_continuation'])
         if 'rendering_route' in run:
             result['rendering_route'] = deepcopy(run['rendering_route'])
         raw_items = run.get('items') if type(run.get('items')) is list else []
@@ -1003,7 +1005,8 @@ class ProductionRunStore:
             and source['status']=='failed' and source.get('error')=='scene_appearance_usage_unknown'
             and self._uses_scene_space(source) and source.get('audio_mode')=='silent'
             and not (source.get('cancel_requested') or source.get('draining') or source.get('blocked_reason'))
-            and not source.get('scene_source_recovery') and not source.get('draft_render_id')
+            and not source.get('scene_source_recovery') and not source.get('scene_review_continuation')
+            and not source.get('draft_render_id')
             and not source.get('intents') and self._matches(source,project,db),
             'production_run_scene_source_recovery_unavailable',409)
         existing=db.execute("SELECT id FROM production_runs WHERE owner=? AND project_id=? "
@@ -1061,6 +1064,132 @@ class ProductionRunStore:
                 require(len(raw.encode())<=512*1024,'production_run_storage_limit',413)
                 # This durable intent is committed before any new task/scene DB
                 # row. A restart installs the same IDs idempotently, never authors.
+                db.execute('INSERT INTO production_runs VALUES (?,?,?,?,?,?)',
+                    (run['id'],owner,run['project_id'],idem,fingerprint,raw))
+                return self.public(run,current=True)
+
+    def _review_continuation_lineage_jobs(self,db,owner,parent):
+        """Recover named original planner/resource jobs from trusted local rows."""
+        raw=db.execute('SELECT document FROM joint_plan_versions WHERE owner=? AND project_id=? AND id=?',
+            (owner,parent['project_id'],parent['joint_plan_version_id'])).fetchone()
+        require(raw is not None,'scene_review_continuation_planner_lineage_missing',409)
+        version=json.loads(raw[0]);operation_id=version.get('operation_id')
+        op_row=db.execute('SELECT document FROM joint_plan_operations WHERE owner=? AND project_id=? AND id=?',
+            (owner,parent['project_id'],operation_id)).fetchone()
+        require(op_row is not None,'scene_review_continuation_planner_lineage_missing',409)
+        operation=json.loads(op_row[0])
+        require(operation.get('version_id')==version['id'] and operation.get('status')=='completed'
+            and operation.get('job_id'),'scene_review_continuation_planner_lineage_unproven',409)
+        ids={operation['job_id']}
+        stage=operation.get('resource_planning')
+        if stage is not None:
+            require(stage.get('status')=='completed' and stage.get('stop_proven') is True
+                and stage.get('job_id'),'scene_review_continuation_resource_lineage_unproven',409)
+            ids.add(stage['job_id'])
+        recovery=operation.get('resource_recovery')
+        if recovery:
+            old_row=db.execute('SELECT document FROM joint_plan_operations WHERE owner=? AND project_id=? AND id=?',
+                (owner,parent['project_id'],recovery['source_operation_id'])).fetchone()
+            require(old_row is not None,'scene_review_continuation_resource_lineage_missing',409)
+            old=json.loads(old_row[0]);old_stage=old.get('resource_planning') or {}
+            require(digest(old)==recovery['source_operation_sha256']
+                and old.get('job_id')==recovery['source_planner_job_id']==operation['job_id']
+                and old_stage.get('job_id')==recovery['source_resource_job_id']
+                and old_stage.get('stop_proven') is True,
+                'scene_review_continuation_resource_lineage_unproven',409)
+            ids.update((old['job_id'],old_stage['job_id']))
+        scene=self._scene_space_service()._read(owner,parent['id'])
+        ids.update((scene['author_job_id'],scene['review']['job_id']))
+        require(all(type(job_id) is str and 1<=len(job_id)<=100 for job_id in ids)
+            and len(ids)+1<=7,'scene_review_continuation_job_budget_unavailable',409)
+        return sorted(ids)
+
+    def _review_continuation_replay(self,db,owner,parent_id,idem,fingerprint):
+        row=db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
+            (owner,idem)).fetchone()
+        if row is None:return None
+        run=json.loads(row['document'])
+        require(row['request_hash']==fingerprint
+            and run.get('scene_review_continuation',{}).get('parent_run_id')==parent_id,
+            'idempotency_conflict',409)
+        return self.public(run,current=True)
+
+    def _review_continuation_target(self,db,owner,parent_id,request):
+        parent=self._read(db,parent_id,owner)
+        project=self.store._project(db,owner,parent['project_id'])
+        self.store._revision(project,request['expected_revision'])
+        require(digest(parent)==request['expected_source_run_sha256']
+            and parent['status']=='cancelled' and not parent.get('draining')
+            and self._uses_scene_space(parent) and parent.get('audio_mode')=='silent'
+            and type(parent.get('scene_source_recovery')) is dict
+            and not parent.get('scene_review_continuation') and not parent.get('draft_render_id')
+            and not parent.get('intents') and self._matches(parent,project,db),
+            'production_run_scene_review_continuation_unavailable',409)
+        previous=db.execute("SELECT id FROM production_runs WHERE owner=? AND project_id=? "
+            "AND json_extract(document,'$.scene_review_continuation.original_run_id')=? LIMIT 1",
+            (owner,parent['project_id'],parent['scene_source_recovery']['source_run_id'])).fetchone()
+        require(previous is None,'scene_review_continuation_already_exists',409)
+        for row in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=? AND id<>?',
+                (owner,parent['project_id'],parent_id)):
+            require(not self._unfinished(json.loads(row[0])),'production_run_in_progress',409)
+        self._require_idle_project_children(db,parent['project_id'])
+        require(db.execute('SELECT count(*) FROM production_runs WHERE project_id=?',(parent['project_id'],)).fetchone()[0]<64
+            and db.execute('SELECT count(*) FROM production_runs').fetchone()[0]<1024,'production_run_storage_limit',409)
+        self._scene_space_service().review_continuation_snapshot(parent,request)
+        jobs=self._review_continuation_lineage_jobs(db,owner,parent)
+        require(jobs==request['expected_lineage_job_ids'],'scene_review_continuation_lineage_changed',409)
+        return parent,jobs
+
+    def continue_scene_review(self,owner,parent_id,request,idem):
+        fields={'expected_revision','expected_source_run_sha256','expected_scene_sha256',
+            'expected_task_sha256','expected_usage_sha256','expected_author_job_id',
+            'expected_author_input_sha256','expected_author_result_sha256','expected_source_sha256',
+            'expected_plan_sha256','expected_configuration_sha256','expected_usage_evidence_sha256',
+            'expected_review_job_id','expected_review_input_sha256','expected_review_usage_evidence_sha256',
+            'expected_lineage_job_ids','execution_deadline_at','accept_legacy_usage_unknown',
+            'accept_original_token_cap_unproven','allow_export_with_legacy_unknown'}
+        require(type(request) is dict and set(request)==fields
+            and type(request['expected_revision']) is int and request['expected_revision']>=1
+            and all(type(request[k]) is str and re.fullmatch('[0-9a-f]{64}',request[k])
+                for k in fields if k.endswith('_sha256'))
+            and all(type(request[k]) is str and 1<=len(request[k])<=100
+                for k in ('expected_author_job_id','expected_review_job_id'))
+            and type(request['expected_lineage_job_ids']) is list
+            and 1<=len(request['expected_lineage_job_ids'])<=6
+            and all(type(v) is str and 1<=len(v)<=100 for v in request['expected_lineage_job_ids'])
+            and request['expected_lineage_job_ids']==sorted(set(request['expected_lineage_job_ids']))
+            and type(request['execution_deadline_at']) in {int,float}
+            and math.isfinite(request['execution_deadline_at'])
+            and all(request[k] is True for k in ('accept_legacy_usage_unknown',
+                'accept_original_token_cap_unproven','allow_export_with_legacy_unknown')),
+            'invalid_scene_review_continuation_request')
+        fingerprint=digest(dict(kind='scene-review-continuation',parent_id=parent_id,request=request,idem=idem))
+        with self.store.lock:
+            with self.store.transaction() as db:
+                replay=self._review_continuation_replay(db,owner,parent_id,idem,fingerprint)
+                if replay is not None:return replay
+                parent,jobs=self._review_continuation_target(db,owner,parent_id,request)
+            grant=self._scene_space_service().prepare_review_continuation(parent,request,lineage_job_ids=jobs)
+            with self.store.transaction() as db:
+                replay=self._review_continuation_replay(db,owner,parent_id,idem,fingerprint)
+                if replay is not None:return replay
+                current,current_jobs=self._review_continuation_target(db,owner,parent_id,request)
+                require(current==parent and current_jobs==jobs,'scene_review_continuation_changed',409)
+                run=deepcopy(parent)
+                run.pop('scene_source_recovery',None)
+                run.update(id=str(uuid4()),request_key=idem,status='queued',phase='scene_review_continuation_pending',
+                    error=None,blocked_reason=None,cancel_requested=False,draining=False,created_at=time.time(),
+                    finished_at=None,draft_render_id=None,scene_review_continuation=grant,
+                    scene_space=dict(status='review_continuation_pending',stop_proven=True,
+                        plan_sha256=grant['plan_sha256'],source_sha256=grant['source_sha256'],render_id=None,error=None))
+                for item in run['items']:item.update(status='queued',error=None)
+                if 'sequence_registration' in parent:
+                    require(self.sequence_store is not None,'production_run_sequence_unavailable',503)
+                    run.update(sequence_lineage=dict(origin_run_id=run['id'],parent=None),
+                        sequence_registration=self._registration())
+                    run['sequence_lineage_sha256']=digest(run['sequence_lineage'])
+                raw=packed(run)
+                require(len(raw.encode())<=512*1024,'production_run_storage_limit',413)
                 db.execute('INSERT INTO production_runs VALUES (?,?,?,?,?,?)',
                     (run['id'],owner,run['project_id'],idem,fingerprint,raw))
                 return self.public(run,current=True)

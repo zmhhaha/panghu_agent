@@ -345,6 +345,17 @@ class SceneSourceRecovery(Revision):
     execution_deadline_at: float = Field(gt=0,allow_inf_nan=False)
 
 
+class SceneReviewContinuation(SceneSourceRecovery):
+    expected_task_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_review_job_id: str = Field(min_length=1,max_length=100)
+    expected_review_input_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_review_usage_evidence_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_lineage_job_ids: list[str] = Field(min_length=1,max_length=6)
+    accept_legacy_usage_unknown: bool = Field(strict=True)
+    accept_original_token_cap_unproven: bool = Field(strict=True)
+    allow_export_with_legacy_unknown: bool = Field(strict=True)
+
+
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
@@ -1201,6 +1212,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
         production_run_workflow.require_enabled()
         return production_run_store.recover_scene_source(owner,run_id,body.model_dump(),idempotency(idempotency_key))
+
+    @app.post('/api/production-runs/{run_id}/scene-review-continuation',status_code=202)
+    def continue_production_scene_review(run_id: str,body: SceneReviewContinuation,owner=Depends(mutation),
+            idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.continue_scene_review(owner,run_id,body.model_dump(),idempotency(idempotency_key))
 
     @app.post('/api/production-runs/{run_id}/resume-resources', status_code=202)
     def resume_production_resources(run_id: str, body: Revision, owner=Depends(mutation),

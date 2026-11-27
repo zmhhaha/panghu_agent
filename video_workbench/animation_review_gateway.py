@@ -86,7 +86,15 @@ class _AnimationGateway(MotionAgentGateway):
                  and expected <= set(required), 'animation_model_capability_unavailable', 503)
         return route
 
-    def prepare_submission(self, operation_id, document, deadline_at, input_refs=None):
+    def preflight_model_limits(self, deadline_at, model_limits):
+        from .scene_review_continuation import MODEL_LIMITS, MODEL_LIMIT_CAPABILITY
+        _require(model_limits == MODEL_LIMITS, 'animation_model_request_limits_invalid', 422)
+        route = self.preflight(deadline_at)
+        _require(route.get('model_request_limits') == MODEL_LIMIT_CAPABILITY,
+            'animation_model_request_limits_unavailable', 503)
+        return route
+
+    def prepare_submission(self, operation_id, document, deadline_at, input_refs=None, *, model_limits=None):
         """Validate and read readiness before the durable admission claim.
 
         The returned callable performs one job POST. A preparation outage has
@@ -110,7 +118,8 @@ class _AnimationGateway(MotionAgentGateway):
                      'invalid_animation_input_refs', 422)
             seen.add(ref['path'])
             identities.add(ref['input_id'])
-        route = self.preflight(deadline_at)
+        route = (self.preflight_model_limits(deadline_at, model_limits)
+                 if model_limits is not None else self.preflight(deadline_at))
         remaining = deadline_at - time.time()
         _require(remaining > 0, 'animation_deadline_expired', 409)
         request = dict(api_version='1', profile=self.profile, profile_revision=self.profile_revision,
@@ -118,10 +127,16 @@ class _AnimationGateway(MotionAgentGateway):
             task=task_for_input(document, expected[self.input_name]), inputs=[dict(ref) for ref in input_refs],
             execution_deadline_at=deadline_at,
             timeout_seconds=min(self.task_timeout_seconds, route['max_timeout_seconds'], math.ceil(remaining)))
+        if model_limits is not None:
+            request['model_limits'] = dict(model_limits)
         def admit():
             response = self._remote(self.client.submit, request, idempotency_key=key)
             try:
-                return self._checked_job(response, operation_id=operation_id)
+                checked = self._checked_job(response, operation_id=operation_id)
+                if model_limits is not None:
+                    _require(checked.get('model_limits') == model_limits,
+                        'animation_model_request_limits_unproven')
+                return checked
             except ServiceError:
                 raise ServiceError('service_protocol_invalid', 502) from None
         return admit
