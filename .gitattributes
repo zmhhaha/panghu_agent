@@ -33,6 +33,7 @@ video_workbench/animation_method_host.mjs text eol=lf
 video_workbench/video_learning_host.mjs text eol=lf
 video_workbench/scene_space_host.mjs text eol=lf
 video_workbench/motion_renderer/scene_space*.mjs text eol=lf
+video_workbench/motion_renderer/legacy/*.mjs text eol=lf
 video_workbench/motion_renderer/vendor/** -text
 # This replayable study records exact source and plan byte identities.
 video_workbench/examples/spatial-foundation-study/*.js text eol=lf

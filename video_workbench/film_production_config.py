@@ -17,6 +17,7 @@ from .hyperframes_film_snapshot import _release
 from .hyperframes_film_k8s import verify_execution_admission
 from .animation_runtime_capabilities import validate_runtime_capabilities
 from .hyperframes_film_limits import MAX_SECONDS, STREAM_MODE
+from .film_production_hosts import read_image_host_files
 
 
 @dataclass(frozen=True, repr=False)
@@ -84,10 +85,7 @@ class FilmProductionSettings:
                 raise ValueError()
             # These are application-image-owned hosts. Request files and Agent
             # output can never nominate the executable implementation.
-            root = Path(__file__).parent / 'motion_renderer'
-            host_files = {name: _ordinary(root / name, 2 * 1024 * 1024) for name in HOST_NAMES}
-            if {key: hashlib.sha256(raw).hexdigest() for key, raw in host_files.items()} != hosts:
-                raise ValueError()
+            host_files = read_image_host_files(hosts, capabilities)
             admission = verify_execution_admission(value['execution_admission'], image=value['image'],
                 runtime_fingerprint=runtime, trusted_host_sha256=hosts)
             assets = {}
