@@ -23,6 +23,12 @@ hashes, never prompts, tool data, raw responses, grants or credentials. Its
 Responses bodies with one consistent terminal usage record, and every attempt to
 have control-validated stopped custody bound to its retained worker allocation
 and signed result receipt. The current job and current attempt must agree.
+The worker's native receipt and the provider's final Kubernetes receipt are two
+levels of custody. Their job/attempt/fence/engine/request/result identities must
+agree; their signatures, resource lists and observation times can differ when
+the provider proves final Pod stop and re-signs. The final receipt must name the
+exact allocated namespace/Pod UID and match its positive stop-observation time,
+with that allocation retired. Both original receipt hashes remain in the proof.
 Historical grant or lease expiry does not invalidate already retained evidence;
 the reader never requests a new grant or calls the model. Supplier JSON and SSE
 are supported; repeated identical terminal events count once per request.

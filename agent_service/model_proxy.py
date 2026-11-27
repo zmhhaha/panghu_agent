@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
+import math
 import re
 import time
 from urllib.parse import urlsplit
@@ -116,6 +117,9 @@ def _attempt_usage_custody(attempt, allocation, job, has_requests):
         return True
     receipt = outcome.get('stop_receipt') or {}
     candidate = (allocation or {}).get('candidate_result') or {}
+    native_receipt = candidate.get('stop_receipt') or {}
+    observed = (allocation or {}).get('stop_observed_at')
+    core = ('job_id', 'attempt_id', 'fence', 'engine', 'request_sha256', 'result_sha256')
     return (attempt['state'] in {'completed', 'needs_input', 'failed', 'cancelled', 'timed_out'}
         and outcome.get('_service_stop_proven') is True
         and allocation is not None
@@ -124,7 +128,15 @@ def _attempt_usage_custody(attempt, allocation, job, has_requests):
         and receipt.get('fence') == attempt['fence']
         and receipt.get('engine') == job['pins'].get('engine')
         and receipt.get('request_sha256') == allocation['request_sha256']
-        and candidate.get('stop_receipt') == receipt)
+        and all(native_receipt.get(key) == receipt.get(key) for key in core)
+        and all(isinstance(receipt.get(key), str) and re.fullmatch(r'[0-9a-f]{64}', receipt[key])
+                for key in ('request_sha256', 'result_sha256', 'signature'))
+        and isinstance(native_receipt.get('signature'), str)
+        and re.fullmatch(r'[0-9a-f]{64}', native_receipt['signature']) is not None
+        and allocation.get('retired') is True and bool(allocation.get('pod_uid'))
+        and type(observed) in (int, float) and math.isfinite(observed) and observed > 0
+        and receipt.get('observed_at') == observed
+        and receipt.get('resource_ids') == [f'k8s:{allocation["namespace"]}:{allocation["pod_uid"]}'])
 
 
 def usage_evidence_for_job(store, job):
@@ -154,6 +166,8 @@ def usage_evidence_for_job(store, job):
         allocations = {}
         for row in db.execute(select(worker_allocations.c.attempt_id, worker_allocations.c.job_id,
                 worker_allocations.c.fence, worker_allocations.c.request_sha256,
+                worker_allocations.c.namespace, worker_allocations.c.pod_uid,
+                worker_allocations.c.stop_observed_at, worker_allocations.c.retired,
                 worker_allocations.c.candidate_result['stop_receipt'].label('candidate_stop_receipt'))
                 .where(worker_allocations.c.job_id == job_id,
                     worker_allocations.c.attempt_id.in_([a['id'] for a in attempts_seen[:1024]]))
@@ -189,7 +203,9 @@ def usage_evidence_for_job(store, job):
         attempt_proofs.append(dict(attempt_id=attempt['id'], fence=attempt['fence'], state=attempt['state'],
             stop_proven=_attempt_usage_custody(attempt, allocation, current, attempt['id'] in request_attempts),
             execution_request_sha256=(allocation or {}).get('request_sha256'),
-            stop_result_sha256=((attempt.get('outcome') or {}).get('stop_receipt') or {}).get('result_sha256')))
+            stop_result_sha256=((attempt.get('outcome') or {}).get('stop_receipt') or {}).get('result_sha256'),
+            native_stop_receipt_sha256=digest((allocation or {}).get('candidate_result', {}).get('stop_receipt')),
+            control_stop_receipt_sha256=digest((attempt.get('outcome') or {}).get('stop_receipt'))))
     custody = bounded and bool(attempts_seen) and all(_attempt_usage_custody(
         attempt, allocations.get(attempt['id']), current, attempt['id'] in request_attempts)
         for attempt in attempts_seen)

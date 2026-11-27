@@ -1026,16 +1026,20 @@ def _usage_ledger(run, value=None, *, state='complete', status=200, sse=True, su
 def _usage_stopped(run, *, forged_usage=None):
     """Synthetic control custody; this fixture does not establish native admission."""
     envelope = run.envelope
+    observed = time.time()
     receipt = dict(job_id=envelope.job_id, attempt_id=envelope.attempt_id, fence=envelope.fence,
         engine=envelope.engine, request_sha256=envelope.request_sha256, result_sha256='b' * 64,
-        resource_ids=['k8s:offline:stopped'], observed_at=time.time(), signature='c' * 64)
+        resource_ids=['k8s:agent-workers:offline-pod-uid'], observed_at=observed, signature='c' * 64)
+    native_receipt = dict(receipt, resource_ids=['process:offline-worker'],
+                          observed_at=observed - 0.1, signature='d' * 64)
     outcome = dict(state='completed', error_code=None, usage=forged_usage,
                    stop_receipt=receipt, _service_stop_proven=True)
     with run.store.engine.begin() as db:
         db.execute(update(jobs).where(jobs.c.id == envelope.job_id).values(state='completed', outcome=outcome))
         db.execute(update(attempts).where(attempts.c.id == envelope.attempt_id).values(state='completed', outcome=outcome))
         db.execute(update(worker_allocations).where(worker_allocations.c.attempt_id == envelope.attempt_id)
-                   .values(candidate_result=dict(state='completed', usage=forged_usage, stop_receipt=receipt), retired=True))
+                   .values(candidate_result=dict(state='completed', usage=forged_usage, stop_receipt=native_receipt),
+                           retired=True, pod_uid='offline-pod-uid', stop_observed_at=observed))
     return run.store.get_job('tenant', 'business', envelope.job_id)
 
 
@@ -1053,6 +1057,7 @@ def test_stopped_usage_comes_from_all_supplier_requests_without_rewriting_outcom
     assert proof['cache_read_tokens'] == 40960  # Already included in input_tokens.
     assert proof['reported_cost'] is None and proof['cost_status'] == 'unknown'
     assert proof['execution_binding_sha256'] == job['pins']['execution_binding']['sha256']
+    assert proof['attempts'][0]['native_stop_receipt_sha256'] != proof['attempts'][0]['control_stop_receipt_sha256']
     assert proof['sha256'] == digest({k: v for k, v in proof.items() if k != 'sha256'})
     assert 'private source' not in json.dumps(proof)
     assert usage_evidence_for_job(run.store, job) == proof
@@ -1102,6 +1107,26 @@ def test_live_or_unproven_attempt_never_claims_complete_usage(execution):
         db.execute(update(worker_allocations).where(worker_allocations.c.attempt_id == run.envelope.attempt_id)
                    .values(request_sha256='d' * 64))
     assert usage_evidence_for_job(run.store, job)['completeness'] == 'partial'
+
+
+@pytest.mark.parametrize('bad', ['native_result', 'pod', 'observed', 'retired', 'native_signature', 'control_signature'])
+def test_two_level_custody_requires_same_execution_and_real_outer_pod_stop(execution,bad):
+    run=execution();_usage_ledger(run);job=_usage_stopped(run)
+    with run.store.engine.begin() as db:
+        if bad in {'native_result','native_signature'}:
+            candidate=deepcopy(db.execute(select(worker_allocations.c.candidate_result)
+                .where(worker_allocations.c.attempt_id==run.envelope.attempt_id)).scalar_one())
+            candidate['stop_receipt']['result_sha256' if bad=='native_result' else 'signature']='e'*64 if bad=='native_result' else 'invalid'
+            db.execute(update(worker_allocations).where(worker_allocations.c.attempt_id==run.envelope.attempt_id).values(candidate_result=candidate))
+        elif bad=='control_signature':
+            outcome=deepcopy(job['outcome']);outcome['stop_receipt']['signature']='invalid'
+            db.execute(update(jobs).where(jobs.c.id==run.envelope.job_id).values(outcome=outcome))
+            db.execute(update(attempts).where(attempts.c.id==run.envelope.attempt_id).values(outcome=outcome))
+        else:
+            changed=({'pod_uid':'replacement-pod'} if bad=='pod' else {'stop_observed_at':1} if bad=='observed' else {'retired':False})
+            db.execute(update(worker_allocations).where(worker_allocations.c.attempt_id==run.envelope.attempt_id).values(**changed))
+    proof=usage_evidence_for_job(run.store,job)
+    assert proof['completeness']=='partial' and proof['authoritative'] is proof['stop_proven'] is False
 
 
 def test_expired_historical_grants_and_leases_do_not_hide_stopped_supplier_usage(execution):
@@ -1213,15 +1238,19 @@ def test_all_attempts_are_accounted_and_missing_old_stop_custody_blocks_complete
     from uuid import uuid4
     run = execution(); _usage_ledger(run); old_job = _usage_stopped(run)
     prior_id = str(uuid4()); prior_request = 'd' * 64
+    observed=time.time()
     receipt = dict(job_id=run.envelope.job_id, attempt_id=prior_id, fence=0, engine='pi',
-        request_sha256=prior_request, result_sha256='e' * 64)
+        request_sha256=prior_request, result_sha256='e' * 64,observed_at=observed,
+        resource_ids=['k8s:agent-workers:prior-pod-uid'],signature='a'*64)
+    native_receipt=dict(receipt,resource_ids=['process:prior-worker'],observed_at=observed-.1,signature='b'*64)
     outcome = dict(state='failed', _service_stop_proven=True, stop_receipt=receipt)
     with run.store.engine.begin() as db:
         db.execute(insert(attempts).values(id=prior_id, job_id=run.envelope.job_id, fence=0, state='failed',
             created_at=time.time()-10, lease_expires_at=time.time(), deadline_at=time.time(), dispatch_intent={}, outcome=outcome))
         db.execute(insert(worker_allocations).values(attempt_id=prior_id, job_id=run.envelope.job_id, fence=0,
             engine='pi', request_sha256=prior_request, pool_id='old-pool', namespace='agent-workers',
-            pod_name='prior-stopped', intent_sha256='f'*64, candidate_result=dict(stop_receipt=receipt),
+            pod_name='prior-stopped',pod_uid='prior-pod-uid', intent_sha256='f'*64,
+            candidate_result=dict(stop_receipt=native_receipt),stop_observed_at=observed,
             retired=True, created_at=time.time()-10))
     _usage_ledger(run, _supplier_response(100, 20, 0), attempt_id=prior_id, suffix='prior')
     proof = usage_evidence_for_job(run.store, old_job)
