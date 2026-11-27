@@ -10,6 +10,10 @@ import {performance} from 'node:perf_hooks';
 const hash=raw=>createHash('sha256').update(raw).digest('hex');
 const requireValue=(ok,code='scene_space_host_invalid')=>{if(!ok)throw Error(code);};
 const read=(path,max)=>{const s=lstatSync(path);requireValue(s.isFile()&&!s.isSymbolicLink()&&s.size<=max,'scene_space_file_invalid');return readFileSync(path);};
+const sampleCapturePolicy=Object.freeze({schema:'video.scene-space-sample-capture.v1',format:'png',quality:null,
+ max_samples:3,max_sample_bytes:4*1024*1024,max_total_sample_bytes:12*1024*1024});
+const frameCapture=(frame,start,bytes)=>({schema:'video.scene-space-frame-capture.v1',absolute_frame:frame,
+ relative_frame:frame-start,format:'png',quality:null,sha256:hash(bytes),bytes:bytes.length});
 
 // Drain coverage while each document's Debugger script IDs are still live.
 export async function collectSceneDrawingExecution(session,origin,library,previous=[]){
@@ -31,6 +35,12 @@ export async function collectSceneDrawingExecution(session,origin,library,previo
 export async function captureSceneSpace({chromium,request,binding,resources,engineRuntime,projectRuntime,root,
  executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}){
  requireValue(request.schema==='video.scene-space-render-request.v1'&&request.engine==='canvas');
+ const lossless=Object.hasOwn(request,'sample_capture');
+ if(lossless){const policy=request.sample_capture;
+  requireValue(!request.static&&policy&&typeof policy==='object'&&!Array.isArray(policy)
+   &&Object.keys(policy).length===Object.keys(sampleCapturePolicy).length
+   &&Object.entries(sampleCapturePolicy).every(([key,value])=>Object.hasOwn(policy,key)&&policy[key]===value),
+   'scene_space_sample_capture_invalid');}
  requireValue(binding.schema==='video.scene-space-render-binding.v1'&&binding.backend==='canvas'
   &&binding.runtime_sha256===request.scene_runtime_sha256&&binding.source_sha256===request.source_sha256
   &&binding.artwork_api_revision===3&&request.artwork_api_revision===3
@@ -101,25 +111,35 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
    await projectRuntime.installHyperFramesProject(page,{project,runtimePath:core.runtimePath,legacyBridge:true});};
   const start=binding.frame_range.start_frame,end=binding.frame_range.end_frame,count=end-start;
   const seek=async frame=>{await projectRuntime.seekHyperFramesProject(page,(frame-start)/24);};
-  const capture=async frame=>{await seek(frame);await page.evaluate(async()=>{
+  let sampleCaptureCount=0;
+  const capture=async(frame,{sample=false}={})=>{await seek(frame);await page.evaluate(async()=>{
     await document.fonts.ready;if(document.getAnimations().some(a=>a.playState==='running'))throw Error('scene_space_autonomous_animation');});
-   const bytes=await page.screenshot(request.static?{type:'png',animations:'disabled'}:{type:'jpeg',quality:88,animations:'disabled'});
+   const bytes=await page.screenshot(request.static||sample?{type:'png',animations:'disabled'}:{type:'jpeg',quality:88,animations:'disabled'});
+   if(sample){sampleCaptureCount++;
+    requireValue(sampleCaptureCount<=sampleCapturePolicy.max_samples*4&&bytes.length>0
+     &&bytes.length<=sampleCapturePolicy.max_sample_bytes,'scene_space_sample_capture_budget_exceeded');}
    requireValue(!errors.length&&!blocked.length,'scene_space_scene_failed_or_blocked');return bytes;};
   await ready();
   const selected=[...new Set([start,Math.min(end-1,start+Math.floor(count/2)),end-1])].sort((a,b)=>a-b);
-  const reference=new Map(),samples=[],sampleFrames=[];let frameBytes=0;
+  const reference=new Map(),samples=[],sampleFrames=[];let frameBytes=0,sampleBytes=0;
   if(!request.static)mkdirSync(join(root,'frames'),{recursive:false});
   for(let frame=start;frame<(request.static?start+1:end);frame++){
    const bytes=await capture(frame);frameBytes+=bytes.length;
    requireValue(frameBytes<=request.max_frame_bytes,'scene_space_frame_disk_budget_exceeded');
-   if(selected.includes(frame)){reference.set(frame,bytes);
-    if(!request.static){const name='sample-'+String(frame).padStart(6,'0')+'.jpg';writeFileSync(join(root,name),bytes);
-     sampleFrames.push({frame,file_name:name,time_seconds:(frame-start)/24,sha256:hash(bytes),bytes:bytes.length});}}
+   if(selected.includes(frame)){
+    const retained=lossless?await capture(frame,{sample:true}):bytes;reference.set(frame,retained);
+    if(!request.static){
+     if(lossless){sampleBytes+=retained.length;frameBytes+=retained.length;
+      requireValue(sampleBytes<=sampleCapturePolicy.max_total_sample_bytes&&frameBytes<=request.max_frame_bytes,
+       'scene_space_frame_disk_budget_exceeded');}
+     const name='sample-'+String(frame).padStart(6,'0')+(lossless?'.png':'.jpg');writeFileSync(join(root,name),retained);
+     sampleFrames.push({frame,file_name:name,time_seconds:(frame-start)/24,sha256:hash(retained),bytes:retained.length,
+      ...(lossless?{capture:frameCapture(frame,start,retained)}:{})});}}
    if(request.static)writeFileSync(join(root,'output.png'),bytes);
    else writeFileSync(join(root,'frames',String(frame-start).padStart(6,'0')+'.jpg'),bytes);
   }
   if(request.static){selected.splice(0,selected.length,start);reference.set(start,read(join(root,'output.png'),8*1024*1024));}
-  for(const frame of [...selected].reverse()){const reverse=await capture(frame),repeat=await capture(frame);
+  for(const frame of [...selected].reverse()){const reverse=await capture(frame,{sample:lossless}),repeat=await capture(frame,{sample:lossless});
    requireValue(reverse.equals(reference.get(frame))&&repeat.equals(reverse),'scene_space_reverse_or_repeat_mismatch');
    samples.push({frame,sha256:hash(reverse)});}
   const firstObservation=await page.evaluate(()=>window.__trustedSceneSpaceObservation());
@@ -127,7 +147,7 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
   if(request.drawing_libraries)drawingFunctions=await collectSceneDrawingExecution(security,origin,
    request.drawing_libraries['ink-landscape'],drawingFunctions);
   await ready();
-  for(const frame of selected){requireValue((await capture(frame)).equals(reference.get(frame)),'scene_space_reload_mismatch');}
+  for(const frame of selected){requireValue((await capture(frame,{sample:lossless})).equals(reference.get(frame)),'scene_space_reload_mismatch');}
   if(request.drawing_libraries)drawingFunctions=await collectSceneDrawingExecution(security,origin,
    request.drawing_libraries['ink-landscape'],drawingFunctions);
   const engineObservation=await engineRuntime.verifyPageEngine(page,'canvas');
@@ -142,6 +162,7 @@ export async function captureSceneSpace({chromium,request,binding,resources,engi
     api_execution:{schema:'video.learning-drawing-api-execution.v1',scope:'v8_executed_functions_not_visual_application',
      module_sha256:library.assets['ink-landscape.mjs'],functions:drawingFunctions}};}
   return{checks:{repeat_passed:true,reverse_passed:true,reload_passed:true,samples},sample_frames:sampleFrames,
+   ...(lossless?{sample_capture:{...request.sample_capture},sample_bytes:sampleBytes,sample_capture_count:sampleCaptureCount}:{}),
    ...(drawingObservation?{drawing_library_observation:drawingObservation}:{}),
    scene_space_observation:{...firstObservation,frame_range:binding.frame_range,runtime_sha256:request.scene_runtime_sha256,
     surface_runtime_sha256:request.surface_runtime_sha256,surface_budget_sha256:request.surface_budget_sha256,

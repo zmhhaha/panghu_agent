@@ -3,6 +3,11 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name, revision='1'):
+    if name == 'video.picture-learning-review.v2':
+        if revision != '1':
+            raise ValueError('No reviewed profile implementation')
+        from .video_picture_review_v2 import VideoPictureReviewV2Profile
+        return VideoPictureReviewV2Profile()
     if name in {'video.reference-learning-author.v1', 'video.reference-learning-review.v1'}:
         from .video_reference_learning import VideoReferenceLearningProfile
         return VideoReferenceLearningProfile(review=name == 'video.reference-learning-review.v1')

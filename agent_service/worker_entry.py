@@ -439,7 +439,8 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
                 extensions += verified_extensions()
             except (OSError, ValueError):
                 raise WorkerConfigError() from None
-        elif policy.name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1'}:
+        elif policy.name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
+                             'video.picture-learning-review.v2'}:
             from .picture_learning_tools import verified_extensions
             try:
                 extensions += verified_extensions()

@@ -20,6 +20,8 @@ from video_workbench.scene_space_renderer import (
     SceneSpaceRenderer,prepare_scene_render,render_capability,
 )
 from video_workbench import animation_method_renderer as execution
+from video_workbench.scene_space_capture import (SAMPLE_CAPTURE_POLICY, FRAME_CAPTURE_SCHEMA,
+    validate_sample_capture,validate_frame_capture,selected_sample_frames)
 
 ROOT=Path(__file__).resolve().parents[2]
 
@@ -79,6 +81,13 @@ def test_scene_coverage_is_collected_before_document_script_ids_expire():
     node=shutil.which('node')
     if not node:pytest.skip('Node unavailable')
     subprocess.run([node,'--test',str(Path(__file__).with_name('scene-space-coverage.test.mjs'))],
+        check=True,timeout=30)
+
+
+def test_lossless_capture_controls_and_budgets_without_claiming_mock_pixels():
+    node=shutil.which('node')
+    if not node:pytest.skip('Node unavailable')
+    subprocess.run([node,'--test',str(Path(__file__).with_name('scene-space-capture.test.mjs'))],
         check=True,timeout=30)
 
 
@@ -151,6 +160,52 @@ def test_intervals_share_the_same_full_plan_raster_resolution(plan):
     assert first['object_caches']==last['object_caches']
     assert first['frozen']==last['frozen']
     assert first['sha256']!=last['sha256']
+
+
+def test_native_lossless_clip_samples_match_static_png_on_the_same_absolute_frames(renderer,plan,tmp_path):
+    """Actual CPU browser/PNG and whole-clip decode; no business/model calls."""
+    required=['SCENE_SPACE_BROWSER','SCENE_SPACE_PLAYWRIGHT_PACKAGE','SCENE_SPACE_HYPERFRAMES_DIST']
+    if not all(os.environ.get(name) for name in required):
+        pytest.skip('Native browser acceptance dependencies not configured')
+    node=shutil.which('node');ffmpeg=shutil.which('ffmpeg');ffprobe=shutil.which('ffprobe')
+    if not all((node,ffmpeg,ffprobe)):pytest.skip('Native Node/FFmpeg required')
+    from PIL import Image,ImageChops
+    interval=dict(start_frame=24,end_frame=48);selected=selected_sample_frames(interval);cases=[]
+    definitions=[('lossless-clip',clip_document(),interval),
+        ('legacy-clip',clip_document(False),interval)]
+    definitions.extend((f'static-{frame}',dict(constraints=dict(width=1280,height=720),assets={}),
+        dict(start_frame=frame,end_frame=frame+1)) for frame in selected)
+    for name,document,frame_range in definitions:
+        binding=renderer.validate_request(name,source(),document,scene_space=plan,frame_range=frame_range)
+        path=tmp_path/(name+'.json');path.write_bytes(canonical_bytes(binding))
+        cases.append(dict(name=name,binding=str(path),output=str(tmp_path/name),assets={}))
+    config=dict(playwright_package=os.environ[required[1]],browser=os.environ[required[0]],
+        hyperframes_dist=os.environ[required[2]],host=str(HOST),scene_runtime=str(RUNTIME),
+        engine_runtime=str(ROOT/'video_workbench/motion_renderer/engine_runtime.mjs'),
+        project_runtime=str(ROOT/'video_workbench/motion_renderer/hyperframes_project.mjs'),
+        ffmpeg=ffmpeg,ffprobe=ffprobe,cases=cases,output=str(tmp_path/'native-lossless-summary.json'))
+    config_path=tmp_path/'probe-config.json';config_path.write_bytes(canonical_bytes(config))
+    subprocess.run([node,str(Path(__file__).with_name('scene_space_browser_probe.mjs')),str(config_path)],
+        check=True,timeout=120)
+    summary=json.loads((tmp_path/'native-lossless-summary.json').read_bytes())
+    results={row['name']:row for row in summary['results']};clip=results['lossless-clip']
+    assert clip['sample_capture']==SAMPLE_CAPTURE_POLICY and clip['sample_capture_count']==12
+    assert clip['sample_bytes']<=12*1024*1024 and clip['frame_bytes']<=512*1024*1024
+    assert all(clip['checks'][key] for key in ('repeat_passed','reverse_passed','reload_passed'))
+    assert [row['capture']['absolute_frame'] for row in clip['sample_frames']]==selected
+    assert 'sample_capture' not in results['legacy-clip']
+    # The same source/plan/range JPEG frames still feed the encoder byte-for-byte.
+    for relative in range(24):
+        name=f'{relative:06d}.jpg'
+        assert (tmp_path/'lossless-clip/frames'/name).read_bytes()==(tmp_path/'legacy-clip/frames'/name).read_bytes()
+    for frame in selected:
+        with Image.open(tmp_path/'lossless-clip'/f'sample-{frame:06d}.png') as sample,\
+                Image.open(tmp_path/f'static-{frame}'/'output.png') as still:
+            assert sample.format==still.format=='PNG'
+            assert ImageChops.difference(sample.convert('RGB'),still.convert('RGB')).getbbox() is None
+    for name in ('lossless-clip','legacy-clip'):
+        stream=next(s for s in results[name]['media_probe']['streams'] if s['codec_type']=='video')
+        assert stream['codec_name']=='h264' and int(stream['nb_read_frames'])==24 and stream['avg_frame_rate']=='24/1'
 
 
 def test_coverage_and_surface_work_are_preflighted_before_source_execution(monkeypatch):
@@ -340,6 +395,128 @@ def test_new_claim_is_durable_and_technical_output_has_compatible_shape(renderer
     assert renderer.media_path('still')==Path(result['artifact_path'])
     assert renderer.frames('still')==[]
     assert not result['whole_video_watched'] and not result['motion_observed']
+
+
+def synthetic_clip_execution(calls,change=None):
+    """Inert evidence fixture; the separate native tests establish actual media."""
+    execute=synthetic_execution(calls)
+    def clip(directory):
+        from PIL import Image
+        execute(directory)
+        request=json.loads((directory/'input/request.json').read_bytes())
+        binding=json.loads((directory/'binding.json').read_bytes())
+        work=directory/'work';receipt=json.loads((work/'render-receipt.json').read_bytes())
+        video=b'inert mp4 evidence fixture';(work/'output.mp4').write_bytes(video)
+        lossless='sample_capture' in request
+        image=io.BytesIO();Image.new('RGB',(1280,720),'white').save(image,format='PNG' if lossless else 'JPEG')
+        raw=image.getvalue();checksum=hashlib.sha256(raw).hexdigest();frame_range=binding['scene_space']['frame_range']
+        selected=selected_sample_frames(frame_range);count=frame_range['end_frame']-frame_range['start_frame']
+        samples=[]
+        for frame in selected:
+            name=f'sample-{frame:06d}'+('.png' if lossless else '.jpg');(work/name).write_bytes(raw)
+            row=dict(frame=frame,file_name=name,time_seconds=(frame-frame_range['start_frame'])/24,
+                sha256=checksum,bytes=len(raw))
+            if lossless:
+                row['capture']=dict(schema=FRAME_CAPTURE_SCHEMA,absolute_frame=frame,
+                    relative_frame=frame-frame_range['start_frame'],format='png',quality=None,sha256=checksum,bytes=len(raw))
+            samples.append(row)
+        receipt.update(output_sha256=hashlib.sha256(video).hexdigest(),output_bytes=len(video),captured_frames=count,
+            sample_frames=samples,checks=dict(repeat_passed=True,reverse_passed=True,reload_passed=True,
+                samples=[dict(frame=frame,sha256=checksum) for frame in reversed(selected)]),
+            media_probe=dict(streams=[dict(codec_type='video',codec_name='h264',width=1280,height=720,
+                avg_frame_rate='24/1',nb_read_frames=str(count))],format=dict(duration=str(count/24))))
+        if lossless:
+            receipt.update(sample_capture=deepcopy(request['sample_capture']),sample_bytes=len(raw)*len(selected),
+                sample_capture_count=4*len(selected),frame_bytes=1000+len(raw)*len(selected))
+        if change:change(receipt,work)
+        (work/'render-receipt.json').write_bytes(canonical_bytes(receipt))
+    return clip
+
+
+def clip_document(lossless=True):
+    return dict(constraints=dict(width=1280,height=720,duration_seconds=1,
+        **({'sample_capture':deepcopy(SAMPLE_CAPTURE_POLICY)} if lossless else {})),assets={})
+
+
+def test_new_policy_is_explicit_exact_and_advertised_without_changing_static_requests(renderer,plan):
+    assert render_capability()['sample_capture']==SAMPLE_CAPTURE_POLICY
+    legacy=renderer._binding('legacy-clip',source(),clip_document(False),plan,frame_range=dict(start_frame=24,end_frame=48))
+    assert 'sample_capture' not in legacy['request']
+    new=renderer._binding('lossless',source(),clip_document(),plan,frame_range=dict(start_frame=24,end_frame=48))
+    assert new['request']['sample_capture']==SAMPLE_CAPTURE_POLICY
+    with pytest.raises(ServiceError,match='static_not_admitted'):
+        renderer._binding('static-policy',source(),dict(constraints=dict(width=1280,height=720,
+            sample_capture=deepcopy(SAMPLE_CAPTURE_POLICY))),plan)
+    for invalid in [None,[],{},dict(SAMPLE_CAPTURE_POLICY,quality=88),dict(SAMPLE_CAPTURE_POLICY,max_samples=True)]:
+        with pytest.raises(ServiceError,match='sample_capture_invalid'):validate_sample_capture(invalid)
+
+
+def test_new_capture_cannot_be_selected_without_its_exact_renderer_capability(renderer,plan,monkeypatch):
+    old_capability=renderer.capabilities();old_capability.pop('sample_capture')
+    monkeypatch.setattr(renderer,'capabilities',lambda:old_capability)
+    with pytest.raises(ServiceError,match='sample_capture_not_admitted'):
+        renderer.validate_request('unadmitted-png',source(),clip_document(),scene_space=plan,
+            frame_range=dict(start_frame=24,end_frame=48))
+    assert not renderer.root.exists()
+
+
+def test_lossless_manifest_binds_absolute_clock_png_bytes_and_frozen_restore(renderer,plan,monkeypatch):
+    calls=[];monkeypatch.setattr(execution,'execute_method_render',synthetic_clip_execution(calls))
+    result=renderer.render('new-png-clip',source(),clip_document(),scene_space=plan,
+        frame_range=dict(start_frame=24,end_frame=48))
+    assert result['sample_capture']==SAMPLE_CAPTURE_POLICY
+    assert result['sample_frame_range']==dict(start_frame=24,end_frame=48)
+    frames=renderer.frames('new-png-clip')
+    assert [row['capture']['absolute_frame'] for row in frames]==[24,36,47]
+    assert [row['capture']['relative_frame'] for row in frames]==[0,12,23]
+    assert [row['timestamp_seconds'] for row in frames]==[0,.5,23/24]
+    assert all(row['mime']=='image/png' and row['raw'].startswith(b'\x89PNG\r\n\x1a\n') for row in frames)
+    assert renderer.frames('new-png-clip',max_frames=1)==frames[:1]
+    class UnavailableToday:
+        def read_bytes(self):raise AssertionError('Today runtime must not be consulted by frozen restore')
+    import video_workbench.scene_space_renderer as module
+    for name in ['HOST','RUNTIME','SURFACE_RUNTIME','SURFACE_BUDGET','GEOMETRY_RUNTIME','GEOMETRY_BUDGET']:
+        monkeypatch.setattr(module,name,UnavailableToday())
+    assert renderer.lookup('new-png-clip')==result
+    assert renderer.frames('new-png-clip')==frames and len(calls)==1
+
+
+def test_legacy_jpeg_result_and_frames_restore_exact_shape_without_today_runtime(renderer,plan,monkeypatch):
+    calls=[];monkeypatch.setattr(execution,'execute_method_render',synthetic_clip_execution(calls))
+    result=renderer.render('old-jpeg-clip',source(),clip_document(False),scene_space=plan,
+        frame_range=dict(start_frame=24,end_frame=48))
+    assert 'sample_capture' not in result and 'sample_frame_range' not in result
+    result_bytes=canonical_bytes(result);frames=renderer.frames('old-jpeg-clip')
+    assert all(set(row)=={'timestamp_seconds','mime','raw'} and row['mime']=='image/jpeg' for row in frames)
+    import video_workbench.scene_space_renderer as module
+    monkeypatch.setattr(module,'HOST',None);monkeypatch.setattr(module,'RUNTIME',None)
+    monkeypatch.setattr(module,'render_capability',lambda **kwargs:pytest.fail('Frozen legacy lookup consulted today caps'))
+    assert canonical_bytes(renderer.lookup('old-jpeg-clip'))==result_bytes
+    assert renderer.frames('old-jpeg-clip')==frames and len(calls)==1
+
+
+@pytest.mark.parametrize('change',[
+    lambda r,w:r['sample_frames'].pop(),
+    lambda r,w:r['sample_frames'].append(deepcopy(r['sample_frames'][0])),
+    lambda r,w:r['sample_frames'][0].update(file_name='sample-000024.jpg'),
+    lambda r,w:r['sample_frames'][0]['capture'].update(absolute_frame=25),
+    lambda r,w:r['sample_frames'][0]['capture'].update(relative_frame=True),
+    lambda r,w:r['sample_frames'][0]['capture'].update(quality=88),
+    lambda r,w:r['sample_frames'][0]['capture'].update(sha256='0'*64),
+    lambda r,w:r['sample_frames'][0].update(time_seconds=None),
+    lambda r,w:r['sample_frames'][0].update(time_seconds=1/24),
+    lambda r,w:r.update(sample_bytes=1),
+    lambda r,w:r.update(frame_bytes=512*1024*1024+1),
+    lambda r,w:r.update(sample_capture_count=1),
+    lambda r,w:r['sample_capture'].update(max_sample_bytes=1),
+    lambda r,w:r['checks']['samples'].append(deepcopy(r['checks']['samples'][0])),
+    lambda r,w:(w/r['sample_frames'][0]['file_name']).write_bytes(b'not a PNG'),
+])
+def test_new_png_manifest_tampering_or_unsettled_budget_is_rejected(renderer,plan,monkeypatch,change):
+    calls=[];monkeypatch.setattr(execution,'execute_method_render',synthetic_clip_execution(calls,change))
+    with pytest.raises(ServiceError,match='sample|capture'):
+        renderer.render('tampered-png',source(),clip_document(),scene_space=plan,
+            frame_range=dict(start_frame=24,end_frame=48))
 
 
 def test_lost_execution_response_is_not_a_proven_never_created_failure(renderer,plan,monkeypatch):

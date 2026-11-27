@@ -22,12 +22,14 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 from .animation_creation_http import CreationAPIClient, CreationTransportError
 from .picture_learning_store import owner_id, identifier, _plain
 from .scene_space_plan import freeze_plan, technical_retry
+from .scene_space_capture import validate_sample_capture, validate_frame_capture
 
 PREFIX='/api/scene-space-renders'
 MAX_BODY=24*1024*1024
 MAX_PREVIEW_FRAMES=3
 MAX_PREVIEW_FRAME_BYTES=4*1024*1024
 PREVIEW_SCHEMA='video.scene-space-preview-frames.v1'
+CAPTURE_PREVIEW_SCHEMA='video.scene-space-preview-frames.v2'
 
 
 def _require(ok,code='scene_space_render_request_invalid',status=422):
@@ -42,6 +44,34 @@ def _frame_limit(value):
 
 def _frame_response_limit(max_frames):
     return _frame_limit(max_frames)*((MAX_PREVIEW_FRAME_BYTES+2)//3*4)+65536
+
+
+def _sample_capture_metadata(row,result):
+    """Bind new samples to their stored request, never today's capabilities."""
+    request=row.get('request')
+    constraints=(request.get('document',{}).get('constraints',{})
+        if type(request) is dict else {})
+    requested=type(constraints) is dict and 'sample_capture' in constraints
+    fields={'sample_capture','sample_frame_range'}
+    if not requested and not fields.intersection(result):return {}
+    code='scene_space_preview_capture_metadata_changed'
+    _require(fields<=set(result),code,409)
+    policy=validate_sample_capture(result['sample_capture'])
+    frame_range=result['sample_frame_range']
+    _require(type(frame_range) is dict and set(frame_range)=={'start_frame','end_frame'}
+        and all(type(frame_range[key]) is int for key in frame_range)
+        and 0<=frame_range['start_frame']<frame_range['end_frame']<=7200
+        and frame_range['end_frame']-frame_range['start_frame']==result.get('frame_count'),code,409)
+    if request is not None:
+        _require(requested and 'duration_seconds' in constraints
+            and policy==validate_sample_capture(constraints['sample_capture']),code,409)
+        frozen=request.get('scene_space')
+        _require(type(frozen) is dict,code,409)
+        plan=frozen.get('plan') if frozen.get('schema')=='video.scene-space-frozen-plan.v1' else frozen
+        _require(type(plan) is dict and type(plan.get('duration_frames')) is int,code,409)
+        expected_range=request.get('frame_range') or dict(start_frame=0,end_frame=plan['duration_frames'])
+        _require(frame_range==expected_range,code,409)
+    return dict(sample_capture=policy,sample_frame_range=deepcopy(frame_range))
 
 
 def _preview_metadata(row,operation_id):
@@ -66,13 +96,16 @@ def _preview_metadata(row,operation_id):
         for value in identities.values()) and result.get('plan_sha256')==identities['plan_sha256']
         and result.get('source_sha256')==identities['source_sha256'],
         'scene_space_preview_metadata_changed',409)
-    return dict(schema=PREVIEW_SCHEMA,operation_id=operation_id,**identities,
-        viewport=viewport,duration_seconds=duration)
+    capture=_sample_capture_metadata(row,result)
+    return dict(schema=CAPTURE_PREVIEW_SCHEMA if capture else PREVIEW_SCHEMA,
+        operation_id=operation_id,**identities,viewport=viewport,duration_seconds=duration,**capture)
 
 
 def _preview_frame(value,metadata,*,encoded=False):
     code='scene_space_preview_frame_invalid'
     expected={'timestamp_seconds','mime','bytes','sha256','content_base64'} if encoded else {'timestamp_seconds','mime','raw'}
+    captured=metadata['schema']==CAPTURE_PREVIEW_SCHEMA
+    if captured:expected=expected|{'capture'}
     _require(type(value) is dict and set(value)==expected,code,409)
     timestamp=value['timestamp_seconds'];mime=value['mime']
     _require(type(timestamp) in (int,float) and math.isfinite(timestamp)
@@ -87,6 +120,10 @@ def _preview_frame(value,metadata,*,encoded=False):
             and hashlib.sha256(raw).hexdigest()==value['sha256'],'scene_space_preview_frame_changed',409)
     else:raw=value['raw']
     _require(type(raw) is bytes and 0<len(raw)<=MAX_PREVIEW_FRAME_BYTES,code,409)
+    if captured:
+        _require(mime=='image/png',code,409)
+        validate_frame_capture(value['capture'],frame_range=metadata['sample_frame_range'],
+            raw=raw,timestamp_seconds=timestamp)
     from PIL import Image
     try:
         with Image.open(io.BytesIO(raw)) as image:
@@ -96,7 +133,23 @@ def _preview_frame(value,metadata,*,encoded=False):
         with Image.open(io.BytesIO(raw)) as image:image.load()
     except (OSError,ValueError,SyntaxError,Image.DecompressionBombError):
         raise ServiceError(code,409) from None
-    return dict(timestamp_seconds=timestamp,mime=mime,raw=raw)
+    frame=dict(timestamp_seconds=timestamp,mime=mime,raw=raw)
+    if captured:frame['capture']=deepcopy(value['capture'])
+    return frame
+
+
+def _preview_frames(frames,metadata,max_frames,*,encoded=False):
+    _require(type(frames) is list and 1<=len(frames)<=max_frames,
+        'scene_space_preview_frame_count_invalid',409)
+    checked=[_preview_frame(frame,metadata,encoded=encoded) for frame in frames]
+    if metadata['schema']==CAPTURE_PREVIEW_SCHEMA:
+        frame_range=metadata['sample_frame_range'];count=frame_range['end_frame']-frame_range['start_frame']
+        selected=sorted({0,count//2,count-1})[:max_frames]
+        _require([frame['capture']['relative_frame'] for frame in checked]==selected,
+            'scene_space_preview_frame_selection_changed',409)
+        _require(sum(len(frame['raw']) for frame in checked)<=metadata['sample_capture']['max_total_sample_bytes'],
+            'scene_space_preview_frames_too_large',413)
+    return checked
 
 
 class SceneSpaceRenderClient(CreationAPIClient):
@@ -139,9 +192,7 @@ class SceneSpaceRenderClient(CreationAPIClient):
         _require(type(value) is dict and set(value)==set(metadata)|{'frames'}
             and all(value.get(key)==item for key,item in metadata.items()),
             'scene_space_preview_metadata_changed',409)
-        frames=value['frames']
-        _require(type(frames) is list and 1<=len(frames)<=max_frames,'scene_space_preview_frame_count_invalid',409)
-        return [_preview_frame(frame,metadata,encoded=True) for frame in frames]
+        return _preview_frames(value['frames'],metadata,max_frames,encoded=True)
 
     def capabilities(self,owner):
         return self._request(owner,'GET',PREFIX+'/capabilities')
@@ -235,6 +286,10 @@ class SceneSpaceRenderService:
         checked=_validate_source_output({key:source.get(key) for key in ('engine','strategy','files')})
         source_hash=source_sha256(checked)
         _require(source.get('source_sha256',source_hash)==source_hash,'scene_space_render_source_changed',409)
+        constraints=value['document'].get('constraints',{})
+        if type(constraints) is dict and 'sample_capture' in constraints:
+            validate_sample_capture(constraints['sample_capture'])
+            _require('duration_seconds' in constraints,'scene_space_sample_capture_clip_required')
         frame_range=value.get('frame_range')
         if frame_range is not None:
             _require(type(frame_range) is dict and set(frame_range)=={'start_frame','end_frame'}
@@ -356,11 +411,12 @@ class SceneSpaceRenderService:
                         'scene_space_render_frozen_runtime_changed',409)
                     metadata={key:deepcopy(value) for key,value in result.items() if not key.endswith('_path')}
                     static='duration_seconds' not in current['request']['document'].get('constraints',{})
-                    frame_range=current['request'].get('frame_range',dict(start_frame=0,end_frame=1 if static else plan['duration_frames']))
+                    frame_range=current['request'].get('frame_range') or dict(start_frame=0,end_frame=1 if static else plan['duration_frames'])
                     expected_count=frame_range['end_frame']-frame_range['start_frame']
                     _require(result.get('frame_count')==expected_count and type(result.get('frame_count')) is int
                         and result.get('fps')==24 and result.get('mime')==('image/png' if static else 'video/mp4'),
                         'scene_space_render_media_clock_changed',409)
+                    metadata.update(_sample_capture_metadata(current,result))
                     metadata.update(bytes=len(raw),frame_count=expected_count,fps=24,
                         snapshot_sha256=result['scene_space_sha256'],
                         plan_sha256=current['plan_sha256'],source_sha256=current['source_sha256'])
@@ -403,7 +459,7 @@ class SceneSpaceRenderService:
         metadata=_preview_metadata(row,operation_id)
         request=row['request'];frozen=request['scene_space']
         plan=frozen['plan'] if frozen.get('schema')=='video.scene-space-frozen-plan.v1' else frozen
-        frame_range=request.get('frame_range',dict(start_frame=0,end_frame=plan['duration_frames']))
+        frame_range=request.get('frame_range') or dict(start_frame=0,end_frame=plan['duration_frames'])
         _require(digest(request)==row['request_sha256'] and metadata['viewport']==plan['viewport']
             and metadata['duration_seconds']==(frame_range['end_frame']-frame_range['start_frame'])/24,
             'scene_space_preview_metadata_changed',409)
@@ -419,9 +475,12 @@ class SceneSpaceRenderService:
             and (row['render_request_sha256'] is None
                 or verified.get('render_request_sha256')==row['render_request_sha256']),
             'scene_space_preview_result_changed',409)
+        _require(all((key in verified)==(key in metadata)
+            and (key not in metadata or verified[key]==metadata[key])
+            for key in ('sample_capture','sample_frame_range')),
+            'scene_space_preview_capture_metadata_changed',409)
         frames=self.renderer.frames(operation_id,max_frames=max_frames)
-        _require(type(frames) is list and 1<=len(frames)<=max_frames,'scene_space_preview_frame_count_invalid',409)
-        return metadata,[_preview_frame(frame,metadata) for frame in frames]
+        return metadata,_preview_frames(frames,metadata,max_frames)
 
     def frames(self,owner,operation_id,max_frames=3):
         return self._verified_frames(owner,operation_id,max_frames)[1]
@@ -430,7 +489,8 @@ class SceneSpaceRenderService:
         metadata,frames=self._verified_frames(owner,operation_id,max_frames)
         value=dict(metadata,frames=[dict(timestamp_seconds=frame['timestamp_seconds'],mime=frame['mime'],
             bytes=len(frame['raw']),sha256=hashlib.sha256(frame['raw']).hexdigest(),
-            content_base64=base64.b64encode(frame['raw']).decode('ascii')) for frame in frames])
+            content_base64=base64.b64encode(frame['raw']).decode('ascii'),
+            **({'capture':deepcopy(frame['capture'])} if 'capture' in frame else {})) for frame in frames])
         _require(len(canonical_bytes(value))<=_frame_response_limit(max_frames),
             'scene_space_preview_frames_too_large',413)
         return value

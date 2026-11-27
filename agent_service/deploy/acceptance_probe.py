@@ -43,6 +43,7 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.animation-method-author.v1', 'video.animation-method-review.v1',
     'video.animation-method-author.v2', 'video.animation-method-review.v2',
     'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
+    'video.picture-learning-review.v2',
     'video.reference-learning-author.v1', 'video.reference-learning-review.v1',
     'video.animation-production.v1', 'video.animation-production.v2',
     'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1',
@@ -168,9 +169,11 @@ class ProbeAuthority:
             self.store = CandidateScenarioStore('sqlite:///' + str(self.directory / 'candidate.sqlite3'),
                 allow_sqlite=True, scenario=scenario)
         self.store.initialize()
+        classified_review = self.policy.name == 'video.picture-learning-review.v2'
         self.proxy = ModelProxy(self.store, ModelProxySettings(secrets.token_bytes(48),
             'http://llm-service.llm.svc.cluster.local/v1', upstream_token,
-            max_calls_per_attempt=40, max_output_tokens=32768))
+            max_calls_per_attempt=8 if classified_review else 40,
+            max_output_tokens=8192 if classified_review else 32768))
         self.request_table, self.receipt_key = requests, secrets.token_bytes(32)
         task, files = (fixture(config.profile.name) if scenario is None else
                        (scenario.document['task'], scenario.files))
@@ -187,7 +190,8 @@ class ProbeAuthority:
             absolute = task_deadline(task)
         request = JobRequest(profile=self.policy.name, profile_revision=self.policy.revision,
             business_ref='candidate-only:' + str(uuid4()), task=task, inputs=refs,
-            timeout_seconds=timeout, execution_deadline_at=absolute)
+            timeout_seconds=timeout, execution_deadline_at=absolute,
+            **({'model_limits': dict(max_requests=8, max_output_tokens=8192)} if classified_review else {}))
         self.store.submit('candidate-probe', 'administrator', 'single-candidate-probe',
             request.model_dump(mode='json'), self.policy.pins())
         claimed = self.store.claim(lease_seconds=300, provisioning={self.policy.engine: 'kubernetes_per_attempt'})
@@ -246,6 +250,70 @@ class ProbeAuthority:
                 for row in db.execute(select(self.request_table).where(
                     self.request_table.c.attempt_id == self.envelope.attempt_id)).mappings()]
 
+    def model_budget_evidence(self):
+        """Export actual bounded candidate ledger bytes, not a physical-stop claim."""
+        from sqlalchemy import func, select
+        from agent_service.model_proxy import requests, request_limits, _response_usage
+        from agent_service.store import jobs, attempts, worker_allocations
+        require(self.policy.name == 'video.picture-learning-review.v2', 'candidate_model_budget_profile_invalid')
+        expected = dict(max_requests=8, max_output_tokens=8192)
+        records, raw_total = [], 0
+        complete = (self.proxy.settings.max_calls_per_attempt == 8 and self.proxy.settings.max_output_tokens == 8192)
+        with self.store.engine.connect() as db:
+            request = db.execute(select(jobs.c.request).where(jobs.c.id == self.envelope.job_id)).scalar_one()
+            require(request.get('model_limits') == expected, 'candidate_model_budget_limits_changed')
+            count = db.execute(select(func.count()).select_from(requests).join(attempts,
+                attempts.c.id == requests.c.attempt_id).where(attempts.c.job_id == self.envelope.job_id)).scalar_one()
+            require(0 < count <= 8, 'candidate_model_budget_count_invalid')
+            query = select(*requests.c, attempts.c.fence,
+                worker_allocations.c.request_sha256.label('execution_request_sha256'),
+                request_limits.c.max_requests, request_limits.c.max_output_tokens).join(attempts,
+                attempts.c.id == requests.c.attempt_id).outerjoin(worker_allocations,
+                worker_allocations.c.attempt_id == attempts.c.id).outerjoin(request_limits,
+                (request_limits.c.attempt_id == requests.c.attempt_id)
+                & (request_limits.c.body_sha256 == requests.c.body_sha256)).where(
+                attempts.c.job_id == self.envelope.job_id).order_by(requests.c.created_at, requests.c.body_sha256)
+            with db.execute(query.execution_options(stream_results=True, yield_per=1)) as rows:
+                for row in rows.mappings():
+                    raw = bytes(row['response']) if row['response'] is not None else None
+                    raw_total += len(raw or b'')
+                    require(raw_total <= 8*1024*1024, 'candidate_model_budget_response_bytes_exceeded')
+                    limits = (dict(max_requests=row['max_requests'], max_output_tokens=row['max_output_tokens'])
+                        if row['max_requests'] is not None and row['max_output_tokens'] is not None else None)
+                    usage = (_response_usage(raw, row['media_type'] or '')
+                        if row['state'] == 'complete' and row['status'] == 200 else None)
+                    valid = (row['attempt_id'] == self.envelope.attempt_id and row['fence'] == self.envelope.fence
+                        and row['execution_request_sha256'] == self.envelope.request_sha256
+                        and limits is not None and limits['max_requests'] == 8
+                        and type(limits['max_output_tokens']) is int and 1 <= limits['max_output_tokens'] <= 8192
+                        and usage is not None and usage['output_tokens'] <= limits['max_output_tokens'])
+                    complete = complete and valid
+                    records.append(dict(attempt_id=row['attempt_id'], fence=row['fence'],
+                        execution_request_sha256=row['execution_request_sha256'], body_sha256=row['body_sha256'],
+                        state=row['state'], status=row['status'],
+                        response_sha256=hashlib.sha256(raw).hexdigest() if raw is not None else None,
+                        response_media_type=row['media_type'], response_bytes=len(raw) if raw is not None else None,
+                        response_base64=base64.b64encode(raw).decode('ascii') if raw is not None else None,
+                        enforced_model_limits=limits, usage=usage))
+        require(len(records) == count, 'candidate_model_budget_ledger_changed')
+        totals = {}
+        for key in ('input_tokens', 'output_tokens', 'total_tokens', 'cache_read_tokens', 'cache_write_tokens'):
+            values = [(row['usage'] or {}).get(key) for row in records]
+            total = sum(values) if all(type(value) is int and 0 <= value <= 2**63-1 for value in values) else None
+            totals[key] = total if type(total) is int and total <= 2**63-1 else None
+        complete = complete and all(totals[key] is not None for key in ('input_tokens', 'output_tokens', 'total_tokens'))
+        value = dict(schema='agent-candidate-model-budget.v1', job_id=self.envelope.job_id,
+            attempt_id=self.envelope.attempt_id, fence=self.envelope.fence,
+            execution_request_sha256=self.envelope.request_sha256,
+            execution_binding_sha256=self.envelope.execution_binding.sha256,
+            grant_sha256=hashlib.sha256(self.grant.encode()).hexdigest(),
+            job_request=request, job_request_sha256=digest(request), model_limits=request['model_limits'],
+            proxy_limits=dict(max_calls_per_attempt=self.proxy.settings.max_calls_per_attempt,
+                max_output_tokens=self.proxy.settings.max_output_tokens), request_count=count, requests=records,
+            usage_completeness='complete' if complete else 'partial', totals=totals,
+            physical_stop_scope='external_operator_required', cost_status='unknown')
+        return dict(value, sha256=digest(value))
+
     def result(self, document):
         with self.lock:
             require(self.recorded is None, 'candidate_probe_finished')
@@ -296,6 +364,9 @@ class ProbeAuthority:
                 pod_termination='external_operator_observation_required',
                 unverified=['external_actual_pod_image_and_security_context', 'external_pod_termination',
                     'other_profiles_and_engines', 'full_production_acceptance_suite'])
+            if self.policy.name == 'video.picture-learning-review.v2':
+                self.recorded['model_budget_evidence'] = self.model_budget_evidence()
+                require(len(canonical_bytes(self.recorded)) <= MAX_WIRE, 'candidate_probe_scale_exceeded')
             atomic(self.directory / 'candidate-evidence.json', self.recorded)
             print(json.dumps(self.recorded, sort_keys=True), flush=True)
             return {'recorded': True, 'lease_expiry_rejected': True}
@@ -507,7 +578,8 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
             extensions += verified_extensions()
         except (OSError, ValueError):
             raise ServiceError('candidate_reference_learning_reader_integrity_invalid', 422) from None
-    elif policy.name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1'}:
+    elif policy.name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
+                         'video.picture-learning-review.v2'}:
         from agent_service.picture_learning_tools import verified_extensions
         try:
             extensions += verified_extensions()

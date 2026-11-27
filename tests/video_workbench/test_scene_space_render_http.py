@@ -17,6 +17,7 @@ from video_workbench.animation_creation_http import CreationHTTPServer
 from video_workbench.scene_space_plan import freeze_plan
 from video_workbench.scene_space_render_http import (MAX_PREVIEW_FRAME_BYTES,PREFIX,
     SceneSpaceRenderClient,SceneSpaceRenderService)
+from video_workbench.scene_space_capture import SAMPLE_CAPTURE_POLICY
 
 
 def image_bytes(size=(1280,720),image_format='PNG'):
@@ -39,10 +40,12 @@ def render_request():
 class FixtureRenderer:
     def __init__(self,root):
         self.root=root;self.calls=[];self.results={};self.samples={};self.frame_calls=[];self.uncertain=False
+        self.render_options=[]
     def capabilities(self):return dict(admitted=True,engines=['canvas'])
     def validate_request(self,*args,**kwargs):return None
     def render(self,identity,source,document,*,scene_space,**kwargs):
         self.calls.append(identity)
+        self.render_options.append(deepcopy(kwargs))
         if self.uncertain:return dict(status='unknown',stop_proven=False)
         raw=b'INERT TRANSPORT FIXTURE';path=self.root/(identity+'.fixture');path.write_bytes(raw)
         result=dict(status='rendered',technical_passed=True,stop_proven=True,
@@ -56,6 +59,15 @@ class FixtureRenderer:
             duration_seconds=result['frame_count']/24)
         self.samples[identity]=[dict(timestamp_seconds=frame/24,mime='image/png',raw=image_bytes())
             for frame in sorted({0,result['frame_count']//2,result['frame_count']-1})]
+        if 'sample_capture' in document['constraints']:
+            frame_range=kwargs.get('frame_range') or dict(start_frame=0,end_frame=scene_space['duration_frames'])
+            result.update(sample_capture=deepcopy(document['constraints']['sample_capture']),
+                sample_frame_range=deepcopy(frame_range))
+            for frame in self.samples[identity]:
+                relative=round(frame['timestamp_seconds']*24)
+                frame['capture']=dict(schema='video.scene-space-frame-capture.v1',
+                    absolute_frame=frame_range['start_frame']+relative,relative_frame=relative,
+                    format='png',quality=None,sha256=hashlib.sha256(frame['raw']).hexdigest(),bytes=len(frame['raw']))
         self.results[identity]=result;return result
     def lookup(self,identity):return deepcopy(self.results.get(identity))
     def frames(self,identity,max_frames=3):
@@ -401,3 +413,182 @@ def test_client_independently_rejects_tampered_frame_transport(service,render_re
     elif case=='too-many':payload['frames'].append(deepcopy(frame))
     client=client_for_payload(service,identity,payload)
     with pytest.raises(ServiceError,match='preview_'):client.frames('alice',identity)
+
+
+@pytest.fixture
+def lossless_request(render_request):
+    request=deepcopy(render_request)
+    request['frame_range']=dict(start_frame=24,end_frame=48)
+    request['document']['constraints'].update(duration_seconds=1,sample_capture=deepcopy(SAMPLE_CAPTURE_POLICY))
+    return request
+
+
+def test_lossless_policy_is_in_the_frozen_document_and_does_not_add_renderer_kwargs(service,lossless_request):
+    request=deepcopy(lossless_request)
+    queued=service.start('alice',request,'lossless-document')
+    with service._db() as db:stored=service._load(db,'alice',queued['id'])
+    assert stored['request']==request and queued['request_sha256']==digest(request)
+    done=service.advance('alice',queued['id'])
+    assert done['status']=='completed'
+    assert done['result']['sample_capture']==SAMPLE_CAPTURE_POLICY
+    assert done['result']['sample_frame_range']==request['frame_range']
+    assert 'sample_capture' not in service.renderer.render_options[0]
+    assert service.renderer.render_options[0]['frame_range']==request['frame_range']
+    changed=deepcopy(request);changed['document']['constraints'].pop('sample_capture')
+    with pytest.raises(ServiceError,match='idempotency_conflict'):
+        service.start('alice',changed,'lossless-document')
+
+
+@pytest.mark.parametrize('lossless',[False,True])
+def test_explicit_null_range_uses_the_full_plan_without_rewriting_the_request(service,render_request,lossless):
+    request=deepcopy(render_request);request['frame_range']=None
+    if lossless:request['document']['constraints']['sample_capture']=deepcopy(SAMPLE_CAPTURE_POLICY)
+    complete=complete_preview(service,request,'explicit-null-range')
+    assert complete['result']['frame_count']==96
+    assert complete['request_sha256']==digest(request)
+    with service._db() as db:stored=service._load(db,'alice',complete['id'])
+    assert stored['request']==request and stored['request']['frame_range'] is None
+    frames=service.frames('alice',complete['id'])
+    assert [frame['timestamp_seconds'] for frame in frames]==[0,2,95/24]
+    payload=service.frames_response('alice',complete['id'])
+    assert client_for_payload(service,complete['id'],payload).frames('alice',complete['id'])==frames
+    if lossless:
+        assert payload['sample_frame_range']==dict(start_frame=0,end_frame=96)
+        assert [frame['capture']['absolute_frame'] for frame in frames]==[0,48,95]
+    else:
+        assert payload['schema']=='video.scene-space-preview-frames.v1'
+        assert all(set(frame)=={'timestamp_seconds','mime','raw'} for frame in frames)
+
+
+@pytest.mark.parametrize('case',['null','quality','format','limit','extra','static','top-level'])
+def test_invalid_or_unfrozen_capture_policy_is_rejected_before_dispatch(service,lossless_request,case):
+    request=deepcopy(lossless_request);constraints=request['document']['constraints']
+    if case=='null':constraints['sample_capture']=None
+    elif case=='quality':constraints['sample_capture']['quality']=88
+    elif case=='format':constraints['sample_capture']['format']='jpeg'
+    elif case=='limit':constraints['sample_capture']['max_samples']=True
+    elif case=='extra':constraints['sample_capture']['fallback']='jpeg'
+    elif case=='static':constraints.pop('duration_seconds')
+    elif case=='top-level':request['sample_capture']=constraints.pop('sample_capture')
+    with pytest.raises(ServiceError):service.start('alice',request,'invalid-policy')
+    assert service.renderer.calls==[] and service.pending()==[]
+
+
+def test_new_sample_metadata_and_absolute_frames_round_trip_over_authenticated_http(tmp_path,lossless_request):
+    service=SceneSpaceRenderService(tmp_path/'queue',FixtureRenderer(tmp_path))
+    token='private-capture-fixture-'+'a'*32
+    server=CreationHTTPServer(SimpleNamespace(),token,pump=False,scene_space_service=service)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    client=SceneSpaceRenderClient('http://127.0.0.1:'+str(server.server_port),token)
+    try:
+        queued=client.start('alice',lossless_request,'new-capture-transport')
+        service.advance('alice',queued['id'])
+        frames=client.frames('alice',queued['id'])
+        assert frames==service.renderer.samples[queued['id']]
+        assert [frame['capture']['absolute_frame'] for frame in frames]==[24,36,47]
+        assert [frame['capture']['relative_frame'] for frame in frames]==[0,12,23]
+        assert all(set(frame)=={'timestamp_seconds','mime','raw','capture'} for frame in frames)
+        payload=service.frames_response('alice',queued['id'])
+        assert payload['schema']=='video.scene-space-preview-frames.v2'
+        assert payload['sample_capture']==SAMPLE_CAPTURE_POLICY
+        assert payload['sample_frame_range']==dict(start_frame=24,end_frame=48)
+        assert client.frames('alice',queued['id'],max_frames=2)==frames[:2]
+        assert service.renderer.calls==[queued['id']]
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=2)
+
+
+def test_new_capture_replay_and_frames_use_saved_policy_without_new_capability_checks(service,lossless_request):
+    complete=complete_preview(service,lossless_request,'saved-capture')
+    service.renderer.capabilities=lambda:(_ for _ in ()).throw(AssertionError('No current capabilities'))
+    service.renderer.validate_request=lambda *a,**k:(_ for _ in ()).throw(AssertionError('No new admission'))
+    restarted=SceneSpaceRenderService(service.root,service.renderer)
+    assert restarted.start('alice',lossless_request,'saved-capture')==complete
+    assert restarted.frames('alice',complete['id'])==service.renderer.samples[complete['id']]
+    assert restarted.get('alice',complete['id'])==complete
+    assert service.renderer.calls==[complete['id']]
+
+
+@pytest.mark.parametrize('case',['missing-policy','missing-range','policy','range'])
+def test_new_render_completion_requires_the_requested_capture_metadata(service,lossless_request,case):
+    original=service.renderer.render
+    def altered(*args,**kwargs):
+        result=original(*args,**kwargs)
+        if case=='missing-policy':result.pop('sample_capture')
+        elif case=='missing-range':result.pop('sample_frame_range')
+        elif case=='policy':result['sample_capture']['format']='jpeg'
+        elif case=='range':result['sample_frame_range']=dict(start_frame=25,end_frame=49)
+        return result
+    service.renderer.render=altered
+    queued=service.start('alice',lossless_request,'missing-capture-binding')
+    failed=service.advance('alice',queued['id'])
+    assert failed['status']=='failed' and failed['stop_proven'] is True
+    assert failed['result'] is None and 'capture' in failed['error']
+
+
+@pytest.mark.parametrize('field',['sample_capture','sample_frame_range'])
+def test_new_frames_lookup_metadata_must_equal_the_frozen_result(service,lossless_request,field):
+    complete=complete_preview(service,lossless_request)
+    service.renderer.results[complete['id']].pop(field)
+    with pytest.raises(ServiceError,match='capture_metadata_changed'):
+        service.frames('alice',complete['id'])
+    assert service.renderer.frame_calls==[]
+
+
+@pytest.mark.parametrize('case',['missing','extra','hash','bytes','absolute','relative','bool-frame',
+    'format','quality','timestamp','mime','raw','duplicate','out-of-order','omitted'])
+def test_new_capture_frames_reject_tamper_and_unselected_or_missing_frames(service,lossless_request,case):
+    complete=complete_preview(service,lossless_request);identity=complete['id']
+    frames=deepcopy(service.renderer.samples[identity]);frame=frames[0];capture=frame['capture']
+    if case=='missing':frame.pop('capture')
+    elif case=='extra':capture['asserted_pass']=True
+    elif case=='hash':capture['sha256']='f'*64
+    elif case=='bytes':capture['bytes']+=1
+    elif case=='absolute':capture['absolute_frame']+=1
+    elif case=='relative':capture['relative_frame']+=1
+    elif case=='bool-frame':capture['relative_frame']=False
+    elif case=='format':capture['format']='jpeg'
+    elif case=='quality':capture['quality']=88
+    elif case=='timestamp':frame['timestamp_seconds']=1/24
+    elif case=='mime':frame['mime']='image/jpeg'
+    elif case=='raw':frame['raw']=image_bytes((1280,720),'JPEG')
+    elif case=='duplicate':frames[1]=deepcopy(frame)
+    elif case=='out-of-order':frames.reverse()
+    elif case=='omitted':frames.pop(1)
+    service.renderer.frames=lambda *args,**kwargs:frames
+    with pytest.raises(ServiceError):service.frames('alice',identity)
+    assert service.renderer.calls==[identity]
+
+
+@pytest.mark.parametrize('case',['metadata-policy','metadata-range','schema','missing-capture',
+    'capture-hash','capture-bytes','capture-absolute','capture-quality','duplicate','missing-frame'])
+def test_client_independently_checks_v2_capture_provenance(service,lossless_request,case):
+    complete=complete_preview(service,lossless_request);identity=complete['id']
+    payload=service.frames_response('alice',identity);frame=payload['frames'][0]
+    if case=='metadata-policy':payload['sample_capture']['max_samples']=2
+    elif case=='metadata-range':payload['sample_frame_range']=dict(start_frame=0,end_frame=24)
+    elif case=='schema':payload['schema']='video.scene-space-preview-frames.v1'
+    elif case=='missing-capture':frame.pop('capture')
+    elif case=='capture-hash':frame['capture']['sha256']='f'*64
+    elif case=='capture-bytes':frame['capture']['bytes']+=1
+    elif case=='capture-absolute':frame['capture']['absolute_frame']=0
+    elif case=='capture-quality':frame['capture']['quality']=88
+    elif case=='duplicate':payload['frames'][1]=deepcopy(frame)
+    elif case=='missing-frame':payload['frames'].pop()
+    client=client_for_payload(service,identity,payload)
+    with pytest.raises(ServiceError):client.frames('alice',identity)
+
+
+def test_legacy_frame_shape_and_stored_request_stay_unchanged(service,render_request):
+    request=deepcopy(render_request);complete=complete_preview(service,request)
+    assert complete['request_sha256']==digest(request)
+    with service._db() as db:stored=service._load(db,'alice',complete['id'])
+    assert stored['request']==request and 'sample_capture' not in stored['request']['document']['constraints']
+    payload=service.frames_response('alice',complete['id'])
+    assert set(payload)=={'schema','operation_id','request_sha256','plan_sha256','source_sha256',
+        'snapshot_sha256','viewport','duration_seconds','frames'}
+    assert payload['schema']=='video.scene-space-preview-frames.v1'
+    assert all(set(frame)=={'timestamp_seconds','mime','bytes','sha256','content_base64'} for frame in payload['frames'])
+    assert all(set(frame)=={'timestamp_seconds','mime','raw'} for frame in service.frames('alice',complete['id']))
+    service.renderer.samples[complete['id']][0]['capture']={}
+    with pytest.raises(ServiceError,match='frame_invalid'):service.frames('alice',complete['id'])

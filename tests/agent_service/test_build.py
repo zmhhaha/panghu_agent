@@ -46,16 +46,22 @@ def animation_profile_bundles():
         video_animation_wikiskill as wikiskill, video_animation_wikiskill_v2 as wikiskill_v2,
         video_animation_wikiskill_v3 as wikiskill_v3, video_animation_wikiskill_v4 as wikiskill_v4,
         video_animation_collaboration as collaboration, video_picture_learning as picture_learning,
+        video_picture_review_v2 as picture_review_v2,
         video_reference_learning as reference_learning,
         video_joint_plan_skills as joint_skills, video_resource_plan as resource_plan)
     return (
         (reference_learning.BUNDLE_ROOT, reference_learning.BUNDLE_FILES, reference_learning.verified_bundle),
         (picture_learning.BUNDLE_ROOT, picture_learning.BUNDLE_FILES, picture_learning.verified_bundle),
+        (picture_review_v2.BUNDLE_ROOT, picture_review_v2.BUNDLE_FILES, picture_review_v2.verified_bundle),
         (collaboration.BUNDLE_ROOT, collaboration.BUNDLE_FILES, collaboration.verified_bundle),
         (wikiskill_v2.BUNDLE_ROOT, wikiskill_v2.BUNDLE_FILES, wikiskill_v2.verified_bundle),
         (wikiskill_v3.BUNDLE_ROOT, wikiskill_v3.BUNDLE_FILES, wikiskill_v3.verified_bundle),
         (wikiskill_v4.BUNDLE_ROOT, wikiskill_v4.BUNDLE_FILES, wikiskill_v4.verified_bundle),
         (film_module.BUNDLE_ROOT, film_module.BUNDLE_FILES, film_module.verified_bundle),
+        (film_module.BUNDLE_ROOT.parent / 'animation-film-module-v1', film_module.BUNDLE_FILES,
+         lambda: film_module.verified_bundle('animation-film-module-v1')),
+        (film_module.BUNDLE_ROOT.parent / 'animation-film-module-v2', film_module.BUNDLE_FILES,
+         lambda: film_module.verified_bundle('animation-film-module-v2')),
         (manim_recipe.BUNDLE_ROOT, manim_recipe.BUNDLE_FILES, manim_recipe.verified_bundle),
         (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
         (resource_plan.BUNDLE_ROOT, resource_plan.BUNDLE_FILES, resource_plan.verified_bundle),
@@ -523,7 +529,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             'agent_service/resources/video-joint-plan-v1/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')} | {
             'agent_service/resources/' + revision + '/' + name
-            for revision in ('animation-film-module-v1', 'animation-manim-recipe-v1')
+            for revision in ('animation-film-module-v1', 'animation-film-module-v2',
+                             'animation-film-module-v3', 'animation-manim-recipe-v1')
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md',
                          'foundation/SKILL.md')} | {
             'agent_service/resources/animation-wikiskill-v1/' + name
@@ -541,6 +548,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'resource-plan-procedure/SKILL.md')} | {
             'agent_service/resources/picture-learning-v1/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md')} | {
+            'agent_service/resources/picture-review-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')} | {
             'agent_service/resources/reference-learning-v1/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)

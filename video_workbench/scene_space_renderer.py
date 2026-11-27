@@ -19,6 +19,8 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles.video_animation_create import source_sha256
 from agent_service.profiles.video_animation_experiment import _validate_source_output
 from .scene_space_plan import compile_evaluator, freeze_plan, technical_retry
+from .scene_space_capture import (SAMPLE_CAPTURE_POLICY, validate_sample_capture,
+    validate_frame_capture, selected_sample_frames)
 
 RUNTIME = Path(__file__).with_name('motion_renderer')/'scene_space_runtime.mjs'
 SURFACE_RUNTIME = Path(__file__).with_name('motion_renderer')/'scene_space_surface.mjs'
@@ -56,6 +58,52 @@ def _hash(raw):
 def _read_file(path,maximum):
     from .animation_creation_renderer import _read
     return _read(path,maximum)
+
+
+def _lossless_sample_manifest(directory,request,binding,receipt):
+    """Validate only the strategy in this immutable request, never today's cap."""
+    policy=validate_sample_capture(request['sample_capture'])
+    _require(not request['static'] and validate_sample_capture(receipt.get('sample_capture'))==policy,
+        'scene_space_sample_capture_changed',409)
+    selected=selected_sample_frames(binding['scene_space']['frame_range'])
+    retained=receipt.get('sample_frames');checks=receipt.get('checks',{}).get('samples')
+    _require(type(retained) is list and len(retained)==len(selected)
+        and all(type(row) is dict and set(row)=={'frame','file_name','time_seconds','sha256','bytes','capture'}
+            and type(row['frame']) is int for row in retained)
+        and [row['frame'] for row in retained]==selected,
+        'scene_space_sample_manifest_invalid',409)
+    _require(type(checks) is list and len(checks)==len(selected)
+        and all(type(row) is dict and set(row)=={'frame','sha256'} and type(row['frame']) is int for row in checks)
+        and sorted(row['frame'] for row in checks)==selected,
+        'scene_space_sample_manifest_invalid',409)
+    hashes={row['frame']:row['sha256'] for row in checks};total=0
+    from PIL import Image
+    for sample in retained:
+        frame=sample['frame']
+        _require(sample['file_name']==f'sample-{frame:06d}.png',
+            'scene_space_sample_manifest_invalid',409)
+        _require(type(sample['time_seconds']) in (int,float) and math.isfinite(sample['time_seconds']),
+            'scene_space_sample_manifest_invalid',409)
+        raw=_read_file(directory/'work'/sample['file_name'],policy['max_sample_bytes'])
+        capture=validate_frame_capture(sample['capture'],frame_range=binding['scene_space']['frame_range'],
+            raw=raw,timestamp_seconds=sample['time_seconds'])
+        _require(capture['absolute_frame']==frame and sample['sha256']==capture['sha256']==hashes[frame]
+            and type(sample['bytes']) is int and sample['bytes']==len(raw), 'scene_space_sample_changed',409)
+        try:
+            with Image.open(io.BytesIO(raw)) as image:
+                _require(image.format=='PNG' and image.size==(request['constraints']['width'],request['constraints']['height']),
+                    'scene_space_sample_changed',409)
+                image.verify()
+            with Image.open(io.BytesIO(raw)) as image:image.load()
+        except (OSError,ValueError,SyntaxError,Image.DecompressionBombError):
+            raise ServiceError('scene_space_sample_changed',409) from None
+        total+=len(raw)
+    _require(type(receipt.get('sample_bytes')) is int and receipt['sample_bytes']==total
+        and total<=policy['max_total_sample_bytes']
+        and type(receipt.get('frame_bytes')) is int and total<receipt['frame_bytes']<=request['max_frame_bytes']
+        and type(receipt.get('sample_capture_count')) is int and receipt['sample_capture_count']==len(selected)*4,
+        'scene_space_sample_capture_budget_invalid',409)
+    return retained
 
 
 def _runtime_bytes():
@@ -96,6 +144,7 @@ def render_capability(*, admitted_engines=('canvas',)):
         runtime_sha256=_hash(_runtime_bytes()),host_sha256=_hash(HOST.read_bytes()),
         surface_runtime_sha256=_hash(_surface_runtime_bytes()),surface_budget_sha256=_hash(_surface_budget_bytes()),
         geometry_runtime_sha256=_hash(_geometry_runtime_bytes()),geometry_budget_sha256=_hash(_geometry_budget_bytes()),artwork_api_revision=3,
+        sample_capture=deepcopy(SAMPLE_CAPTURE_POLICY),
         appearance=dict(schema='video.scene-appearance-capability.v1',revision='scene-appearance-cues-1',
             surface_runtime_sha256=_hash(_surface_runtime_bytes()),
             helpers=['evaluateLighting','sampleMaterial','sampleAtmosphere'],
@@ -331,6 +380,12 @@ class SceneSpaceRenderer:
             project_runtime_sha256=_hash(PROJECT_RUNTIME.read_bytes()),
             hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256,image_digest=self.owner.image_digest,
             max_media_bytes=32*1024*1024,max_frame_bytes=512*1024*1024)
+        if 'sample_capture' in bounds:
+            policy=validate_sample_capture(bounds['sample_capture'])
+            _require(not static,'scene_space_sample_capture_static_not_admitted',409)
+            _require(self.capabilities().get('sample_capture')==policy,
+                'scene_space_sample_capture_not_admitted',409)
+            request['sample_capture']=policy
         if 'appearance_policy' in render:
             request['appearance_policy_sha256']=render['appearance_policy']['sha256']
         if selected:request['drawing_libraries']=selected
@@ -677,8 +732,11 @@ class SceneSpaceRenderer:
             'scene_space_render_measurement_invalid',409)
         retained=receipt.get('sample_frames')
         _require(type(retained) is list and len(retained)<=3,'scene_space_sample_manifest_invalid',409)
-        sample_hashes={row['frame']:row['sha256'] for row in checks.get('samples',[])}
-        for sample in retained:
+        sample_hashes=({row['frame']:row['sha256'] for row in checks.get('samples',[])}
+            if 'sample_capture' not in request else {})
+        if 'sample_capture' in request:
+            retained=_lossless_sample_manifest(directory,request,binding,receipt)
+        for sample in ([] if 'sample_capture' in request else retained):
             frame=sample.get('frame')
             _require(type(frame) is int and binding['scene_space']['frame_range']['start_frame']<=frame<
                 binding['scene_space']['frame_range']['end_frame'] and sample.get('file_name')==f'sample-{frame:06d}.jpg'
@@ -695,6 +753,9 @@ class SceneSpaceRenderer:
             evidence_sha256=_hash(raw),runtime=dict(scene_space=observation),
             scene_space=dict(plan_sha256=observation['plan_sha256'],runtime_sha256=request['scene_runtime_sha256']))
         result['picture_path' if request['static'] else 'media_path']=result['artifact_path']
+        if 'sample_capture' in request:
+            result.update(sample_capture=deepcopy(request['sample_capture']),
+                sample_frame_range=deepcopy(binding['scene_space']['frame_range']))
         if policy is not None:
             result['appearance_quality']=dict(policy=deepcopy(policy),
                 observation=deepcopy(appearance),output_sha256=result['sha256'],
@@ -734,8 +795,19 @@ class SceneSpaceRenderer:
         result=self.lookup(operation_id)
         _require(result is not None and result.get('technical_passed'),'scene_space_media_unavailable',404)
         directory=self.owner._directory(operation_id)
-        receipt,_=_json(directory/'work/render-receipt.json',2*1024*1024)
+        receipt,receipt_raw=_json(directory/'work/render-receipt.json',2*1024*1024)
         _require(type(max_frames) is int and 1<=max_frames<=24)
+        binding=self._load(operation_id)
+        if 'sample_capture' in binding['request']:
+            _require(_hash(receipt_raw)==result['evidence_sha256'],'scene_space_sample_changed',409)
+            rows=_lossless_sample_manifest(directory,binding['request'],binding,receipt)[:max_frames]
+            frames=[]
+            for row in rows:
+                raw=_read_file(directory/'work'/row['file_name'],binding['request']['sample_capture']['max_sample_bytes'])
+                capture=validate_frame_capture(row['capture'],frame_range=binding['scene_space']['frame_range'],
+                    raw=raw,timestamp_seconds=row['time_seconds'])
+                frames.append(dict(timestamp_seconds=row['time_seconds'],mime='image/png',raw=raw,capture=capture))
+            return frames
         rows=receipt.get('sample_frames',[])[:max_frames]
         frames=[]
         for row in rows:

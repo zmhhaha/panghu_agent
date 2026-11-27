@@ -41,6 +41,7 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-joint-plan-output.v1', 'video-resource-plan-output.v1',
     'video-animation-collaboration-output.v1',
     'video-picture-learning-author-output.v1', 'video-picture-learning-review-output.v1',
+    'video-picture-learning-review-output.v2',
     'video-reference-learning-author-output.v1', 'video-reference-learning-review-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
@@ -194,6 +195,12 @@ class ToolEnvironment(_Record):
                                                      'video-reference-learning-review-output.v1'}
                     or self.revision != environment_revision(self.model_dump(mode='json'))):
                 raise ValueError('Reference learning requires its fixed extension identity and exact tool scope')
+        elif self.name == 'tools-pi-picture-review-v2':
+            from .picture_learning_tools import environment_revision
+            if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
+                    or self.capabilities != ('video-picture-learning-review-output.v2',)
+                    or self.revision != environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Classified picture review requires its exact original image tools and identity')
         elif self.name == 'tools-pi-picture-learning':
             from .picture_learning_tools import environment_revision
             if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}

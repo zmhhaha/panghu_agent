@@ -18,3 +18,15 @@ class PictureAuthorGateway(_AnimationGateway):
 class PictureReviewGateway(PictureAuthorGateway):
     profile = picture.REVIEW_PROFILE
     business_prefix, idempotency_prefix = 'picture-learning-review:', 'picture-review-'
+
+
+class ClassifiedPictureReviewGateway(PictureAuthorGateway):
+    """A separately admitted contract; never reinterpret an old review result."""
+    from agent_service.profiles import video_picture_review_v2 as protocol
+    profile = protocol.PROFILE
+    input_name, input_role = protocol.INPUT_NAME, 'picture_learning_input'
+    result_name = protocol.RESULT_NAME
+    input_limit, output_limit = protocol.INPUT_MAX_BYTES, protocol.OUTPUT_MAX_BYTES
+    validate_input = staticmethod(protocol.validate_input)
+    validate_result = staticmethod(protocol.validate_result)
+    business_prefix, idempotency_prefix = 'picture-review-v2:', 'picture-review-v2-'

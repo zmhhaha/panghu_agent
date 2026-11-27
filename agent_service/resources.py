@@ -117,6 +117,11 @@ def measured_package(config, policy, control_root):
         root = BUNDLE_ROOT
         mandatory = {'manifest.json', *BUNDLE_FILES}
         verified_bundle()
+    elif policy.name == 'video.picture-learning-review.v2':
+        from .profiles.video_picture_review_v2 import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1'}:
         from .profiles.video_picture_learning import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
         root = BUNDLE_ROOT

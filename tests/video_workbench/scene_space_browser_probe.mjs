@@ -4,6 +4,7 @@ import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import {dirname,join} from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {performance} from 'node:perf_hooks';
 const config=JSON.parse(readFileSync(process.argv[2]));
 const {chromium}=createRequire(config.playwright_package)('playwright-core');
 const {captureSceneSpace}=await import(pathToFileURL(config.host).href);
@@ -20,7 +21,7 @@ for(const input of config.cases){const b=JSON.parse(readFileSync(input.binding))
  resources.set('/runtime/scene_space_geometry.mjs',readFileSync(config.geometry_runtime||join(dirname(config.scene_runtime),'scene_space_geometry.mjs')));
  resources.set('/runtime/scene_space_geometry_budget.mjs',readFileSync(config.geometry_budget||join(dirname(config.scene_runtime),'scene_space_geometry_budget.mjs')));
  for(const [name,path]of Object.entries(input.assets))resources.set('/assets/'+name,readFileSync(path));
- let evidence;
+ let evidence;const captureBegan=performance.now();
  try{evidence=await captureSceneSpace({chromium,request:b.request,binding:b.scene_space,resources,engineRuntime,projectRuntime,
   root,executablePath:config.browser,hyperFramesDist:config.hyperframes_dist});}
  catch(error){if(!input.expect_error||!String(error).includes(input.expect_error))throw error;
@@ -29,6 +30,7 @@ for(const input of config.cases){const b=JSON.parse(readFileSync(input.binding))
    surface_runtime_sha256:b.request.surface_runtime_sha256,surface_budget_sha256:b.request.surface_budget_sha256,
    geometry_runtime_sha256:b.request.geometry_runtime_sha256,geometry_budget_sha256:b.request.geometry_budget_sha256});continue;}
  if(input.expect_error)throw Error('native_probe_expected_rejection_missing:'+input.name);
+ evidence.measured_capture_seconds=(performance.now()-captureBegan)/1000;
  if(!b.request.static){run(config.ffmpeg,['-v','error','-y','-framerate','24','-i',root+'/frames/%06d.jpg',
    '-c:v','libx264','-pix_fmt','yuv420p','-crf','18',root+'/output.mp4']);
   run(config.ffmpeg,['-v','error','-i',root+'/output.mp4','-f','null','-']);
