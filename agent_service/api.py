@@ -131,6 +131,9 @@ def public_job(job: dict, *, usage_evidence=None) -> dict:
                                      and usage_evidence.get('authoritative') is True):
             value['usage'] = _usage(usage_evidence)
         value['usage_evidence'] = usage_evidence
+    if job['request'].get('model_limits') is not None:
+        from .contracts import JobModelLimits
+        value['model_limits'] = JobModelLimits.model_validate(job['request']['model_limits']).model_dump(mode='json')
     return value
 
 
@@ -303,6 +306,11 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
             item['cancel'] = item['ready']
             item['native_fork'] = False
             item['steer'] = False
+            if getattr(adapters.get(engine), 'provisioning', None) == 'kubernetes_per_attempt':
+                item['model_request_limits'] = dict(schema='agent-job-model-limits.v1',
+                    max_requests_scope='job_all_attempts_including_uncertain_admissions',
+                    max_output_tokens_scope='each_forwarded_provider_request',
+                    total_input_output_token_hard_cap=False)
         return {'api_version': '1', 'profiles': values}
 
     @app.post('/v1/inputs', status_code=201)
@@ -365,6 +373,9 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
         if replay is not None:
             return JSONResponse(public_job(replay), status_code=200)
         profile = registry.resolve(principal, parsed)
+        if (parsed.model_limits is not None
+                and getattr(adapters.get(profile.engine), 'provisioning', None) != 'kubernetes_per_attempt'):
+            raise ServiceError('model_job_limits_not_supported', 409)
         if not await run_in_threadpool(_ready, adapters.get(profile.engine), profile):
             raise ServiceError('worker_not_ready', 503)
         job, created = await run_in_threadpool(store.submit, principal.tenant, principal.caller,

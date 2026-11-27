@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, model_serializer
 
 MAX_INPUT_BYTES = 64 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
@@ -164,6 +164,12 @@ class CheckpointRef(WireModel):
         return value
 
 
+class JobModelLimits(WireModel):
+    """Restrictive admission limits, not an input+output token budget."""
+    max_requests: int = Field(strict=True, ge=1, le=1000)
+    max_output_tokens: int = Field(strict=True, ge=1, le=131072)
+
+
 class JobRequest(WireModel):
     api_version: Literal['1'] = '1'
     profile: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
@@ -174,6 +180,14 @@ class JobRequest(WireModel):
     checkpoint_ref: CheckpointRef | None = None
     timeout_seconds: int = Field(default=600, ge=1, le=3600)
     execution_deadline_at: float | None = Field(default=None, gt=0)
+    model_limits: JobModelLimits | None = None
+
+    @model_serializer(mode='wrap')
+    def original_wire_without_optional_model_limits(self, handler):
+        value = handler(self)
+        if self.model_limits is None:
+            value.pop('model_limits', None)
+        return value
 
     @model_validator(mode='after')
     def bounded_task(self):

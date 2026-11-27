@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy import (Column, Float, ForeignKey, Integer, LargeBinary, String,
                         Table, insert, select, update, func)
 
-from .contracts import ServiceError, canonical_bytes, digest
+from .contracts import JobModelLimits, ServiceError, canonical_bytes, digest
 from .diagnostics import log_execution_failure
 from .model_timeouts import MODEL_PROXY_IO_TIMEOUT_SECONDS
 from .store import metadata, jobs, attempts, worker_allocations
@@ -35,6 +35,14 @@ requests = Table('agent_model_requests', metadata,
     Column('created_at', Float, nullable=False),
     Column('status', Integer), Column('media_type', String(80)),
     Column('response', LargeBinary))
+
+# New limited jobs retain the exact non-sensitive bounds normalized before the
+# upstream POST. Existing requests/rows and their historical proofs are intact.
+request_limits = Table('agent_model_request_limits', metadata,
+    Column('attempt_id', String(36), ForeignKey('agent_attempts.id'), primary_key=True),
+    Column('body_sha256', String(64), primary_key=True),
+    Column('max_requests', Integer, nullable=False),
+    Column('max_output_tokens', Integer, nullable=False))
 
 observations = Table('agent_tool_observations', metadata,
     Column('attempt_id', String(36), ForeignKey('agent_attempts.id'), primary_key=True),
@@ -148,7 +156,7 @@ def usage_evidence_for_job(store, job):
     """
     job_id = job.get('job_id', job.get('id'))
     with store.engine.connect() as db:
-        current = db.execute(select(jobs.c.id, jobs.c.pins, jobs.c.state, jobs.c.attempt_id,
+        current = db.execute(select(jobs.c.id, jobs.c.pins, jobs.c.state, jobs.c.attempt_id, jobs.c.request,
             jobs.c.fence, jobs.c.outcome).where(jobs.c.id == job_id)).mappings().one_or_none()
         if current is None or any(current[key] != job.get(key) for key in ('attempt_id', 'fence', 'state')):
             return None
@@ -163,6 +171,13 @@ def usage_evidence_for_job(store, job):
         if not request_count:
             return None
         bounded = request_count <= 1024 and attempt_count <= 1024
+        limited = current['request'].get('model_limits')
+        limit_rows = {}
+        if limited:
+            for item in db.execute(select(request_limits).join(attempts,
+                    request_limits.c.attempt_id == attempts.c.id).where(attempts.c.job_id == job_id)
+                    .limit(1025)).mappings():
+                limit_rows[(item['attempt_id'], item['body_sha256'])] = dict(item)
         allocations = {}
         for row in db.execute(select(worker_allocations.c.attempt_id, worker_allocations.c.job_id,
                 worker_allocations.c.fence, worker_allocations.c.request_sha256,
@@ -196,6 +211,10 @@ def usage_evidence_for_job(store, job):
                     state=row['state'], status=row['status'],
                     response_sha256=hashlib.sha256(raw).hexdigest() if raw is not None else None,
                     usage_complete=usage is not None, **(usage or {})))
+                if limited:
+                    measured_limit = limit_rows.get((row['attempt_id'], row['body_sha256']))
+                    records[-1]['enforced_model_limits'] = ({key: measured_limit[key]
+                        for key in ('max_requests', 'max_output_tokens')} if measured_limit else None)
     request_attempts = {row['attempt_id'] for row in records}
     attempt_proofs = []
     for attempt in attempts_seen[:1024]:
@@ -228,6 +247,16 @@ def usage_evidence_for_job(store, job):
         stop_proven=custody, all_attempts=True, authoritative=custody and bounded,
         completeness='complete' if complete else 'partial', request_count=request_count, attempt_count=attempt_count,
         **totals, reported_cost=None, cost_status='unknown', attempts=attempt_proofs, requests=records)
+    if limited:
+        evidence['model_limits'] = limited
+        evidence['model_limits_verified'] = (custody and bounded and request_count <= limited['max_requests']
+            and len(limit_rows) == request_count and all(
+                row.get('enforced_model_limits') is not None
+                and row['enforced_model_limits']['max_requests'] == limited['max_requests']
+                and 1 <= row['enforced_model_limits']['max_output_tokens'] <= limited['max_output_tokens']
+                and (row.get('output_tokens') is None
+                     or row['output_tokens'] <= row['enforced_model_limits']['max_output_tokens'])
+                for row in records))
     if len(models) == 1 and None not in models:
         evidence['model'] = next(iter(models))
     return dict(evidence, sha256=digest(evidence))
@@ -412,6 +441,14 @@ class ModelProxy:
             raise ServiceError('model_grant_revoked', 401)
         if job['pins'].get('execution_binding', {}).get('model_policy_sha256') != grant['policy']:
             raise ServiceError('model_grant_scope_mismatch', 401)
+        if job['request'].get('model_limits') is not None:
+            try:
+                limits = JobModelLimits.model_validate(job['request']['model_limits'])
+            except (ValueError, TypeError):
+                raise ServiceError('model_job_limits_invalid', 503) from None
+            # The immutable job request is control-owned and scoped by the
+            # signed job identity. A worker cannot add or increase these caps.
+            grant = dict(grant, model_limits=limits.model_dump(mode='json'))
         return grant
 
     def _body(self, value, grant):
@@ -430,6 +467,8 @@ class ModelProxy:
         bound = value.get('max_output_tokens', self.settings.max_output_tokens)
         if type(bound) is not int or not 1 <= bound <= self.settings.max_output_tokens:
             raise ServiceError('model_output_bound_invalid', 422)
+        if grant.get('model_limits'):
+            bound = min(bound, grant['model_limits']['max_output_tokens'])
         if (type(value.get('stream', False)) is not bool
                 or value.get('include', []) not in ([], ['reasoning.encrypted_content'])):
             raise ServiceError('model_request_scope_invalid', 422)
@@ -574,6 +613,10 @@ class ModelProxy:
         identity = digest(value)
         key = (observations.c.attempt_id == grant['attempt']) & (observations.c.call_sha256 == identity)
         with self.store.engine.begin() as db:
+            if grant.get('model_limits'):
+                # Serialize all attempts of this job, including uncertain
+                # admissions. A restarted attempt never receives eight more.
+                db.execute(select(jobs.c.id).where(jobs.c.id == grant['job']).with_for_update()).first()
             db.execute(select(attempts.c.id).where(attempts.c.id == grant['attempt']).with_for_update()).first()
             old = db.execute(select(observations).where(key)).mappings().first()
             if old:
@@ -645,8 +688,17 @@ class ModelProxy:
             maximum = profile_model_call_limit(request['profile'], self.settings.max_calls_per_attempt)
             if count >= maximum:
                 raise ServiceError('model_budget_exhausted', 429)
+            if grant.get('model_limits'):
+                job_count = db.execute(select(func.count()).select_from(requests).join(
+                    attempts, requests.c.attempt_id == attempts.c.id).where(
+                    attempts.c.job_id == grant['job'])).scalar_one()
+                if job_count >= grant['model_limits']['max_requests']:
+                    raise ServiceError('model_job_budget_exhausted', 429)
             db.execute(insert(requests).values(attempt_id=grant['attempt'], body_sha256=identity,
                 state='admitted', created_at=time.time()))
+            if grant.get('model_limits'):
+                db.execute(insert(request_limits).values(attempt_id=grant['attempt'], body_sha256=identity,
+                    max_requests=grant['model_limits']['max_requests'], max_output_tokens=body['max_output_tokens']))
             if images:
                 db.execute(insert(image_inputs), [dict(attempt_id=grant['attempt'],
                     body_sha256=identity, **image) for image in images])
