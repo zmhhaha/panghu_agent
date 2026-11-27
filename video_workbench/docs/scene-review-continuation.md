@@ -108,3 +108,12 @@ The integration tests use synthetic media to verify custody, budgets,
 permission boundaries and recovery. They do not claim image quality, continuous
 viewing or a deployed grant. Actual release, jobs, media decode and cumulative
 history evidence must be collected separately.
+
+Local validation on 2026-11-27: 24 new continuation/gateway cases passed,
+including permission/explicit acknowledgement, one-grant concurrency and replay,
+cross-store crash recovery, unchanged author/preview reuse, fresh model-limit
+proof, new unknown/overrun/rejected review stops and repeated cancellation.
+The 195 related source-recovery, scene production, budget/store and existing
+gateway regression cases also passed, without skips. An initial HTTP fixture
+used an invalid short idempotency key; its failed report is retained and the
+fixture was corrected without relaxing the production key validator.
