@@ -695,16 +695,28 @@ class ModelProxy:
                 if job_count >= grant['model_limits']['max_requests']:
                     raise ServiceError('model_job_budget_exhausted', 429)
                 previous = select(requests.c.state, requests.c.status, requests.c.media_type,
-                    requests.c.response).join(attempts, requests.c.attempt_id == attempts.c.id).where(
+                    requests.c.response, request_limits.c.max_requests,
+                    request_limits.c.max_output_tokens).join(
+                    attempts, requests.c.attempt_id == attempts.c.id).outerjoin(request_limits,
+                    (request_limits.c.attempt_id == requests.c.attempt_id)
+                    & (request_limits.c.body_sha256 == requests.c.body_sha256)).where(
                     attempts.c.job_id == grant['job'])
                 # Limited jobs run serial model turns. Missing/uncertain prior
                 # usage must stop new spending inside the worker too, rather
                 # than waiting for the application's final job settlement.
                 with db.execute(previous.execution_options(stream_results=True, yield_per=1)) as rows:
                     for row in rows.mappings():
-                        if (row['state'] != 'complete' or row['status'] != 200
-                                or _response_usage(bytes(row['response'] or b''), row['media_type'] or '') is None):
+                        usage = (_response_usage(bytes(row['response'] or b''), row['media_type'] or '')
+                            if row['state'] == 'complete' and row['status'] == 200 else None)
+                        bound = row['max_output_tokens']
+                        if (usage is None or row['max_requests'] != grant['model_limits']['max_requests']
+                                or type(bound) is not int or not 1 <= bound <= grant['model_limits']['max_output_tokens']):
                             raise ServiceError('model_admission_uncertain', 409)
+                        if usage['output_tokens'] > bound:
+                            # A provider may violate the forwarded bound. Keep
+                            # its actual usage and free replay, but never fund a
+                            # new body after this known per-request violation.
+                            raise ServiceError('model_job_output_limit_exceeded', 429)
             db.execute(insert(requests).values(attempt_id=grant['attempt'], body_sha256=identity,
                 state='admitted', created_at=time.time()))
             if grant.get('model_limits'):

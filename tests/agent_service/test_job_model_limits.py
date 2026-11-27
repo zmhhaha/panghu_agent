@@ -127,6 +127,41 @@ def test_any_new_unknown_request_blocks_further_paid_bodies_inside_the_worker(ex
         assert db.execute(select(func.count()).select_from(requests)).scalar_one() == 1
 
 
+@pytest.mark.parametrize('requested,reported', [(8192, 9000), (4096, 5000)])
+def test_known_provider_output_overrun_blocks_new_spending_against_the_original_request_bound(execution, requested, reported):
+    from test_model_proxy import _supplier_response
+    run = execution(complete_usage=True)
+    install_limits(run, max_requests=8, max_output_tokens=8192)
+    calls = []
+    def upstream(request):
+        calls.append(request)
+        return httpx.Response(200, json=_supplier_response(output_tokens=reported))
+    with httpx.Client(transport=httpx.MockTransport(upstream)) as client:
+        proxy = ModelProxy(run.store, run.proxy.settings, client=client)
+        body = dict(run.body, max_output_tokens=requested)
+        first = proxy.respond(run.token, body)
+        assert json.loads(calls[0].content)['max_output_tokens'] == requested
+        with pytest.raises(ServiceError, match='model_job_output_limit_exceeded'):
+            proxy.respond(run.token, dict(body, input='another paid body'))
+        assert proxy.respond(run.token, body) == first
+    assert len(calls) == 1
+    with run.store.engine.connect() as db:
+        assert db.execute(select(func.count()).select_from(requests)).scalar_one() == 1
+
+
+def test_complete_request_without_its_durable_limit_row_blocks_new_spending_after_restart(execution):
+    run = execution(complete_usage=True)
+    install_limits(run, max_requests=8)
+    first = run.proxy.respond(run.token, run.body)
+    with run.store.engine.begin() as db:
+        db.execute(delete(request_limits))
+    restarted = ModelProxy(run.store, run.proxy.settings, client=run.proxy.client)
+    with pytest.raises(ServiceError, match='model_admission_uncertain'):
+        restarted.respond(run.token, dict(run.body, input='new paid body'))
+    assert restarted.respond(run.token, run.body) == first
+    assert len(run.calls) == 1
+
+
 def test_prior_attempt_admissions_count_toward_the_same_job_cap(execution):
     run = execution(complete_usage=True)
     install_limits(run, max_requests=1)
