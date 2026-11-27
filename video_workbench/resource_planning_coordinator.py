@@ -35,6 +35,14 @@ class ResourcePlanningCoordinator:
         require(gateway is not None and callable(producer_catalog), 'resource_planning_configuration_invalid')
         self.store, self.gateway, self.producer_catalog = joint_store, gateway, producer_catalog
 
+    def recover(self, owner, project_id, operation_id, request, idem):
+        """Read authentic prior custody before appending a bounded resource-only retry."""
+        source = self.store.resource_recovery_source(owner, project_id, operation_id, request, idem)
+        if 'replay' in source:
+            return source['replay']
+        job = self.gateway.poll(source['source']['resource_planning']['job_id'])
+        return self.store.recover_resources(owner, project_id, operation_id, request, idem, job)
+
     def _update(self, operation_id, changes, *, terminal=None, result=None):
         with self.store.store.transaction() as db:
             op = self.store._op(db, operation_id)

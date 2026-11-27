@@ -316,6 +316,17 @@ class JointPlanRequest(ExplanationRequest):
     use_wikiskill: bool = Field(default=True, strict=True)
 
 
+class JointPlanResourceRecovery(Revision):
+    source_version_id: str = Field(min_length=1, max_length=100)
+    expected_head_version_id: str | None = Field(max_length=100)
+    expected_joint_input_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_joint_result_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_resource_input_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_producer_catalog_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    timeout_seconds: int = Field(ge=1, le=600, strict=True)
+    execution_deadline_at: float = Field(gt=0, allow_inf_nan=False)
+
+
 class ProductionNarrationResume(Revision):
     speed: float = Field(ge=0.25, le=4, allow_inf_nan=False)
 
@@ -1196,6 +1207,15 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.post('/api/projects/{project_id}/joint-plan/adopt')
     def adopt_joint_plan(project_id: str, body: ExplanationAdoption, owner=Depends(mutation)):
         return joint_plan_store.adopt(owner, project_id, body.model_dump())
+
+    @app.post('/api/projects/{project_id}/joint-plan-operations/{operation_id}/resource-recovery', status_code=202)
+    def recover_joint_plan_resources(project_id: str, operation_id: str, body: JointPlanResourceRecovery,
+                                     owner=Depends(mutation),
+                                     idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+        joint_plan_workflow.require_gateway()
+        if resource_planner is None:
+            raise ServiceError('resource_planning_unavailable', 503)
+        return resource_planner.recover(owner, project_id, operation_id, body.model_dump(), idempotency(idempotency_key))
 
     @app.post('/api/joint-plan-operations/{operation_id}/cancel')
     def cancel_joint_plan(operation_id: str, owner=Depends(mutation)):

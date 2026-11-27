@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from copy import deepcopy
 from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
@@ -17,6 +18,7 @@ from agent_service.profiles.video_joint_plan_contract import planning_method_tas
 from .audio_store import speech_options
 from .explanation_store import scene_visual_binding, visual_generation_description
 from .animation_runtime_capabilities import validate_runtime_capabilities
+from .agent import _finite_number, _sha, _uuid
 
 
 ACTIVE = frozenset({'queued', 'submitting', 'running', 'cancelling'})
@@ -251,6 +253,140 @@ class JointPlanStore:
                        (op['id'], owner, project_id, idem, fingerprint, _json(op)))
             self.store._save(db, project)
             return self._public(op)
+
+    @staticmethod
+    def _resource_recovery_fingerprint(project_id, operation_id, request, idem):
+        fields = {'expected_revision', 'source_version_id', 'expected_head_version_id',
+            'expected_joint_input_sha256', 'expected_joint_result_sha256',
+            'expected_resource_input_sha256', 'expected_producer_catalog_sha256',
+            'timeout_seconds', 'execution_deadline_at'}
+        _require(type(request) is dict and set(request) == fields
+            and type(request['expected_revision']) is int and request['expected_revision'] >= 1
+            and _uuid(request['source_version_id'])
+            and (request['expected_head_version_id'] is None or _uuid(request['expected_head_version_id']))
+            and all(_sha(request[key]) for key in fields if key.startswith('expected_') and key.endswith('_sha256')))
+        _require(type(request['timeout_seconds']) is int and 1 <= request['timeout_seconds'] <= 600
+            and _finite_number(request['execution_deadline_at']) and request['execution_deadline_at'] > 0,
+            'joint_plan_resource_recovery_deadline_invalid')
+        _require(type(idem) is str and 1 <= len(idem) <= 128 and all(33 <= ord(c) <= 126 for c in idem))
+        return digest(dict(kind='joint-plan-resource-recovery', project_id=project_id,
+            source_operation_id=operation_id, request=request))
+
+    def _resource_recovery_replay(self, db, owner, project_id, operation_id, fingerprint, idem):
+        self.store._project(db, owner, project_id)
+        source = self._op(db, operation_id, owner)
+        _require(source['project_id'] == project_id, 'not_found', 404)
+        row = db.execute('SELECT request_hash,document FROM joint_plan_operations WHERE owner=? AND idem=?',
+                         (owner, idem)).fetchone()
+        if row:
+            _require(row['request_hash'] == fingerprint, 'idempotency_conflict', 409)
+            return self._public(json.loads(row['document']))
+        return None
+
+    def _resource_recovery_source(self, db, owner, project_id, operation_id, request):
+        from agent_service.profiles.video_resource_plan_contract import validate_input
+        project = self.store._project(db, owner, project_id)
+        source = self._op(db, operation_id, owner)
+        _require(source['project_id'] == project_id, 'not_found', 404)
+        _require(not source.get('resource_recovery'), 'joint_plan_resource_recovery_recursive', 409)
+        previous = db.execute('SELECT id FROM joint_plan_operations WHERE owner=? AND project_id=? '
+            "AND json_extract(document,'$.resource_recovery.source_operation_id')=? LIMIT 1",
+            (owner, project_id, operation_id)).fetchone()
+        _require(previous is None, 'joint_plan_resource_recovery_already_exists', 409)
+        self.store._revision(project, request['expected_revision'])
+        head = self._head(db, owner, project_id)
+        _require(head['version_id'] == request['expected_head_version_id'], 'joint_plan_head_conflict', 409)
+        version = self._version(db, owner, request['source_version_id'])
+        _require(version['project_id'] == project_id and version['operation_id'] == operation_id
+            and source.get('version_id') == version['id'], 'joint_plan_resource_recovery_source_changed', 409)
+        latest = db.execute('SELECT id FROM joint_plan_versions WHERE owner=? AND project_id=? ORDER BY rowid DESC LIMIT 1',
+                            (owner, project_id)).fetchone()
+        _require(latest is not None and latest['id'] == version['id']
+            and not self._stale(version, self._binding(project), head), 'joint_plan_stale', 409)
+        stage = source.get('resource_planning')
+        _require(source['status'] == 'failed' and not source.get('cancel_requested')
+            and type(stage) is dict and stage.get('status') == 'failed' and stage.get('stop_proven') is True
+            and _uuid(stage.get('job_id')) and _uuid(source.get('job_id'))
+            and 'resource_plan' not in version, 'joint_plan_resource_recovery_source_not_stopped', 409)
+        document = validate_input(stage.get('document'))
+        _require(document['joint_input'] == source['document'] and document['joint_result'] == version['result']
+            and source['input_sha256'] == version['input_sha256'] == document['joint_input_sha256']
+            and stage['input_sha256'] == digest(document)
+            and stage['joint_input_sha256'] == document['joint_input_sha256']
+            and stage['joint_result_sha256'] == document['joint_result_sha256']
+            and stage['producer_catalog_sha256'] == document['producer_catalog_sha256']
+            and version['resource_planning']['operation_id'] == stage['operation_id'],
+            'joint_plan_resource_recovery_input_changed', 409)
+        _require(request['expected_joint_input_sha256'] == source['input_sha256']
+            and request['expected_joint_result_sha256'] == digest(version['result'])
+            and request['expected_resource_input_sha256'] == stage['input_sha256']
+            and request['expected_producer_catalog_sha256'] == stage['producer_catalog_sha256'],
+            'joint_plan_resource_recovery_hash_conflict', 409)
+        _require(request['execution_deadline_at'] > time.time(), 'joint_plan_resource_recovery_deadline_expired', 409)
+        active = [json.loads(row['document']) for row in db.execute('SELECT document FROM joint_plan_operations WHERE owner=?', (owner,))]
+        active = [op for op in active if op['status'] in ACTIVE]
+        _require(not any(op['project_id'] == project_id for op in active), 'joint_plan_operation_in_progress', 409)
+        _require(len(active) < 12, 'joint_plan_queue_limit', 409)
+        _require(db.execute('SELECT COUNT(*) FROM joint_plan_operations WHERE project_id=?', (project_id,)).fetchone()[0] < MAX_PROJECT_OPERATIONS,
+            'joint_plan_operation_limit', 409)
+        _require(db.execute('SELECT COUNT(*) FROM joint_plan_versions WHERE project_id=?', (project_id,)).fetchone()[0] < MAX_PROJECT_CANDIDATES,
+            'joint_plan_candidate_limit', 409)
+        return deepcopy(source), deepcopy(version), deepcopy(stage)
+
+    def resource_recovery_source(self, owner, project_id, operation_id, request, idem):
+        fingerprint = self._resource_recovery_fingerprint(project_id, operation_id, request, idem)
+        with self.store.transaction() as db:
+            replay = self._resource_recovery_replay(db, owner, project_id, operation_id, fingerprint, idem)
+            if replay is not None:
+                return dict(replay=replay)
+            source, _, _ = self._resource_recovery_source(db, owner, project_id, operation_id, request)
+            return dict(source=source)
+
+    def recover_resources(self, owner, project_id, operation_id, request, idem, source_job):
+        """Append one recovery child/version; the failed source is never rewritten."""
+        from .resource_planning_coordinator import stopped
+        fingerprint = self._resource_recovery_fingerprint(project_id, operation_id, request, idem)
+        with self.store.transaction() as db:
+            replay = self._resource_recovery_replay(db, owner, project_id, operation_id, fingerprint, idem)
+            if replay is not None:
+                return replay
+            source, version, stage = self._resource_recovery_source(db, owner, project_id, operation_id, request)
+            _require(type(source_job) is dict and source_job.get('job_id') == stage['job_id']
+                and source_job.get('state') in {'completed', 'failed', 'needs_input', 'timed_out', 'quarantined'}
+                and stopped(source_job), 'joint_plan_resource_recovery_stop_unproven', 409)
+            observed = {key: deepcopy(source_job[key]) for key in ('job_id', 'state', 'pins', 'attempt', 'stop_proof', 'stop_proven')}
+            now = time.time()
+            lineage = dict(schema='video.joint-plan-resource-recovery.v1', source_operation_id=operation_id,
+                source_version_id=version['id'], source_operation_sha256=digest(source), source_version_sha256=digest(version),
+                source_planner_job_id=source['job_id'], source_resource_operation_id=stage['operation_id'],
+                source_resource_job_id=stage['job_id'], source_resource_stop=observed,
+                source_resource_stop_sha256=digest(observed), source_deadline_at=source['deadline_at'],
+                joint_input_sha256=source['input_sha256'], joint_result_sha256=digest(version['result']),
+                resource_input_sha256=stage['input_sha256'], producer_catalog_sha256=stage['producer_catalog_sha256'],
+                extra_resource_job_budget=1, maximum_recoveries=1)
+            new_op = deepcopy(source)
+            new_op.update(id=str(uuid4()), kind='joint-plan-resource-recovery', status='running', error=None,
+                created_at=now, deadline_at=min(now + request['timeout_seconds'], request['execution_deadline_at']),
+                version_id=str(uuid4()), cancel_requested=False, cancel_attempts=0, next_cancel_at=0.0,
+                phase='resource-plan', resource_recovery=lineage)
+            new_stage = {key: deepcopy(stage[key]) for key in ('document', 'input_sha256', 'input_ref',
+                'joint_input_sha256', 'joint_result_sha256', 'producer_catalog_sha256')}
+            new_stage.update(operation_id=str(uuid4()), status='pending', job_id=None, submit_attempted=False,
+                stop_proven=True, cancel_attempts=0, next_cancel_at=0, error=None)
+            new_op['resource_planning'] = new_stage
+            new_version = deepcopy(version)
+            new_version.update(id=new_op['version_id'], operation_id=new_op['id'], created_at=now, resource_recovery=lineage,
+                resource_planning=dict(status='pending', profile='video.resource-plan.v1', origin='agent_resource_planner',
+                    operation_id=new_stage['operation_id']))
+            self._capacity(db, project_id, extra_bytes=_size(new_op) + _size(new_version), active_delta=1,
+                reserve_bytes=new_op.get('output_reserve_bytes', OUTPUT_RESERVE_BYTES))
+            db.execute('INSERT INTO joint_plan_operations VALUES (?, ?, ?, ?, ?, ?)',
+                (new_op['id'], owner, project_id, idem, fingerprint, _json(new_op)))
+            db.execute('INSERT INTO joint_plan_versions VALUES (?, ?, ?, ?, ?)',
+                (new_version['id'], owner, project_id, new_op['id'], _json(new_version)))
+            project = self.store._project(db, owner, project_id)
+            self.store._save(db, project)
+            return self._public(new_op)
 
     def prepare(self, operation_id, adapter=None):
         """Freeze optional published methods before the one paid Agent submit.
