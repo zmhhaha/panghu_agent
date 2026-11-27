@@ -148,10 +148,17 @@ def fixture(profile, timeout=600):
 
 
 class ProbeAuthority:
-    def __init__(self, config, directory, upstream_token, bootstrap, worker_name, worker_namespace, uid, *, scenario=None):
+    def __init__(self, config, directory, upstream_token, bootstrap, worker_name, worker_namespace, uid, *, scenario=None,
+                 model_route_contract=None, model_route_revision=None, model_route_reader=None):
         from agent_service.model_proxy import ModelProxy, ModelProxySettings, requests
         from agent_service.store import Store
         self.config, self.policy, self.binding = candidate_config(config.model_dump(mode='json'))
+        self.model_route_preflight = None
+        if model_route_contract is not None or model_route_revision is not None:
+            from agent_service.model_route_readiness import candidate_model_route
+            self.model_route_preflight = candidate_model_route(self.config, model_route_contract,
+                model_route_revision, reader=model_route_reader)
+            self.model_route_preflight['phase'] = 'before_job_and_grant'
         require(type(uid) is int and 65536 <= uid <= 2**31 - 4)
         self.bootstrap, self.uid, self.scenario = bootstrap, uid, scenario
         if scenario is not None:
@@ -162,6 +169,8 @@ class ProbeAuthority:
         self.directory.chmod(0o700)
         # A second coordinator must never reset an ambiguous paid probe.
         atomic(self.directory / 'once.json', {'mode': 'candidate-only', 'created_at': time.time()})
+        if self.model_route_preflight is not None:
+            atomic(self.directory / 'model-route-preflight.json', self.model_route_preflight)
         if scenario is None:
             self.store = Store('sqlite:///' + str(self.directory / 'candidate.sqlite3'), allow_sqlite=True)
         else:
@@ -366,6 +375,9 @@ class ProbeAuthority:
                     'other_profiles_and_engines', 'full_production_acceptance_suite'])
             if self.policy.name == 'video.picture-learning-review.v2':
                 self.recorded['model_budget_evidence'] = self.model_budget_evidence()
+            if self.model_route_preflight is not None:
+                self.recorded['model_route_preflight'] = self.model_route_preflight
+            if self.policy.name == 'video.picture-learning-review.v2' or self.model_route_preflight is not None:
                 require(len(canonical_bytes(self.recorded)) <= MAX_WIRE, 'candidate_probe_scale_exceeded')
             atomic(self.directory / 'candidate-evidence.json', self.recorded)
             print(json.dumps(self.recorded, sort_keys=True), flush=True)
@@ -672,9 +684,16 @@ def response_completed(response):
 
 
 def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secret,
-                 upstream_secret, upstream_key='token', scenario=None, source_dir=None, parent_evidence_dir=None):
+                 upstream_secret, upstream_key='token', scenario=None, source_dir=None, parent_evidence_dir=None,
+                 model_route_contract=None, model_route_revision=None, model_route_reader=None):
     """Public one-shot manifests only; never reads or emits any Secret value."""
     config, policy, _ = candidate_config(config.model_dump(mode='json'))
+    route_preflight = None
+    if model_route_contract is not None or model_route_revision is not None:
+        from agent_service.model_route_readiness import candidate_model_route
+        route_preflight = candidate_model_route(config, model_route_contract,
+            model_route_revision, reader=model_route_reader)
+        route_preflight['phase'] = 'before_manifest'
     prepared = None
     if scenario is not None:
         require(source_dir is not None)
@@ -706,6 +725,13 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
     worker_name = name + '-worker'
     identity = {'agent-service.panghuer.top/candidate-probe': name}
     annotations = {'agent-service.panghuer.top/harness-sha256': script_hash}
+    if route_preflight is not None:
+        annotations.update({'agent-service.panghuer.top/model-route-contract': model_route_contract,
+            'agent-service.panghuer.top/model-route-public-alias': route_preflight['public_alias'],
+            'agent-service.panghuer.top/model-route-configured-model': route_preflight['configured_model'],
+            'agent-service.panghuer.top/model-route-revision': route_preflight['route_revision'],
+            'agent-service.panghuer.top/model-route-preflight': canonical_bytes(route_preflight).decode(),
+            'agent-service.panghuer.top/model-route-preflight-sha256': digest(route_preflight)})
     items = []
 
     def obj(kind, namespace, object_name, **fields):
@@ -770,6 +796,8 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
         terminationGracePeriodSeconds=30, securityContext=dict(seccompProfile=dict(type='RuntimeDefault')))
     command = ['/opt/agent-service/.venv/bin/python', '/probe/acceptance_probe.py']
     scenario_args, scenario_volumes, scenario_mounts = [], [], []
+    route_args = ([] if route_preflight is None else ['--model-route-contract', model_route_contract,
+        '--model-route-revision', model_route_revision])
     if prepared is not None:
         scenario_args = ['--scenario', '/probe/scenario.json', '--source-dir', '/run/agent-probe-sources']
         scenario_mounts = [dict(name='probe', mountPath='/probe/scenario.json', subPath='scenario.json', readOnly=True),
@@ -785,7 +813,7 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
         'activeDeadlineSeconds': 1200,
         'containers': [dict(name='proxy', image=worker_image, imagePullPolicy='IfNotPresent',
             command=command, args=['proxy', '--config', '/probe/config.json', '--worker-name', worker_name,
-                '--uid-start', str(uid_start), *scenario_args], env=base_env, securityContext=security,
+                '--uid-start', str(uid_start), *scenario_args, *route_args], env=base_env, securityContext=security,
             resources=dict(requests=dict(cpu='50m', memory='128Mi'), limits=dict(cpu='1', memory='1Gi')),
             ports=[dict(name='http', containerPort=8080)],
             volumeMounts=mounts + scenario_mounts + [dict(name='upstream', mountPath=str(UPSTREAM), subPath='token', readOnly=True)])],
@@ -916,6 +944,16 @@ def run_worker(origin):
         client.close()
 
 
+def _require_new_model_route_contract(config, contract, revision):
+    from agent_service.model_route_readiness import CONTRACT, PROFILE, picture_review_expectation
+    if config.profile.name == PROFILE:
+        require(contract == CONTRACT and config.model is not None and config.model.model == 'llm-trusted',
+            'candidate_model_route_contract_required')
+        picture_review_expectation(revision)
+    else:
+        require(contract is None and revision is None, 'candidate_model_route_contract_mismatch')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
@@ -929,6 +967,8 @@ def main(argv=None):
     proxy.add_argument('--scenario', type=Path)
     proxy.add_argument('--source-dir', type=Path)
     proxy.add_argument('--parent-evidence-dir', type=Path)
+    proxy.add_argument('--model-route-contract')
+    proxy.add_argument('--model-route-revision')
     worker = sub.add_parser('worker')
     worker.add_argument('--proxy-origin', required=True)
     render = sub.add_parser('render', help='Only public one-shot objects; creates no Secrets or production approvals')
@@ -944,21 +984,26 @@ def main(argv=None):
     render.add_argument('--scenario', type=Path)
     render.add_argument('--source-dir', type=Path)
     render.add_argument('--parent-evidence-dir', type=Path)
+    render.add_argument('--model-route-contract')
+    render.add_argument('--model-route-revision')
     args = parser.parse_args(argv)
     try:
         if args.mode == 'worker':
             return run_worker(args.proxy_origin)
         if args.mode == 'render':
             config = HostConfig.model_validate(json.loads(args.config.read_bytes()))
+            _require_new_model_route_contract(config, args.model_route_contract, args.model_route_revision)
             manifest = render_probe(config, name=args.name, worker_image=args.worker_image,
                 node=args.node, uid_start=args.uid_start, bootstrap_secret=args.bootstrap_secret,
                 upstream_secret=args.upstream_secret, upstream_key=args.upstream_key,
-                scenario=args.scenario, source_dir=args.source_dir, parent_evidence_dir=args.parent_evidence_dir)
+                scenario=args.scenario, source_dir=args.source_dir, parent_evidence_dir=args.parent_evidence_dir,
+                model_route_contract=args.model_route_contract, model_route_revision=args.model_route_revision)
             atomic(args.output, manifest)
             print(json.dumps({'status': 'candidate_manifest_rendered', 'harness_sha256': harness_sha256(),
                 'production_acceptance_created': False, 'secret_values_emitted': False}), flush=True)
             return 0
         config = HostConfig.model_validate(_read_operator_json(args.config, max_bytes=4 * 1024 * 1024))
+        _require_new_model_route_contract(config, args.model_route_contract, args.model_route_revision)
         scenario = None
         if args.scenario is not None:
             # Host paths are accepted only by the administrator render CLI.
@@ -971,7 +1016,8 @@ def main(argv=None):
         else:
             require(args.source_dir is None and args.parent_evidence_dir is None)
         authority = ProbeAuthority(config, args.state_dir, credential(UPSTREAM), credential(BOOTSTRAP),
-            args.worker_name, args.worker_namespace, args.uid_start, scenario=scenario)
+            args.worker_name, args.worker_namespace, args.uid_start, scenario=scenario,
+            model_route_contract=args.model_route_contract, model_route_revision=args.model_route_revision)
         import uvicorn
         from agent_service.__main__ import _logging_configuration
         uvicorn.run(proxy_app(authority), host='0.0.0.0', port=8080, access_log=False,

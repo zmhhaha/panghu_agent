@@ -62,6 +62,10 @@ image_inputs = Table('agent_model_image_inputs', metadata,
     Column('media_type', String(32), nullable=False),
     Column('byte_length', Integer, nullable=False))
 
+# Error evidence is diagnostic, never a completed response or a new usage proof.
+# Reuse the existing admitted row so deploying this change needs no new DDL.
+MAX_REJECTION_BODY_BYTES = 64 * 1024
+
 
 def _usage_counter(value):
     return type(value) is int and 0 <= value <= 2**63 - 1
@@ -203,7 +207,7 @@ def usage_evidence_for_job(store, job):
                 if index == 1024:
                     bounded = False
                     break
-                raw = bytes(row['response'] or b'') if bounded else None
+                raw = bytes(row['response']) if bounded and row['response'] is not None else None
                 usage = (_response_usage(raw, row['media_type'] or '')
                          if raw is not None and row['state'] == 'complete' and row['status'] == 200 else None)
                 records.append(dict(attempt_id=row['attempt_id'], fence=row['fence'], body_sha256=row['body_sha256'],
@@ -660,6 +664,34 @@ class ModelProxy:
                 state=r['state'], request=json.loads(r['request']),
                 response=json.loads(r['response']) if r['response'] else None) for r in rows])
 
+    def _retain_rejection(self, token, key, response, media):
+        """Keep bounded complete error evidence without completing admission.
+
+        Partial reads, expiry and oversized bodies retain only the known HTTP
+        metadata. A prefix is never stored as a complete supplier body. This
+        data is not returned to the worker and cannot establish known usage.
+        """
+        limit = min(MAX_REJECTION_BODY_BYTES, self.settings.max_response_bytes)
+        payload = None
+        valid_media = (media if type(media) is str and len(media) <= 80
+            and re.fullmatch(r'[A-Za-z0-9.+_-]+/[A-Za-z0-9.+_-]+', media) else None)
+        try:
+            chunks, size = [], 0
+            for chunk in response.iter_bytes(65536):
+                self.authorize(token)
+                size += len(chunk)
+                if size > limit:
+                    raise ServiceError('model_rejection_body_too_large', 502)
+                chunks.append(chunk)
+            self.authorize(token)
+            payload = b''.join(chunks)
+        finally:
+            # Diagnostic persistence does not grant execution after expiry.
+            # It leaves the durable admission uncertain, including on failure.
+            with self.store.engine.begin() as db:
+                db.execute(update(requests).where(key, requests.c.state == 'admitted').values(
+                    status=response.status_code, media_type=valid_media, response=payload))
+
     def respond(self, token, value):
         grant = self.authorize(token)
         body = self._body(value, grant)
@@ -745,6 +777,9 @@ class ModelProxy:
                 upstream_status = response.status_code
                 upstream_media = response.headers.get('content-type', '').split(';')[0]
                 if response.status_code != 200:
+                    diagnostic_stage = 'capture_upstream_rejection'
+                    self._retain_rejection(token, key, response, upstream_media)
+                    diagnostic_stage = 'validate_upstream'
                     raise ServiceError('model_upstream_rejected', 502)
                 media = upstream_media
                 if media not in {'application/json', 'text/event-stream'}:

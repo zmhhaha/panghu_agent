@@ -829,7 +829,11 @@ def test_upstream_failure_diagnostics_are_bounded_and_preserve_uncertain_admissi
         with run.store.engine.connect() as db:
             record = db.execute(select(requests)).mappings().one()
         assert record['state'] == 'admitted'
-        assert record['status'] is None and record['response'] is None
+        if failure_kind == 'rejected':
+            assert record['status'] == 503 and record['media_type'] == 'application/json'
+            assert json.loads(record['response']) == {'error': {'message': private}}
+        else:
+            assert record['status'] is None and record['response'] is None
     finally:
         run.proxy.client.close()
 
