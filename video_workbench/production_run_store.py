@@ -69,6 +69,12 @@ class ProductionRunStore:
         silent = run.get('audio_mode') == 'silent'
         if 'audio_mode' in run:
             result['audio_mode'] = run['audio_mode']
+        if 'scene_source_recovery' in run:
+            result['scene_source_recovery'] = {key:deepcopy(run['scene_source_recovery'][key]) for key in (
+                'schema','source_run_id','source_run_sha256','source_scene_sha256','source_task_sha256',
+                'source_usage_sha256','author_job_id','author_input_sha256','author_result_sha256',
+                'source_sha256','plan_sha256','configuration_sha256','film_sha256',
+                'measured_author_usage','original_deadline_at','execution_deadline_at','extra_author_jobs')}
         if 'rendering_route' in run:
             result['rendering_route'] = deepcopy(run['rendering_route'])
         raw_items = run.get('items') if type(run.get('items')) is list else []
@@ -978,6 +984,86 @@ class ProductionRunStore:
         settings = document['settings']
         return digest(dict(model=settings['model'], input=document['spoken_text'],
                            voice=settings['voice'], speed=speed, response_format='wav'))
+
+    def _scene_source_recovery_replay(self,db,owner,source_run_id,idem,fingerprint):
+        row=db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
+            (owner,idem)).fetchone()
+        if row is None:return None
+        run=json.loads(row['document'])
+        require(row['request_hash']==fingerprint
+            and run.get('scene_source_recovery',{}).get('source_run_id')==source_run_id,
+            'idempotency_conflict',409)
+        return self.public(run,current=True)
+
+    def _scene_source_recovery_target(self,db,owner,source_run_id,request):
+        source=self._read(db,source_run_id,owner)
+        project=self.store._project(db,owner,source['project_id'])
+        self.store._revision(project,request['expected_revision'])
+        require(digest(source)==request['expected_source_run_sha256']
+            and source['status']=='failed' and source.get('error')=='scene_appearance_usage_unknown'
+            and self._uses_scene_space(source) and source.get('audio_mode')=='silent'
+            and not (source.get('cancel_requested') or source.get('draining') or source.get('blocked_reason'))
+            and not source.get('scene_source_recovery') and not source.get('draft_render_id')
+            and not source.get('intents') and self._matches(source,project,db),
+            'production_run_scene_source_recovery_unavailable',409)
+        existing=db.execute("SELECT id FROM production_runs WHERE owner=? AND project_id=? "
+            "AND json_extract(document,'$.scene_source_recovery.source_run_id')=? LIMIT 1",
+            (owner,source['project_id'],source_run_id)).fetchone()
+        require(existing is None,'production_run_scene_source_recovery_already_exists',409)
+        for row in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=? AND id<>?',
+                (owner,source['project_id'],source_run_id)):
+            require(not self._unfinished(json.loads(row[0])),'production_run_in_progress',409)
+        self._require_idle_project_children(db,source['project_id'])
+        require(db.execute('SELECT count(*) FROM production_runs WHERE project_id=?',(source['project_id'],)).fetchone()[0]<64
+            and db.execute('SELECT count(*) FROM production_runs').fetchone()[0]<1024,'production_run_storage_limit',409)
+        self._scene_space_service().source_recovery_snapshot(source,request)
+        return source
+
+    def recover_scene_source(self,owner,source_run_id,request,idem):
+        fields={'expected_revision','expected_source_run_sha256','expected_scene_sha256','expected_usage_sha256',
+            'expected_author_job_id','expected_author_input_sha256','expected_author_result_sha256',
+            'expected_source_sha256','expected_plan_sha256','expected_configuration_sha256',
+            'expected_usage_evidence_sha256','execution_deadline_at'}
+        require(type(request) is dict and set(request)==fields
+            and type(request['expected_revision']) is int and request['expected_revision']>=1
+            and type(request['expected_author_job_id']) is str and 1<=len(request['expected_author_job_id'])<=100
+            and all(type(request[key]) is str and re.fullmatch('[0-9a-f]{64}',request[key])
+                for key in fields if key.endswith('_sha256'))
+            and type(request['execution_deadline_at']) in {int,float} and math.isfinite(request['execution_deadline_at']),
+            'invalid_scene_source_recovery_request')
+        fingerprint=digest(dict(kind='scene-source-recovery',source_run_id=source_run_id,request=request,idem=idem))
+        # Serialize against local workflow admissions while keeping network GETs
+        # outside SQLite transactions. CAS is repeated after real job/artifact GET.
+        with self.store.lock:
+            with self.store.transaction() as db:
+                replay=self._scene_source_recovery_replay(db,owner,source_run_id,idem,fingerprint)
+                if replay is not None:return replay
+                source=self._scene_source_recovery_target(db,owner,source_run_id,request)
+            recovery=self._scene_space_service().prepare_source_recovery(source,request)
+            with self.store.transaction() as db:
+                replay=self._scene_source_recovery_replay(db,owner,source_run_id,idem,fingerprint)
+                if replay is not None:return replay
+                current=self._scene_source_recovery_target(db,owner,source_run_id,request)
+                require(current==source,'production_run_scene_source_recovery_changed',409)
+                run=deepcopy(source)
+                run.update(id=str(uuid4()),request_key=idem,status='queued',phase='scene_source_recovery_pending',
+                    error=None,blocked_reason=None,cancel_requested=False,draining=False,created_at=time.time(),
+                    finished_at=None,draft_render_id=None,scene_source_recovery=recovery,
+                    scene_space=dict(status='source_recovery_pending',stop_proven=True,
+                        plan_sha256=recovery['plan_sha256'],source_sha256=recovery['source_sha256'],render_id=None,error=None))
+                for item in run['items']:item.update(status='queued',error=None)
+                if 'sequence_registration' in source:
+                    require(self.sequence_store is not None,'production_run_sequence_unavailable',503)
+                    run.update(sequence_lineage=dict(origin_run_id=run['id'],parent=None),
+                        sequence_registration=self._registration())
+                    run['sequence_lineage_sha256']=digest(run['sequence_lineage'])
+                raw=packed(run)
+                require(len(raw.encode())<=512*1024,'production_run_storage_limit',413)
+                # This durable intent is committed before any new task/scene DB
+                # row. A restart installs the same IDs idempotently, never authors.
+                db.execute('INSERT INTO production_runs VALUES (?,?,?,?,?,?)',
+                    (run['id'],owner,run['project_id'],idem,fingerprint,raw))
+                return self.public(run,current=True)
 
     @staticmethod
     def _narration_resume_replay(run, idem, fingerprint):

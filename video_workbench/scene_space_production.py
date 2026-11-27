@@ -258,6 +258,8 @@ class SceneSpaceProductionAdapter:
             return row
         except ServiceError as error:
             if error.code!='not_found':raise
+        if run.get('scene_source_recovery'):
+            return self._prepare_source_recovery(run)
         configuration=run['scene_space_configuration']
         binding=deepcopy(run.get('library_binding'))
         snapshot=None
@@ -286,6 +288,111 @@ class SceneSpaceProductionAdapter:
             previews=[],clips=[],review=None,repair=None,attempts=[],attempt=0,gate=None,
             render_request_key='scene-render-'+run['id'],render_id=None,render_result=None,
             render_submit_attempted=False,created_at=self.clock(),deadline_at=self.clock()+3600)
+        return self._write(row,insert=True)
+
+    def source_recovery_snapshot(self,run,request):
+        """Pure local CAS checks; no reconciliation or writes to the old scene."""
+        row=self._read(run['owner'],run['id'])
+        _require(row['status'] in {'failed','cancelled'} and row['stop_proven'] is True
+            and row['author_submit_attempted'] is True and row['author_job_id']==request['expected_author_job_id']
+            and row['author_result'] is not None and row['source'] is not None and row['plan_sha256'] is not None
+            and not row.get('attempts') and row.get('attempt',0)==0 and not row.get('review')
+            and not row.get('repair') and row['render_id'] is None and not row['render_submit_attempted']
+            and all(not p['attempted'] and p['render_id'] is None for p in row['previews']+row.get('clips',[])),
+            'scene_space_source_recovery_unavailable',409)
+        record=self.space_store.get(run['owner'],run['id'])
+        task={key:value for key,value in record.items() if key!='usage_status'}
+        _require(digest(row)==request['expected_scene_sha256']
+            and row['author_input_sha256']==request['expected_author_input_sha256']==digest(row['author_document'])
+            and digest(row['author_result'])==request['expected_author_result_sha256']
+            and row['source_sha256']==request['expected_source_sha256']
+            and row['source']==picture.validate_source(row['author_result']['source'],constraints=row['author_document']['constraints'])
+            and row['plan_sha256']==request['expected_plan_sha256']==record['frozen']['plan_sha256']
+            and row['configuration']['configuration_sha256']==request['expected_configuration_sha256']
+            and row['configuration']==run['scene_space_configuration']
+            and row['film_sha256']==run['film_sha256'] and row['binding_sha256']==run['binding_sha256']
+            and record['usage']['sha256']==request['expected_usage_sha256']
+            and not record['usage']['history']
+            and not any(r['status']=='active' for r in record['reservations'])
+            and self.clock()<request['execution_deadline_at']<=row['deadline_at'],
+            'scene_space_source_recovery_changed',409)
+        plan=validate_scene_method(row['author_result']['method']['scene_space'],
+            source_scope='scene_data_only',source_refs=[],frame_ids=[])['plan']
+        _require(plan==record['frozen']['plan'],'scene_space_source_recovery_plan_changed',409)
+        return row,task
+
+    def prepare_source_recovery(self,run,request):
+        row,task=self.source_recovery_snapshot(run,request)
+        # Actual authenticated GET and artifact collection, never caller usage,
+        # upload, submit, or a fresh author operation.
+        job=self.author.poll(row['author_job_id'])
+        attempt,proof,pins=job.get('attempt'),job.get('stop_proof'),job.get('pins')
+        evidence=job.get('usage_evidence')
+        _require(job.get('job_id')==row['author_job_id'] and job.get('state')=='completed'
+            and job.get('stop_proven') is True and type(attempt) is dict and type(proof) is dict
+            and type(pins) is dict and pins.get('profile')==self.author.profile
+            and pins.get('profile_revision')==self.author.profile_revision
+            and proof.get('stop_proven') is True and proof.get('attempt_id')==attempt.get('attempt_id')
+            and type(attempt.get('fence')) is int and attempt['fence']>=1 and proof.get('fence')==attempt['fence']
+            and _sha(proof.get('request_sha256')) and _sha(proof.get('result_sha256')),
+            'scene_space_source_recovery_author_unproven',409)
+        _require(type(evidence) is dict and evidence.get('schema')=='agent-model-usage-evidence.v1'
+            and evidence.get('sha256')==request['expected_usage_evidence_sha256']==digest(
+                {k:v for k,v in evidence.items() if k!='sha256'})
+            and evidence.get('job_id')==job['job_id'] and evidence.get('attempt_id')==attempt['attempt_id']
+            and evidence.get('fence')==attempt['fence'] and evidence.get('state')=='completed'
+            and _sha(evidence.get('execution_binding_sha256'))
+            and evidence['execution_binding_sha256']==(pins.get('execution_binding') or {}).get('sha256')
+            and evidence.get('stop_proven') is True and evidence.get('authoritative') is True
+            and evidence.get('all_attempts') is True and evidence.get('completeness')=='complete'
+            and type(evidence.get('request_count')) is int and evidence['request_count']>=1
+            and all(type(evidence.get(key)) is int and evidence[key]>=0 for key in ('input_tokens','output_tokens','total_tokens'))
+            and evidence['total_tokens']==evidence['input_tokens']+evidence['output_tokens'],
+            'scene_space_source_recovery_usage_unproven',409)
+        result=self.author.collect(job['job_id'],row['author_input_sha256'],row['author_document'])
+        picture.validate_result(result,row['author_input_sha256'],row['author_document'])
+        _require(result==row['author_result'],'scene_space_source_recovery_artifact_changed',409)
+        measured=dict(model_calls=evidence['request_count'],model_tokens=evidence['total_tokens'])
+        usage=deepcopy(task['usage']);author=[e for e in usage['events'] if e['id']==row['author_operation_id']]
+        _require(len(author)==1 and author[0]['phase']=='generation' and author[0]['outcome']=='completed'
+            and author[0]['model_tokens'] is None and measured['model_calls']>=author[0]['model_calls'],
+            'scene_space_source_recovery_usage_invalid',409)
+        author[0].update(measured)
+        usage['sha256']=digest({k:v for k,v in usage.items() if k!='sha256'})
+        from .scene_space_budget import usage_status
+        _require(usage_status(usage)['status']=='within_budget','scene_space_source_recovery_budget_unavailable',409)
+        return dict(schema='video.scene-source-recovery.v1',source_run_id=run['id'],
+            source_run_sha256=digest(run),source_scene_sha256=digest(row),source_task_sha256=digest(task),
+            source_usage_sha256=task['usage']['sha256'],source_author_event_sha256=digest(
+                next(e for e in task['usage']['events'] if e['id']==row['author_operation_id'])),
+            author_job_id=job['job_id'],author_operation_id=row['author_operation_id'],
+            author_input_sha256=row['author_input_sha256'],author_result_sha256=digest(result),
+            source_sha256=row['source_sha256'],plan_sha256=row['plan_sha256'],
+            configuration_sha256=row['configuration']['configuration_sha256'],film_sha256=row['film_sha256'],
+            usage_evidence=deepcopy(evidence),measured_author_usage=measured,
+            original_deadline_at=row['deadline_at'],execution_deadline_at=request['execution_deadline_at'],
+            maximum_recoveries=1,extra_author_jobs=0)
+
+    def _prepare_source_recovery(self,run):
+        recovery=run['scene_source_recovery']
+        source=self._read(run['owner'],recovery['source_run_id'])
+        _require(digest(source)==recovery['source_scene_sha256']
+            and run['film_sha256']==source['film_sha256']
+            and run['binding_sha256']==source['binding_sha256']
+            and run['scene_space_configuration']==source['configuration'],
+            'scene_space_source_recovery_changed',409)
+        saved=self.space_store.recover_source(run['owner'],run['id'],recovery['source_run_id'],
+            source_task_sha256=recovery['source_task_sha256'],author_operation_id=source['author_operation_id'],
+            measured_usage=recovery['measured_author_usage'],recovery=recovery)
+        _require(saved['frozen']['plan_sha256']==recovery['plan_sha256'],
+            'scene_space_source_recovery_plan_changed',409)
+        row=deepcopy(source)
+        row.update(run_id=run['id'],status='preview',stop_proven=False,error=None,previews=[],clips=[],
+            review=None,repair=None,attempts=[],attempt=0,gate=None,render_request=None,
+            render_request_key='scene-render-'+run['id'],render_id=None,render_result=None,
+            render_submit_attempted=False,created_at=self.clock(),deadline_at=recovery['execution_deadline_at'],
+            author_usage=deepcopy(recovery['measured_author_usage']),
+            author_usage_evidence=deepcopy(recovery['usage_evidence']),source_recovery=deepcopy(recovery))
         return self._write(row,insert=True)
 
     @staticmethod

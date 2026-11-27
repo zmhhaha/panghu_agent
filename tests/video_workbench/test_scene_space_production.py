@@ -562,13 +562,14 @@ def test_uncovered_worlds_cannot_silently_pass_when_preview_budget_is_three(scen
     assert env.adapter._read(OWNER,run['id'])['source']['source_sha256']
 
 
-def test_existing_production_http_route_dispatches_and_serves_new_scene_video(scene_env):
+def test_existing_production_http_route_dispatches_and_serves_new_scene_video(scene_env,monkeypatch):
     env=scene_env
+    monkeypatch.setenv('SERVICE_AUTH_ISSUER','https://issuer.test')
     app=create_app(db_path=env.store.path,local_mode=False,background=False,
         production_runs_enabled=True,joint_plan_enabled=True,scene_space_adapter=env.adapter,
         trusted_hosts={'testserver'})
     project=app.state.store.project(OWNER,env.project['id'])
-    with TestClient(app) as client:
+    with TestClient(app,base_url='https://testserver',headers={'Origin':'https://testserver'}) as client:
         client.headers['x-forwarded-user']=OWNER
         session=client.get('/api/session').json()
         assert session['scene_space_production'] is True

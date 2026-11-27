@@ -113,6 +113,47 @@ class SceneSpaceStore:
     def get(self,owner,task_id):
         with self._db() as db:return self._view(self._load(db,owner,task_id))
 
+    def recover_source(self,owner,task_id,source_task_id,*,source_task_sha256,author_operation_id,
+                       measured_usage,recovery):
+        """Append a linked task; only its original unknown author cost is supplemented.
+
+        The source task, unknown event, frozen plan and every other expense stay
+        immutable. This is not a fresh budget or permission to regenerate.
+        """
+        owner_id(owner);identifier(task_id);identifier(source_task_id)
+        with self._db() as db:
+            prior=db.execute('SELECT document FROM scene_tasks WHERE owner=? AND task_id=?',
+                (owner,task_id)).fetchone()
+            if prior:
+                record=self._load(db,owner,task_id)
+                _require(record.get('source_recovery')==recovery,'scene_space_source_recovery_conflict')
+                return self._view(record)
+            source=self._load(db,owner,source_task_id)
+            _require(digest(source)==source_task_sha256
+                and not any(r['status']=='active' for r in source['reservations']),
+                'scene_space_source_recovery_changed')
+            usage=deepcopy(source['usage']);events=usage['events']
+            original=[event for event in events if event['id']==author_operation_id]
+            _require(len(original)==1 and original[0]['phase']=='generation'
+                and original[0]['outcome']=='completed' and original[0]['model_tokens'] is None
+                and measured_usage['model_calls']>=original[0]['model_calls'],
+                'scene_space_source_recovery_usage_invalid')
+            original[0].update(measured_usage)
+            usage['lineage_id']='task-'+digest([owner,task_id])
+            usage['sha256']=digest({key:value for key,value in usage.items() if key!='sha256'})
+            usage=validate_usage(usage)
+            _require(usage_status(usage)['status']=='within_budget','scene_space_source_recovery_budget_unavailable')
+            record=dict(schema='video.scene-space-task.v1',owner=owner,task_id=task_id,
+                frozen=deepcopy(source['frozen']),usage=usage,revision=1,created_at=self.clock(),
+                updated_at=self.clock(),reservations=deepcopy(source['reservations']),previews=[],
+                source_recovery=deepcopy(recovery))
+            db.execute('INSERT INTO scene_tasks VALUES (?,?,?)',(owner,task_id,_json(record)))
+            # Source-only recovery disallows plan revisions; the exact frozen
+            # root/current plan is copied, never rebuilt from today's defaults.
+            db.execute('INSERT INTO scene_plans VALUES (?,?,?,?)',
+                (owner,task_id,record['frozen']['plan_sha256'],_json(record['frozen'])))
+            return self._view(record)
+
     def plan(self,owner,task_id,plan_sha256):
         with self._db() as db:
             self._load(db,owner,task_id)

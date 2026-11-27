@@ -161,7 +161,9 @@ def test_same_content_repair_rejects_a_changed_plan_and_retains_original_samples
     run=begin(env);finish(env)
     public=env.runs.get(OWNER,run['id'])
     row=env.adapter._read(OWNER,run['id'])
-    assert public['status']=='failed' and public['error']=='scene_space_repair_plan_changed'
+    # The admitted structural-repair policy requires explicit incremented plan
+    # and world revisions. These tampered same-revision edits remain rejected.
+    assert public['status']=='failed' and public['error']=='scene_space_plan_revision_invalid'
     assert not public['draining'] and len(changed)==1
     assert row['attempt']==0 and not row['attempts']
     original=row['repair']['document']['constraints']['scene_space_same_content_repair']

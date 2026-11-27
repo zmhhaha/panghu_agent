@@ -331,6 +331,20 @@ class ProductionNarrationResume(Revision):
     speed: float = Field(ge=0.25, le=4, allow_inf_nan=False)
 
 
+class SceneSourceRecovery(Revision):
+    expected_source_run_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_scene_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_usage_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_author_job_id: str = Field(min_length=1,max_length=100)
+    expected_author_input_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_author_result_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_source_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_plan_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_configuration_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_usage_evidence_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    execution_deadline_at: float = Field(gt=0,allow_inf_nan=False)
+
+
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
@@ -1181,6 +1195,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         return production_run_store.resume_narration(
             owner, run_id, body.expected_revision, body.speed, idempotency(idempotency_key),
             audio_workflow.require_client())
+
+    @app.post('/api/production-runs/{run_id}/scene-source-recovery',status_code=202)
+    def recover_production_scene_source(run_id: str,body: SceneSourceRecovery,owner=Depends(mutation),
+            idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.recover_scene_source(owner,run_id,body.model_dump(),idempotency(idempotency_key))
 
     @app.post('/api/production-runs/{run_id}/resume-resources', status_code=202)
     def resume_production_resources(run_id: str, body: Revision, owner=Depends(mutation),
