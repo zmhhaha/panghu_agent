@@ -671,8 +671,12 @@ class ModelProxy:
         except (ValueError, TypeError, UnicodeError, RecursionError):
             raise ServiceError('model_request_scope_invalid', 422) from None
         key = (requests.c.attempt_id == grant['attempt']) & (requests.c.body_sha256 == identity)
-        # Locking the attempt serializes admission and the per-attempt budget.
-        with self.store.engine.begin() as db:
+        # SQLite ignores FOR UPDATE. Reserve its writer before reading limited
+        # job counts so independent proxies cannot both admit the final slot.
+        # PostgreSQL and unmarked legacy jobs retain their existing row locks.
+        admission = (self.store._tx() if self.store.dialect == 'sqlite' and grant.get('model_limits')
+            else self.store.engine.begin())
+        with admission as db:
             if grant.get('model_limits'):
                 # Serialize all attempts of this job, including uncertain
                 # admissions. A restarted attempt never receives eight more.
