@@ -22,6 +22,7 @@ from .learning_capabilities import LearningCapabilitiesMixin
 from .learning_strategy_service import LearningStrategyMixin
 from .learning_execution_guidance import learning_execution_guidance
 from .scene_space_learning_service import SceneSpaceLearningMixin
+from .learning_review_service import LearningClassifiedReviewMixin
 from .remote_reference_service import RemoteReferenceServiceMixin, remote_reference, MAX_SOURCE_SECONDS
 from .picture_learning_store import (
     PictureLearningStore, TERMINAL, identifier, new_id, owner_id, require,
@@ -77,19 +78,21 @@ def _image(raw, mime):
     return width, height
 
 
-class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixin, LearningCapabilitiesMixin, LearningStrategyMixin):
+class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMixin, RemoteReferenceServiceMixin, LearningCapabilitiesMixin, LearningStrategyMixin):
     protocol = protocol
     prefix = PREFIX
     store_type = PictureLearningStore
     start_fields = frozenset({'request_id', 'title', 'goal', 'reference_ids', 'criteria',
         'width', 'height', 'use_wikiskill', 'max_rounds', 'max_seconds', 'allow_collaboration',
-        'allow_probes', 'capability_selection'})
+        'allow_probes', 'capability_selection', 'review_contract'})
 
     def __init__(self, root, *, author_gateway, review_gateway, renderer,
-                 library_adapter=None, resource_stage=None, remote_media_adapter=None, clock=time.time):
+                 library_adapter=None, resource_stage=None, remote_media_adapter=None, clock=time.time,
+                 classified_review_gateway=None):
         self.store = self.store_type(root)
         self.root = self.store.root
         self.author, self.reviewer = author_gateway, review_gateway
+        self.classified_reviewer = classified_review_gateway
         self.renderer, self.library_adapter, self.clock = renderer, library_adapter, clock
         self._scene_usage_store = None
         self.resource_stage = resource_stage
@@ -319,7 +322,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
 
     def _new_manual_transfer(self, owner, project_id, eid, body, now):
         require(set(body) <= {'request_id', 'mode', 'base_candidate_id', 'approve_candidate',
-                            'max_rounds', 'max_seconds'}, 'picture_learning_transfer_request_invalid')
+                            'max_rounds', 'max_seconds', 'review_contract'}, 'picture_learning_transfer_request_invalid')
         require(body.get('approve_candidate') is True,
                 'picture_learning_transfer_approval_required', 409)
         require(type(body.get('base_candidate_id')) is str,
@@ -353,7 +356,8 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             learned_method=None, transfer_policy='manual', transfer_approval=approval,
             runtime_capabilities=self._runtime_capabilities())
         frozen['library_binding'], frozen['knowledge_snapshot'] = self._freeze_knowledge(owner, eid, False)
-        self._freeze_learning_options(dict(allow_probes=False, allow_collaboration=False),
+        self._freeze_learning_options(dict(allow_probes=False, allow_collaboration=False,
+            review_contract=body.get('review_contract')),
             frozen, prior=source_run['frozen'])
         run = self._new_experiment(owner, project_id, eid, body['request_id'], 'transfer', frozen, budget, now)
         run.update(work_kind='transfer', stage='transfer_plan', transfer_status='planning',
@@ -365,7 +369,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         require(type(body) is dict and {'request_id', 'mode'} <= set(body)
                 <= {'request_id', 'mode', 'feedback', 'use_wikiskill', 'max_rounds', 'max_seconds',
                     'base_candidate_id', 'allow_collaboration', 'allow_probes', 'capability_selection',
-                    'approve_candidate'})
+                    'approve_candidate', 'review_contract'})
         identifier(body['request_id'])
         require(type(body['mode']) is str and body['mode'] in {'continue', 'fresh', 'retry', 'transfer'})
         require(body['mode'] == 'transfer' or 'approve_candidate' not in body)
@@ -616,8 +620,9 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             knowledge_binding=deepcopy(frozen['library_binding']), assets=assets, frozen_at=run['created_at'],
             selection=dict(base_candidate_id=best['id'] if best else frozen.get('base_candidate_id'),
                            previous_review_candidate_id=candidate['id'] if candidate else None))
-        return self._scene_document(run, self._remote_document(run,
+        document = self._scene_document(run, self._remote_document(run,
             self._learning_document(run, self._resource_document(run, document))))
+        return self._classified_document(run, document) if self.protocol is protocol else document
 
     def _operation(self, run):
         if run['active_operation_id']:
@@ -633,7 +638,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             document = self._document(run, mode if mode != 'render' else 'create')
             if run['stage'] == 'author':
                 self._prepare_author_operation_input(document)
-        self.protocol.validate_input(document)
+        self._operation_protocol(run, run['stage']).validate_input(document)
         identity = run['id'] + '-' + str(len(run['operation_ids']) + 1)
         operation = dict(id=identity, owner=run['owner'], experiment_id=run['id'], stage=run['stage'],
             status='reserved', input=document, input_sha256=digest(document), job_id=None,
@@ -670,21 +675,24 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             operation.update(status='cancelled', error='scene_space_render_budget_unavailable')
             self._finish_operation(run, operation)
             return self._finish(run, 'scene_space_render_budget_unavailable')
-        gateway = self.author if operation['stage'] == 'author' else self.reviewer
+        gateway = self._classified_gateway(run, operation) or (self.author if operation['stage'] == 'author' else self.reviewer)
+        active_protocol = self._operation_protocol(run, operation['stage'])
         document = operation['input']
         if operation['status'] == 'reserved':
+            self._classified_preflight(run, operation, gateway)
             preflight = getattr(gateway, 'preflight', None)
             if callable(preflight):
                 preflight(run['deadline_at'])
             refs = operation.get('input_refs')
             if refs is None:
-                files = {self.protocol.INPUT_NAME: canonical_bytes(document)}
+                files = {active_protocol.INPUT_NAME: canonical_bytes(document)}
                 files.update({frame['file_name']: self.store.read_blob(frame['sha256'])
                               for frame in document['observation']['frames']})
                 refs = gateway.upload(document, files)
                 operation['input_refs'] = deepcopy(refs)
                 self.store.put('operations', operation)
-            admit = gateway.prepare_submission(operation['id'], document, run['deadline_at'], refs)
+            admit = gateway.prepare_submission(operation['id'], document, run['deadline_at'], refs,
+                **self._classified_submission_options(run, operation))
             if not self.store.claim(run['owner'], operation['id'], now=self.clock()):
                 return
             operation['status'] = 'claimed'
@@ -713,6 +721,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                 return
             operation.update(status='submitted', job_id=job['job_id'])
             self.store.put('operations', operation)
+        self._classified_job_limits(run, operation, job)
         if job['state'] in REMOTE_ACTIVE:
             return
         if job.get('stop_proven') is not True:
@@ -730,7 +739,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             return
         try:
             result = gateway.collect(job['job_id'], operation['input_sha256'], document)
-            self.protocol.validate_result(result, operation['input_sha256'], document)
+            active_protocol.validate_result(result, operation['input_sha256'], document)
             if operation['stage'] == 'author':
                 self._validate_scene_author(run, document, result)
             receipt = gateway.model_frame_receipt(job['job_id'])
@@ -738,6 +747,7 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
             observed = {row.get('sha256') for row in receipt.get('images', [])
                         if row.get('model_request_completed') is True}
             require(expected <= observed, 'picture_learning_frame_transport_incomplete', 409)
+            self._classified_result(run, operation, result, receipt)
         except ServiceError as error:
             if error.status >= 500:
                 raise
@@ -773,6 +783,11 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                 return
             self._select_best(run)
             review = result['review']
+            if candidate.get('review_decision', {}).get('passed') is True:
+                run['reproduction_stop_reason'] = 'classified_required_criteria_satisfied'
+                run['transfer_status'] = 'awaiting_approval'
+                self._finish(run, 'reproduction_complete')
+                return
             previous = [item['review']['score'] for item in self._context_candidates(run)[:-1]
                         if item['work_kind'] == 'reproduction' and item.get('review')]
             no_progress = len(previous) >= 2 and review['score'] <= max(previous[-2:])
@@ -817,6 +832,11 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                       and item.get('review') is not None and self._has_picture(item)]
         if not candidates:
             return
+        classified = self._classified_binding(run) is not None
+        if classified:
+            # A high diagnostic score cannot displace an output that actually
+            # satisfies every frozen required criterion.
+            candidates = [item for item in candidates if item.get('review_decision', {}).get('passed') is True] or candidates
         # Prefer an actual side-by-side judgement when supplied; scores remain
         # an internal fallback and never confer developer artistic approval.
         latest = candidates[-1]
@@ -840,7 +860,11 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
                  or existing['id'] in {item['id'] for item in candidates[:-1]}))
             keep_baseline = baseline_matches_existing and preference == 'baseline'
             choose_output = baseline_matches_existing and preference == 'output' and best['id'] == latest['id']
-            if not keep_baseline and (existing is None or choose_output
+            best_passed = best.get('review_decision', {}).get('passed') is True
+            existing_passed = existing is not None and existing.get('review_decision', {}).get('passed') is True
+            gate_upgrade = classified and best_passed and not existing_passed
+            gate_downgrade = classified and existing_passed and not best_passed
+            if not keep_baseline and not gate_downgrade and (existing is None or choose_output or gate_upgrade
                     or best['review']['score'] > existing.get('review', {}).get('score', -1)):
                 project['best_candidate_id'] = best['id']
             project['updated_at'] = self.clock()
@@ -907,7 +931,12 @@ class PictureLearningService(SceneSpaceLearningMixin, RemoteReferenceServiceMixi
         require((width, height) == (run['frozen']['width'], run['frozen']['height'])
                 == (result['width'], result['height']), 'picture_learning_render_dimensions_changed', 409)
         sha = self.store.blob(raw)
-        observed_sha, observed_mime = self._vision_copy(raw, 'image/png')
+        try:
+            observed_sha, observed_mime = (self._retain_classified_still(run, operation, candidate, raw)
+                or self._vision_copy(raw, 'image/png'))
+        except ServiceError as error:
+            self._classified_stopped_capture_failure(run, operation, result, error)
+            raise
         artifacts = deepcopy(candidate.get('artifacts', {}))
         for kind, content, mime in (
             ('picture', raw, 'image/png'),

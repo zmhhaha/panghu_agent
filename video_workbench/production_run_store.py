@@ -77,6 +77,8 @@ class ProductionRunStore:
                 'measured_author_usage','original_deadline_at','execution_deadline_at','extra_author_jobs')}
         if 'scene_review_continuation' in run:
             result['scene_review_continuation']=deepcopy(run['scene_review_continuation'])
+        if 'scene_source_import' in run:
+            result['scene_source_import']=deepcopy(run['scene_source_import'])
         if 'rendering_route' in run:
             result['rendering_route'] = deepcopy(run['rendering_route'])
         raw_items = run.get('items') if type(run.get('items')) is list else []
@@ -986,6 +988,111 @@ class ProductionRunStore:
         settings = document['settings']
         return digest(dict(model=settings['model'], input=document['spoken_text'],
                            voice=settings['voice'], speed=speed, response_format='wav'))
+
+    def _source_import_lineage_jobs(self,db,owner,parent):
+        ids=set(self._review_continuation_lineage_jobs(db,owner,parent))
+        continuation=parent.get('scene_review_continuation')
+        if continuation:
+            from .scene_review_continuation import validate_grant
+            ids.update(validate_grant(continuation)['lineage_job_ids'])
+        require(len(ids)+1<=7,'scene_source_import_job_budget_unavailable',409)
+        return sorted(ids)
+
+    def source_import_preflight(self,owner,parent_id):
+        """Read-only owner/CAS material. No source upload, task, grant or model POST."""
+        from .scene_source_import import task_document, parent_ledgers
+        with self.store.transaction() as db:
+            parent=self._read(db,parent_id,owner)
+            project=self.store._project(db,owner,parent['project_id'])
+            lineage=self._source_import_lineage_jobs(db,owner,parent)
+        adapter=self._scene_space_service();row=adapter._read(owner,parent_id)
+        require(row['status'] in {'failed','cancelled'} and row['stop_proven'] is True
+            and not row.get('source_import') and not row.get('repair')
+            and not row.get('attempts') and row.get('attempt',0)==0,'scene_source_import_parent_unavailable',409)
+        task=task_document(adapter.space_store.get(owner,parent_id))
+        configuration=adapter.source_import_configuration(owner,parent['project_id'])
+        author=adapter.author.poll(row['author_job_id'])
+        evidence=author.get('usage_evidence') or {}
+        require(type(evidence.get('sha256')) is str,'scene_source_import_author_usage_unproven',409)
+        request=dict(expected_revision=project['revision'],expected_source_run_sha256=digest(parent),
+            expected_scene_sha256=digest(row),expected_task_sha256=digest(task),
+            expected_parent_usage_sha256=digest(parent_ledgers(task)),
+            expected_author_job_id=row['author_job_id'],expected_author_input_sha256=row['author_input_sha256'],
+            expected_author_result_sha256=digest(row['author_result']),expected_source_sha256=row['source_sha256'],
+            expected_plan_sha256=row['plan_sha256'],
+            expected_parent_configuration_sha256=row['configuration']['configuration_sha256'],
+            expected_configuration_sha256=configuration['configuration_sha256'],
+            expected_usage_evidence_sha256=evidence['sha256'],expected_lineage_job_ids=lineage)
+        return dict(schema='video.scene-source-import-preflight.v1',parent_run_id=parent_id,
+            request=request,configuration=configuration,model_requests=0,jobs_created=0,
+            author_jobs=0,grant_created=False,production_post_performed=False)
+
+    def _source_import_target(self,db,owner,parent_id,request):
+        parent=self._read(db,parent_id,owner);project=self.store._project(db,owner,parent['project_id'])
+        self.store._revision(project,request['expected_revision'])
+        require(digest(parent)==request['expected_source_run_sha256']
+            and parent['status'] in {'failed','cancelled'} and not parent.get('draining')
+            and self._uses_scene_space(parent) and parent.get('audio_mode')=='silent'
+            and not parent.get('scene_source_import') and not parent.get('draft_render_id')
+            and not parent.get('intents') and self._matches(parent,project,db),
+            'production_run_scene_source_import_unavailable',409)
+        adapter=self._scene_space_service();row,task=adapter.source_import_snapshot(parent,request)
+        previous=row.get('review_continuation') or row.get('source_recovery') or {}
+        original=previous.get('original_run_id',previous.get('source_run_id',parent_id))
+        existing=db.execute("SELECT 1 FROM production_runs WHERE owner=? AND project_id=? "
+            "AND json_extract(document,'$.scene_source_import.original_run_id')=? LIMIT 1",
+            (owner,parent['project_id'],original)).fetchone()
+        require(existing is None,'scene_source_import_already_exists',409)
+        for old in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=? AND id<>?',
+                (owner,parent['project_id'],parent_id)):
+            require(not self._unfinished(json.loads(old[0])),'production_run_in_progress',409)
+        self._require_idle_project_children(db,parent['project_id'])
+        require(db.execute('SELECT count(*) FROM production_runs WHERE project_id=?',(parent['project_id'],)).fetchone()[0]<64
+            and db.execute('SELECT count(*) FROM production_runs').fetchone()[0]<1024,'production_run_storage_limit',409)
+        ids=self._source_import_lineage_jobs(db,owner,parent)
+        require(ids==request['expected_lineage_job_ids'],'scene_source_import_lineage_changed',409)
+        return parent,ids
+
+    def import_scene_source(self,owner,parent_id,request,idem):
+        from .scene_source_import import validate_request
+        request=validate_request(request)
+        require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}',idem),'idempotency_key_required')
+        fingerprint=digest(dict(kind='scene-source-import',parent_id=parent_id,request=request,idem=idem))
+        def replay(db):
+            row=db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
+                (owner,idem)).fetchone()
+            if row is None:return None
+            run=json.loads(row['document'])
+            require(row['request_hash']==fingerprint and run.get('scene_source_import',{}).get('parent_run_id')==parent_id,
+                'idempotency_conflict',409)
+            return self.public(run,current=True)
+        with self.store.lock:
+            with self.store.transaction() as db:
+                previous=replay(db)
+                if previous is not None:return previous
+                parent,ids=self._source_import_target(db,owner,parent_id,request)
+            grant,configuration=self._scene_space_service().prepare_source_import(parent,request,lineage_job_ids=ids)
+            with self.store.transaction() as db:
+                previous=replay(db)
+                if previous is not None:return previous
+                current,current_ids=self._source_import_target(db,owner,parent_id,request)
+                require(current==parent and current_ids==ids,'scene_source_import_parent_changed',409)
+                run=deepcopy(parent);run.pop('scene_source_recovery',None);run.pop('scene_review_continuation',None)
+                run.update(id=str(uuid4()),request_key=idem,status='queued',phase='scene_source_import_pending',
+                    error=None,blocked_reason=None,cancel_requested=False,draining=False,created_at=time.time(),
+                    finished_at=None,draft_render_id=None,scene_source_import=grant,
+                    scene_space_configuration=configuration,
+                    scene_space=dict(status='source_import_pending',stop_proven=True,
+                        plan_sha256=grant['plan_sha256'],source_sha256=grant['source_sha256'],render_id=None,error=None))
+                for item in run['items']:item.update(status='queued',error=None)
+                if 'sequence_registration' in parent:
+                    require(self.sequence_store is not None,'production_run_sequence_unavailable',503)
+                    run.update(sequence_lineage=dict(origin_run_id=run['id'],parent=None),sequence_registration=self._registration())
+                    run['sequence_lineage_sha256']=digest(run['sequence_lineage'])
+                raw=packed(run);require(len(raw.encode())<=512*1024,'production_run_storage_limit',413)
+                db.execute('INSERT INTO production_runs VALUES (?,?,?,?,?,?)',
+                    (run['id'],owner,run['project_id'],idem,fingerprint,raw))
+                return self.public(run,current=True)
 
     def _scene_source_recovery_replay(self,db,owner,source_run_id,idem,fingerprint):
         row=db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',

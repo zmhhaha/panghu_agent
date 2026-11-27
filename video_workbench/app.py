@@ -356,6 +356,27 @@ class SceneReviewContinuation(SceneSourceRecovery):
     allow_export_with_legacy_unknown: bool = Field(strict=True)
 
 
+class SceneSourceImport(Revision):
+    expected_source_run_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_scene_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_task_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_parent_usage_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_author_job_id: str = Field(min_length=1,max_length=100)
+    expected_author_input_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_author_result_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_source_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_plan_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_parent_configuration_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_configuration_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_usage_evidence_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_lineage_job_ids: list[str] = Field(min_length=1,max_length=6)
+    authorization_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    execution_deadline_at: float = Field(gt=0,allow_inf_nan=False)
+    accept_parent_cumulative_usage_unknown: bool = Field(strict=True)
+    accept_original_token_cap_unproven: bool = Field(strict=True)
+    allow_export_with_parent_unknown: bool = Field(strict=True)
+
+
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
@@ -1218,6 +1239,17 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
         production_run_workflow.require_enabled()
         return production_run_store.continue_scene_review(owner,run_id,body.model_dump(),idempotency(idempotency_key))
+
+    @app.get('/api/production-runs/{run_id}/scene-source-import')
+    def production_scene_source_import_preflight(run_id: str,owner=Depends(identity)):
+        production_run_workflow.require_enabled()
+        return production_run_store.source_import_preflight(owner,run_id)
+
+    @app.post('/api/production-runs/{run_id}/scene-source-import',status_code=202)
+    def import_production_scene_source(run_id: str,body: SceneSourceImport,owner=Depends(mutation),
+            idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.import_scene_source(owner,run_id,body.model_dump(),idempotency(idempotency_key))
 
     @app.post('/api/production-runs/{run_id}/resume-resources', status_code=202)
     def resume_production_resources(run_id: str, body: Revision, owner=Depends(mutation),

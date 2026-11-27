@@ -36,6 +36,7 @@ from .animation_creation_selection import (
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 from .animation_method_renderer import PUBLIC_RENDER_FAILURE_CODES, public_render_failure_code
 from .animation_method_trash import AnimationMethodTrash, serialized_library_mutation
+from .effect_classified_review import EffectClassifiedReviewMixin
 
 
 _RENDER_FAILURE_MESSAGE = '画面运行检查未通过；保留失败证据，不自动重试'
@@ -496,10 +497,10 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=(), separation
     return effects, membership
 
 
-class AnimationMethodService:
+class AnimationMethodService(EffectClassifiedReviewMixin):
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time,
                  runtime_capabilities=None, knowledge_store=None, manim_coordinator=None,
-                 collaboration_gateway=None, library_adapter=None):
+                 collaboration_gateway=None, library_adapter=None, classified_review_gateway=None):
         self.root = Path(root).absolute()
         _require(not any(path.is_symlink() for path in (self.root, *self.root.parents)))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -507,6 +508,7 @@ class AnimationMethodService:
         self.methods = AnimationMethodStore(self.root / 'methods.sqlite3')
         self.commissions = AnimationMethodCommissionStore(self.root / 'commissions.sqlite3', clock=clock)
         self.author, self.reviewer, self.renderer = author_gateway, review_gateway, renderer
+        self.classified_reviewer = classified_review_gateway
         self.collaboration_author = collaboration_gateway
         self.manim = manim_coordinator
         from .lab_resource_stage import LabResourceStage
@@ -750,6 +752,15 @@ class AnimationMethodService:
                     scope='actual_render_record_not_human_or_complete_motion_verification'))
                 continue
             opinion = result.get('review')
+            if opinion and self._effect_review_binding(run) is not None and operation['stage'] == 'review':
+                self._experience(owner, 'classified_sampled_review', operation['id'], dict(
+                    commission_id=run['id'], operation_id=operation['id'], goal=run['frozen']['goal'],
+                    input_sha256=operation['input_sha256'], result_sha256=operation['result_sha256'],
+                    review_schema=result['schema'], review_sha256=digest(opinion),
+                    full_review_pointer='/review', full_review_location='immutable_operation_result',
+                    observation=operation['input']['observation'],
+                    scope='static_samples_only_not_artistic_or_continuous_motion_acceptance'))
+                continue
             experience_kind = 'sampled_review' if opinion else 'authored_proposal'
             experience_document = dict(
                 commission_id=run['id'], operation_id=operation['id'], goal=run['frozen']['goal'],
@@ -1123,7 +1134,7 @@ class AnimationMethodService:
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
                   'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration', 'capability_selection',
-                  'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary', 'renderer_rebind'}
+                  'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary', 'renderer_rebind', 'review_contract'}
         if type(body) is dict and body.get('baseline_demonstration_id'):
             self.trash.require_demonstrations_visible(owner, [body['baseline_demonstration_id']])
         _require(type(body) is dict and {'request_id', 'budget'} <= set(body)
@@ -1135,6 +1146,7 @@ class AnimationMethodService:
         submitted = (deepcopy(_submission_snapshot) if _submission_snapshot is not None else
                      submission_snapshot(body))
         data = {key: deepcopy(value) for key, value in body.items() if key != 'request_id' and value is not None}
+        review_choice = data.pop('review_contract', None)
         if _picture_origin is not None:
             from .picture_animation_bridge import validate_origin
             _require(not data.get('base_commission_id') and not data.get('retry_of_commission_id')
@@ -1363,9 +1375,10 @@ class AnimationMethodService:
             _require(not change or (change['before'] == baseline['media']['duration_seconds']
                      and change['after'] == duration), 'animation_method_transfer_duration_mismatch', 409)
         # Preflight is a read, not a paid task or budget reservation.
+        self._freeze_effect_review(data, review_choice, origin=previous_request or retry_source)
         _require(self.author is not None and self.reviewer is not None and self.renderer is not None,
                  'animation_method_service_unavailable', 503)
-        for gateway in (self.author, self.reviewer,
+        for gateway in (self.author, self._effect_review_gateway(dict(frozen=data)) or self.reviewer,
                         *([self.collaboration_author] if data.get('collaboration') else [])):
             if callable(getattr(gateway, 'preflight', None)):
                 gateway.preflight(self.clock() + seconds)
@@ -2122,7 +2135,20 @@ class AnimationMethodService:
         else:
             active_protocol = self._protocol(run)
             gateway = self.reviewer if operation['stage'] == 'review' else self.author
+            if operation['stage'] == 'review' and self._effect_review_binding(run) is not None:
+                from agent_service.profiles import video_picture_review_v2 as active_protocol
+                gateway = self._effect_review_gateway(run)
         if operation['status'] == 'reserved':
+            if operation['stage'] == 'review' and self._effect_review_binding(run) is not None:
+                try:
+                    self._effect_review_preflight(run, operation, gateway)
+                except ServiceError as error:
+                    if error.status >= 500:
+                        raise
+                    self.commissions.release_unsubmitted(owner, operation['id'], dict(reason=error.code))
+                    self.commissions.stop(owner, run['id'], 'failed', dict(
+                        message='分类评审输入验证失败；保留已有结果，不提交新的评审任务', code=error.code))
+                    return
             files = {active_protocol.INPUT_NAME: canonical_bytes(operation['input'])}
             for frame in operation['input'].get('observation', {}).get('frames', []):
                 path = self.root / 'frame-inputs' / frame['sha256']
@@ -2135,7 +2161,8 @@ class AnimationMethodService:
                                                   for row in refs), 'animation_method_input_manifest_invalid')
                 self.commissions.record_input_manifest(owner, operation['id'], sorted([
                     dict(path=row['path'], sha256=row['sha256']) for row in refs], key=lambda row: row['path']))
-            admit = gateway.prepare_submission(operation['id'], operation['input'], run['deadline_at'], refs)
+            admit = gateway.prepare_submission(operation['id'], operation['input'], run['deadline_at'], refs,
+                **self._effect_classified_submission_options(run, operation))
             claim = self.commissions.claim(owner, operation['id'])
             if claim['submission_claimed']:
                 try:
@@ -2157,6 +2184,8 @@ class AnimationMethodService:
             if job is None:
                 return
             self.commissions.mark_submitted(owner, operation['id'], job['job_id'])
+        if not self._effect_classified_job_limits(run, operation, job):
+            return
         if job['state'] in {'queued', 'starting', 'running', 'cancelling'}:
             if run['cancel_requested'] or self.clock() >= run['deadline_at']:
                 gateway.cancel(job['job_id'])
@@ -2326,6 +2355,8 @@ class AnimationMethodService:
             raise
 
     def _record_review(self, owner, run, operation):
+        if self._effect_review_binding(run) is not None:
+            return self._record_classified_effect_review(owner, run, operation)
         result, document = operation['result'], operation['input']
         opinion = result['review']
         current_id = document['comparison']['candidate_id']
@@ -2556,6 +2587,8 @@ class AnimationMethodService:
                         self.commissions.stop(owner, commission_id, 'failed',
                             dict(message='评审证据未通过关联验证；保留原操作，不自动重跑', code=error.code))
                     return
+            if self._effect_classified_stop(owner, run):
+                return
             if run['reviews'] and run['reviews'][-1]['outcome'] == 'goal_met':
                 self.commissions.stop(owner, commission_id, 'goal_met', '本次可观察标准已达成，等待开发者验收')
                 return
@@ -2596,6 +2629,14 @@ class AnimationMethodService:
                         metadata=effect_scene_metadata(authored['result'],run,authored['input'])
                         if metadata and metadata['plan'] is not None:
                             render_document['scene_space']=metadata['plan']
+                    try:
+                        render_document = self._effect_lossless_render(run, render_document)
+                    except ServiceError as error:
+                        if error.status >= 500:
+                            raise
+                        self.commissions.stop(owner, commission_id, 'failed', dict(
+                            message='当前结果不满足所选无损场景协议；保留原创作，不启动渲染', code=error.code))
+                        return
                     self.commissions.reserve(owner, commission_id, 'render', render_document,
                         'render-' + authored['id'])
                     return
@@ -2604,6 +2645,18 @@ class AnimationMethodService:
                     continue
                 if run['remaining']['review'] <= 0:
                     self.commissions.stop(owner, commission_id, 'budget_exhausted', '本次评审预算已用完')
+                    return
+                if self._effect_review_binding(run) is not None:
+                    try:
+                        document = self._effect_review_document(owner, run, candidate)
+                    except ServiceError as error:
+                        if error.status >= 500:
+                            raise
+                        self.commissions.stop(owner, commission_id, 'failed', dict(
+                            message='当前无损画面证据不满足所选评审协议；保留原渲染，不提交评审任务', code=error.code))
+                        return
+                    self.commissions.reserve(owner, commission_id, 'review', document,
+                        'review-' + candidate['id'])
                     return
                 best = next((row for row in _candidates(run) if row['id'] == run['best_candidate_id']
                              and row['id'] != candidate['id']), None)
@@ -2643,7 +2696,10 @@ class AnimationMethodService:
             base = base or run['frozen'].get('base_candidate')
             last_review = next((op['result']['review'] for op in reversed(run['operations'])
                                 if op['stage'] == 'review' and op['status'] == 'completed'), None)
-            feedback = last_review['next_guidance'] if last_review else run['frozen'].get('feedback', '')
+            feedback = (self._classified_effect_feedback(next(op for op in reversed(run['operations'])
+                if op['stage'] == 'review' and op['status'] == 'completed'))
+                if last_review and self._effect_review_binding(run) is not None else
+                last_review['next_guidance'] if last_review else run['frozen'].get('feedback', ''))
             self.commissions.reserve(owner, commission_id, 'creator',
                 self._document(owner, run, 'create', base=base, feedback=feedback),
                 'create-' + str(len(creates)))

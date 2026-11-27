@@ -41,6 +41,8 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   manim_resource_admission_file=None, film_manim_admission_file=None,
                   enable_collaborative_authoring=False, collaboration_agent_token_file=None,
                   picture_agent_token_file=None, video_learning_agent_token_file=None,
+                  classified_review_agent_token_file=None, classified_review_agent_url=None,
+                  classified_review_profile_revision='1',
                   remote_reference_cookie_file=None, remote_reference_dns='system',
                   enable_scene_space_rendering=False,
                   wikiskill_recovery_manifest_file=None, wikiskill_recovery_manifest_sha256=None,
@@ -51,6 +53,9 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
         raise ValueError('animation_method_protocol_invalid')
     if method_project_runtime not in {'native-seek', 'hyperframes-core-bridge'}:
         raise ValueError('animation_method_project_runtime_invalid')
+    if classified_review_profile_revision != '1' or (classified_review_agent_url is not None
+            and classified_review_agent_token_file is None):
+        raise ValueError('learning_classified_review_config_invalid')
     recovery = (wikiskill_recovery_manifest_file, wikiskill_recovery_manifest_sha256, wikiskill_recovery_owner)
     if any(value is not None for value in recovery) and (
             not all(value is not None for value in recovery) or method_agent_token_file is None):
@@ -74,7 +79,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
     renderer = DurableAnimationRenderer(Path(root) / 'renders', image=renderer_image,
         assets_dir=assets_dir, enabled=True)
     client = AgentClient(agent_url, agent_token, timeout=30)
-    method_client = collaboration_client = manim_client = picture_client = video_learning_client = None
+    method_client = collaboration_client = manim_client = picture_client = video_learning_client = classified_client = None
     remote_references = None
     if picture_agent_token_file is not None or video_learning_agent_token_file is not None:
         from .remote_reference_media import RemoteReferenceMedia, PublicHTTPS, PublicDNSResolver
@@ -85,6 +90,20 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
         remote_references = RemoteReferenceMedia(Path(root) / 'remote-reference-preparation',
             cookie_file=remote_reference_cookie_file, transport=transport)
     try:
+        classified_gateway = None
+        if classified_review_agent_token_file is not None:
+            from .picture_learning_gateway import ClassifiedPictureReviewGateway
+            classified_token = read_token(classified_review_agent_token_file)
+            existing_tokens = {agent_token, executor_token}
+            for path in (method_agent_token_file, collaboration_agent_token_file,
+                         manim_recipe_agent_token_file, picture_agent_token_file, video_learning_agent_token_file):
+                if path is not None:
+                    existing_tokens.add(read_token(path))
+            if classified_token in existing_tokens:
+                raise ValueError('learning_classified_review_distinct_credentials_required')
+            classified_client = AgentClient(classified_review_agent_url or agent_url, classified_token, timeout=30)
+            classified_gateway = ClassifiedPictureReviewGateway(classified_client, classified_review_profile_revision)
+            classified_gateway.task_timeout_seconds = 3600
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
             historical_review_gateways={'video.animation-review.v3': AnimationBatchReviewGateway(client)})
@@ -99,6 +118,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             methods = AnimationMethodService(Path(root) / 'method-lab',
                 author_gateway=author(method_client),
                 review_gateway=reviewer(method_client),
+                classified_review_gateway=classified_gateway,
                 renderer=MethodAnimationRenderer(Path(root) / 'method-renders', image=renderer_image,
                     assets_dir=assets_dir, enabled=True, engine_admission_file=engine_admission_file,
                     authoring_library_admission_file=authoring_library_admission_file,
@@ -187,6 +207,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             picture_client = AgentClient(agent_url, picture_token, timeout=30)
             pictures = PictureLearningService(Path(root) / 'picture-lab',
                 remote_media_adapter=remote_references,
+                classified_review_gateway=classified_gateway,
                 author_gateway=PictureAuthorGateway(picture_client),
                 review_gateway=PictureReviewGateway(picture_client),
                 renderer=PictureLearningRenderer(Path(root) / 'picture-renders', runtime_renderer=methods.renderer),
@@ -229,6 +250,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             video_learning_client = AgentClient(agent_url, video_token, timeout=30)
             videos = VideoLearningService(Path(root) / 'video-lab',
                 remote_media_adapter=remote_references,
+                classified_review_gateway=classified_gateway,
                 author_gateway=VideoLearningAuthorGateway(video_learning_client),
                 review_gateway=VideoLearningReviewGateway(video_learning_client),
                 renderer=VideoLearningRenderer(Path(root) / 'video-learning-renders', runtime_renderer=methods.renderer),
@@ -272,8 +294,10 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             scene_space_service=scene_space_service,
             picture_service=pictures, video_learning_service=videos,
             film_review_service=FilmReviewProxy(Path(root) / 'film-reviews', service.review_gateway))
-        server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client, picture_client, video_learning_client) if client is not None)
+        server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client, picture_client, video_learning_client, classified_client) if client is not None)
     except BaseException:
+        if classified_client is not None:
+            classified_client.close()
         if video_learning_client is not None:
             video_learning_client.close()
         if picture_client is not None:
@@ -299,6 +323,10 @@ def main(argv=None):
         help='Distinct admitted reference-video creator/reviewer credential; requires HyperFrames.')
     parser.add_argument('--picture-agent-token-file', type=Path,
         help='Distinct admitted direct-reference picture creator/reviewer credential; requires HyperFrames.')
+    parser.add_argument('--classified-review-agent-token-file', type=Path,
+        help='Independent admitted v2 reviewer; only explicitly selected new learning/effect contracts use it.')
+    parser.add_argument('--classified-review-agent-url')
+    parser.add_argument('--classified-review-profile-revision', default='1', choices=('1',))
     parser.add_argument('--remote-reference-cookie-file', type=Path,
         help='Optional host-only source-site cookie file. Never copied into reference records or Agent inputs.')
     parser.add_argument('--remote-reference-dns', choices=('system', 'alidns', 'cloudflare', 'google'),

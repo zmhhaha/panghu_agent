@@ -10,6 +10,7 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_method as method_protocol
 from agent_service.profiles import video_animation_skill_method as skill_protocol
 from agent_service.profiles import video_animation_collaboration_contract as collaboration_protocol
+from agent_service.profiles import video_picture_review_v2 as classified_review_protocol
 
 
 SCHEMA = 'video.animation-prompt-inspection.v1'
@@ -21,8 +22,10 @@ REQUEST_FIELDS = frozenset({
     'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
     'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration', 'capability_selection',
     'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary', 'renderer_rebind',
+    'review_contract',
 })
-PROTOCOLS = {row.INPUT_SCHEMA: row for row in (method_protocol, skill_protocol, collaboration_protocol)}
+PROTOCOLS = {row.INPUT_SCHEMA: row for row in (
+    method_protocol, skill_protocol, collaboration_protocol, classified_review_protocol)}
 LIMITATIONS = [
     'This view contains frozen application JSON, not reconstructed system prompts or a model conversation.',
     'Reserved inputs may not have been delivered to an Agent; execution status is reported separately.',
@@ -151,6 +154,9 @@ def operation_row(run, operation):
         round_number, basis = creation_rounds.get(author_id), 'creation_order'
     elif mode == 'review':
         comparison = document.get('comparison') or {}
+        if document.get('schema') == classified_review_protocol.INPUT_SCHEMA:
+            effect = document.get('constraints', {}).get('effect_review', {})
+            comparison = dict(candidate_id=effect.get('candidate_id'))
         candidate_ids = [value for value in (comparison.get('candidate_id'),
                          comparison.get('baseline_candidate_id')) if value is not None]
         author_id = authors.get(comparison.get('candidate_id'))

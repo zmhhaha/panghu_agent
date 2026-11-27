@@ -94,6 +94,21 @@ class SceneSpaceStore:
             _require(record['usage']==previous['usage'] and record['frozen']==previous['frozen']
                 and record['legacy_reservations']==previous['reservations'],
                 'scene_review_continuation_legacy_changed')
+        if record.get('source_import'):
+            from .scene_source_import import validate_grant, new_usage, parent_ledgers
+            grant=validate_grant(record['source_import'])
+            fresh=new_usage(record['frozen'],grant['sha256'])
+            _require(not record.get('review_continuation') and record['usage']['limits']==fresh['limits']
+                and record['usage']['baseline']==fresh['baseline']
+                and record['usage']['lineage_id']==fresh['lineage_id'] and not record['usage']['history'],
+                'scene_source_import_usage_changed')
+            parent=db.execute('SELECT document FROM scene_tasks WHERE owner=? AND task_id=?',
+                (owner,grant['parent_run_id'])).fetchone()
+            _require(parent is not None and digest(json.loads(parent[0]))==grant['parent_task_sha256'],
+                'scene_source_import_parent_changed')
+            previous=json.loads(parent[0]);ledgers=parent_ledgers(previous)
+            _require(record['frozen']==previous['frozen'] and record['source_import_parent_ledgers']==ledgers
+                and digest(ledgers)==grant['parent_usage_sha256'], 'scene_source_import_parent_changed')
         return record
 
     def _put(self,db,record):
@@ -110,10 +125,16 @@ class SceneSpaceStore:
             from .scene_review_continuation import cumulative_status, execution_status
             value['usage_status']=cumulative_status(value)
             value['continuation_usage_status']=execution_status(value)
+        if value.get('source_import'):
+            from .scene_source_import import cumulative_status
+            value['source_import_execution_status']=deepcopy(value['usage_status'])
+            value['usage_status']=cumulative_status(value)
         if _active_model(value['reservations']):
             value['usage_status']['can_start_export']=False
             if 'continuation_usage_status' in value:
                 value['continuation_usage_status']['can_start_export']=False
+            if 'source_import_execution_status' in value:
+                value['source_import_execution_status']['can_start_export']=False
         return value
 
     def freeze(self,owner,task_id,plan):
@@ -187,6 +208,36 @@ class SceneSpaceStore:
             _require(row is not None,'scene_space_plan_not_found',404)
             return technical_retry(json.loads(row['document']),plan_sha256)
 
+    def import_source(self,owner,task_id,*,grant):
+        """Install one fresh execution ledger beside exact immutable parent references."""
+        from .scene_source_import import validate_grant, new_usage, parent_ledgers
+        grant=validate_grant(grant);owner_id(owner);identifier(task_id)
+        with self._db() as db:
+            previous=db.execute('SELECT document FROM scene_tasks WHERE owner=? AND task_id=?',
+                (owner,task_id)).fetchone()
+            if previous:
+                record=self._load(db,owner,task_id)
+                _require(record.get('source_import')==grant,'scene_source_import_conflict')
+                return self._view(record)
+            parent=self._load(db,owner,grant['parent_run_id']);ledgers=parent_ledgers(parent)
+            _require(not parent.get('source_import') and digest(parent)==grant['parent_task_sha256']
+                and digest(ledgers)==grant['parent_usage_sha256']
+                and parent['frozen']['plan_sha256']==grant['plan_sha256']
+                and not any(r['status']=='active' for r in parent['reservations']),
+                'scene_source_import_parent_changed')
+            used=db.execute("SELECT 1 FROM scene_tasks WHERE owner=? AND "
+                "json_extract(document,'$.source_import.author_job_id')=? LIMIT 1",
+                (owner,grant['author_job_id'])).fetchone()
+            _require(used is None,'scene_source_import_already_exists')
+            record=dict(schema='video.scene-space-task.v1',owner=owner,task_id=task_id,
+                frozen=deepcopy(parent['frozen']),usage=new_usage(parent['frozen'],grant['sha256']),
+                source_import=deepcopy(grant),source_import_parent_ledgers=ledgers,
+                revision=1,created_at=self.clock(),updated_at=self.clock(),reservations=[],previews=[])
+            db.execute('INSERT INTO scene_tasks VALUES (?,?,?)',(owner,task_id,_json(record)))
+            db.execute('INSERT INTO scene_plans VALUES (?,?,?,?)',
+                (owner,task_id,record['frozen']['plan_sha256'],_json(record['frozen'])))
+            return self._view(record)
+
     def continue_review(self,owner,task_id,*,grant):
         """Install one grant without changing any legacy event or frozen plan."""
         from .scene_review_continuation import validate_grant, new_usage
@@ -227,6 +278,11 @@ class SceneSpaceStore:
                 _require(phase in {'review','export'},'scene_review_continuation_operation_not_allowed')
                 _require(not any(row['phase']==phase and row['id']!=operation_id
                     for row in record['reservations']),'scene_review_continuation_operation_limit')
+            if record.get('source_import'):
+                _require(phase in {'preview','review','export'},'scene_source_import_operation_not_allowed')
+                if phase in {'review','export'}:
+                    _require(not any(row['phase']==phase and row['id']!=operation_id
+                        for row in record['reservations']),'scene_source_import_operation_limit')
             reservation=dict(hold,status='active')
             for previous in record['reservations']:
                 if previous['id']==operation_id:
@@ -268,6 +324,10 @@ class SceneSpaceStore:
         with self._db() as db:
             record=self._load(db,owner,task_id)
             key='continuation_usage' if record.get('review_continuation') else 'usage'
+            if record.get('source_import'):
+                _require(event['phase'] in {'preview','review','export'}
+                    and any(r['id']==event['id'] and r['phase']==event['phase']
+                        for r in record['reservations']), 'scene_source_import_reservation_missing')
             if key=='continuation_usage':
                 _require(event['phase'] in {'review','export'},'scene_review_continuation_operation_not_allowed')
                 _require(any(r['id']==event['id'] and r['phase']==event['phase']
@@ -296,6 +356,7 @@ class SceneSpaceStore:
         with self._db() as db:
             record=self._load(db,owner,task_id)
             _require(not record.get('review_continuation'),'scene_review_continuation_retry_forbidden')
+            _require(not record.get('source_import'),'scene_source_import_retry_forbidden')
             _require(not any(r['status']=='active' for r in record['reservations']),
                 'scene_space_operations_still_active')
             prepared=prepare_retry(record['usage'],record['frozen'],expected_plan_sha256)
@@ -305,6 +366,7 @@ class SceneSpaceStore:
         with self._db() as db:
             record=self._load(db,owner,task_id)
             _require(not record.get('review_continuation'),'scene_review_continuation_revision_forbidden')
+            _require(not record.get('source_import'),'scene_source_import_revision_forbidden')
             _require(record['frozen']['plan_sha256']==expected_plan_sha256,'scene_space_plan_revision_conflict')
             _require(not any(r['status']=='active' for r in record['reservations']),
                 'scene_space_operations_still_active')

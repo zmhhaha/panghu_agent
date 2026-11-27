@@ -85,6 +85,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Internal engine-neutral Agent execution service')
     parser.add_argument('--config', required=True, help='Trusted public routing JSON file')
     parser.add_argument('--secrets', required=True, help='Private database/tokens/receipt-keys JSON file')
+    parser.add_argument('--caller-token-file',action='append',default=[],metavar='TOKEN_REF=/absolute/file',
+        help='Add one new public caller token from an independently mounted private file; never overwrite a bundle token')
     parser.add_argument('--allow-sqlite', action='store_true', help='Explicit local development only')
     parser.add_argument('--once', action='store_true', help='Run one dispatch tick (dispatch command only)')
     parser.add_argument('command', choices=('check', 'init-db', 'api', 'dispatch', 'model-proxy'))
@@ -93,7 +95,8 @@ def main(argv=None):
         parser.error('--once is only valid with dispatch')
     store, adapters = None, {}
     try:
-        config = load_configuration(args.config, args.secrets, allow_sqlite=args.allow_sqlite)
+        config = load_configuration(args.config, args.secrets, allow_sqlite=args.allow_sqlite,
+            caller_token_files=args.caller_token_file)
         if args.command == 'check':
             _output(config.summary())
             return 0

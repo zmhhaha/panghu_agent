@@ -294,6 +294,7 @@ class ServiceConfiguration:
     max_queue: int = 1000
     allow_sqlite: bool = False
     database_kind: str = 'postgresql'
+    caller_token_overlay_refs: tuple[str, ...] = ()
 
     def build_store(self):
         from .store import Store
@@ -352,16 +353,19 @@ class ServiceConfiguration:
         mode = ('mixed' if self.worker_endpoints and self.kubernetes_pools else
                 'kubernetes_per_attempt' if self.kubernetes_pools else
                 'external_single_capsule' if self.worker_endpoints else 'unconfigured')
-        return {'status': 'configuration_valid', 'schema_version': 2,
+        value = {'status': 'configuration_valid', 'schema_version': 2,
                 'database_kind': self.database_kind,
                 'caller_count': len(self.api_settings.principals),
                 'execution_slot_count': self.execution_slots,
                 'execution_isolation': 'shared' if self.execution_slots > 1 else 'global',
                 'worker_engines': engines, 'worker_provisioning': mode, 'model_requests': 0,
                 'catalog': self.deployment_registry.summary() if self.deployment_registry is not None else None}
+        if self.caller_token_overlay_refs:
+            value['caller_token_overlay_refs']=list(self.caller_token_overlay_refs)
+        return value
 
 
-def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> ServiceConfiguration:
+def load_configuration(config_path, secrets_path, *, allow_sqlite=False,caller_token_files=None) -> ServiceConfiguration:
     """Parse trusted files only. No environment, module or job selects a backend."""
     if type(allow_sqlite) is not bool:
         raise ConfigurationError()
@@ -373,6 +377,11 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         public = _Public.model_validate(public_wire)
     except (ValueError, TypeError, RecursionError):
         raise ConfigurationError() from None
+    try:
+        from .caller_token_overlay import overlay_caller_tokens
+        secret_wire,overlay_refs=overlay_caller_tokens(secret_wire,public.callers,caller_token_files)
+    except (OSError,ValueError,TypeError,KeyError,UnicodeError,RecursionError):
+        raise ConfigurationError('caller_token_overlay_invalid') from None
     try:
         from .registry import DeploymentRegistry
         deployment_registry = DeploymentRegistry.from_config(
@@ -494,7 +503,8 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         poll_seconds=public.dispatcher.poll_seconds, lease_seconds=public.dispatcher.lease_seconds,
         execution_slots=public.dispatcher.execution_slots,
         max_events=public.store.max_events, max_queue=public.store.max_queue,
-        allow_sqlite=allow_sqlite, database_kind='sqlite-development' if dialect == 'sqlite' else 'postgresql')
+        allow_sqlite=allow_sqlite, database_kind='sqlite-development' if dialect == 'sqlite' else 'postgresql',
+        caller_token_overlay_refs=overlay_refs)
 
 
 load_config = load_configuration

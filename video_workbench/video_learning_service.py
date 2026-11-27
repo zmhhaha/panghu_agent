@@ -97,10 +97,12 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
         'start_seconds', 'end_seconds', 'learn_audio', 'analysis_id', 'segment_index'}
 
     def __init__(self, root, *, author_gateway, review_gateway, renderer,
-                 library_adapter=None, media_adapter=None, remote_media_adapter=None, clock=time.time):
+                 library_adapter=None, media_adapter=None, remote_media_adapter=None, clock=time.time,
+                 classified_review_gateway=None):
         super().__init__(root, author_gateway=author_gateway, review_gateway=review_gateway,
             renderer=renderer, library_adapter=library_adapter,
-            remote_media_adapter=remote_media_adapter, clock=clock)
+            remote_media_adapter=remote_media_adapter, clock=clock,
+            classified_review_gateway=classified_review_gateway)
         self.media = media_adapter or VideoLearningMedia(self.root / 'media-preparation')
 
     @staticmethod
@@ -223,7 +225,7 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
         result = []
         for index, frame in enumerate(observation.get('frames', [])):
             value = deepcopy(frame) | dict(purpose=purpose, frame_id=f'{purpose}-{index + 1}',
-                file_name=f'{purpose}-{index + 1}.jpg')
+                file_name=f'{purpose}-{index + 1}' + ('.png' if frame.get('mime') == 'image/png' else '.jpg'))
             if 'source_snapshot_sha256' in frame:
                 value['source_frame_id'] = frame['frame_id']
             result.append(value)
@@ -262,7 +264,7 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
             document['constraints']['output_contract'] = review_output_contract(mode)
         elif mode=='create':
             document['constraints']['output_contract'] = author_output_contract()
-        return self._remote_document(run, self._render_repair_document(run, document))
+        return self._classified_document(run, self._remote_document(run, self._render_repair_document(run, document)))
 
     def _prepare_author_operation_input(self, document):
         super()._prepare_author_operation_input(document)
@@ -336,12 +338,19 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
         require(abs(metadata['duration_seconds'] - run['frozen']['duration_seconds']) <= 1 / 24 + 1e-5,
                 'video_learning_render_duration_changed', 409)
         self.store.blob(raw)
-        observed = self.media.sample(path, media_sha256=sha, start_seconds=0,
-            end_seconds=run['frozen']['duration_seconds'], store=self.store)
+        try:
+            observed = self._classified_video_observation(run, operation, candidate, result)
+        except ServiceError as error:
+            self._classified_stopped_capture_failure(run, operation, result, error)
+            raise
+        if observed is None:
+            observed = self.media.sample(path, media_sha256=sha, start_seconds=0,
+                end_seconds=run['frozen']['duration_seconds'], store=self.store)
         poster_sha = observed['frames'][0]['sha256']
         artifacts = deepcopy(candidate.get('artifacts', {}))
         for kind, content, mime in (
-            ('media', raw, 'video/mp4'), ('poster', self.store.read_blob(poster_sha), 'image/jpeg'),
+            ('media', raw, 'video/mp4'), ('poster', self.store.read_blob(poster_sha),
+                'image/png' if observed.get('capture_source') == 'renderer_original_lossless_png' else 'image/jpeg'),
             ('source', canonical_bytes(candidate['source']), 'application/json'),
             ('receipt', Path(result['receipt_path']).read_bytes(), 'application/json')):
             artifacts[kind] = dict(id=candidate['id'] + '-' + kind,

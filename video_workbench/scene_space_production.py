@@ -301,6 +301,8 @@ class SceneSpaceProductionAdapter:
             return row
         except ServiceError as error:
             if error.code!='not_found':raise
+        if run.get('scene_source_import'):
+            return self._prepare_source_import(run)
         if run.get('scene_review_continuation'):
             return self._prepare_review_continuation(run)
         if run.get('scene_source_recovery'):
@@ -333,6 +335,125 @@ class SceneSpaceProductionAdapter:
             previews=[],clips=[],review=None,repair=None,attempts=[],attempt=0,gate=None,
             render_request_key='scene-render-'+run['id'],render_id=None,render_result=None,
             render_submit_attempted=False,created_at=self.clock(),deadline_at=self.clock()+3600)
+        return self._write(row,insert=True)
+
+    def source_import_configuration(self,owner,project_id):
+        from .scene_source_import import LIMITS
+        configuration=self.freeze_configuration(owner,project_id)
+        _require(self._classified({'configuration':configuration}),
+            'scene_source_import_classified_review_required',503)
+        configuration.update(max_pre_export_repairs=0,source_import_limits=deepcopy(LIMITS),
+            model_job_reserve_calls=8,model_job_reserve_tokens=LIMITS['admission_reserve_tokens'])
+        configuration['configuration_sha256']=digest({k:v for k,v in configuration.items()
+            if k!='configuration_sha256'})
+        return configuration
+
+    def source_import_snapshot(self,run,request):
+        from .scene_source_import import task_document, parent_ledgers
+        row=self._read(run['owner'],run['id'])
+        _require(row['status'] in {'failed','cancelled'} and row['stop_proven'] is True
+            and row.get('author_submit_attempted') is True and row.get('author_result') is not None
+            and row.get('source') is not None and row.get('plan_sha256') is not None
+            and not row.get('source_import') and row.get('render_id') is None
+            and not row.get('render_submit_attempted') and row.get('review') is not None
+            and not row.get('repair') and not row.get('attempts') and row.get('attempt',0)==0,
+            'scene_source_import_parent_unavailable',409)
+        task=task_document(self.space_store.get(run['owner'],run['id']))
+        _require(digest(row)==request['expected_scene_sha256'] and digest(task)==request['expected_task_sha256']
+            and digest(parent_ledgers(task))==request['expected_parent_usage_sha256']
+            and row['author_job_id']==request['expected_author_job_id']
+            and row['author_input_sha256']==request['expected_author_input_sha256']==digest(row['author_document'])
+            and digest(row['author_result'])==request['expected_author_result_sha256']
+            and row['source_sha256']==request['expected_source_sha256']
+            and row['source']==picture.validate_source(row['author_result']['source'],constraints=row['author_document']['constraints'])
+            and row['plan_sha256']==request['expected_plan_sha256']==task['frozen']['plan_sha256']
+            and row['configuration']['configuration_sha256']==request['expected_parent_configuration_sha256']
+            and row['configuration']==run['scene_space_configuration']
+            and row['film_sha256']==run['film_sha256'] and row['binding_sha256']==run['binding_sha256']
+            and not any(r['status']=='active' for r in task['reservations'])
+            and self.clock()<request['execution_deadline_at']<=self.clock()+3600,
+            'scene_source_import_parent_changed',409)
+        return row,task
+
+    def prepare_source_import(self,run,request,*,lineage_job_ids):
+        from .scene_source_import import SCHEMA as IMPORT_SCHEMA, LIMITS, MODEL_LIMITS, validate_grant
+        row,task=self.source_import_snapshot(run,request)
+        configuration=self.source_import_configuration(run['owner'],run['project_id'])
+        _require(configuration['configuration_sha256']==request['expected_configuration_sha256'],
+            'scene_source_import_configuration_changed',409)
+        self.structured_reviewer.preflight_model_limits(request['execution_deadline_at'],MODEL_LIMITS)
+        job=self.author.poll(row['author_job_id']);attempt=job.get('attempt') or {};proof=job.get('stop_proof') or {}
+        pins=job.get('pins') or {};evidence=job.get('usage_evidence')
+        _require(job.get('job_id')==row['author_job_id'] and job.get('state')=='completed'
+            and job.get('stop_proven') is True and proof.get('stop_proven') is True
+            and proof.get('attempt_id')==attempt.get('attempt_id') and type(attempt.get('fence')) is int
+            and attempt['fence']>=1 and proof.get('fence')==attempt['fence']
+            and _sha(proof.get('request_sha256')) and _sha(proof.get('result_sha256'))
+            and pins.get('profile')==row['configuration']['author_profile']
+            and pins.get('profile_revision')==row['configuration']['author_revision'],
+            'scene_source_import_author_unproven',409)
+        _require(type(evidence) is dict and evidence.get('schema')=='agent-model-usage-evidence.v1'
+            and evidence.get('sha256')==request['expected_usage_evidence_sha256']==digest(
+                {k:v for k,v in evidence.items() if k!='sha256'})
+            and evidence.get('job_id')==job['job_id'] and evidence.get('attempt_id')==attempt['attempt_id']
+            and evidence.get('fence')==attempt['fence'] and evidence.get('state')=='completed'
+            and _sha(evidence.get('execution_binding_sha256'))
+            and evidence.get('execution_binding_sha256')==(pins.get('execution_binding') or {}).get('sha256')
+            and evidence.get('stop_proven') is True and evidence.get('authoritative') is True
+            and evidence.get('all_attempts') is True and evidence.get('completeness')=='complete'
+            and type(evidence.get('request_count')) is int and evidence['request_count']>=1
+            and all(type(evidence.get(k)) is int and evidence[k]>=0
+                for k in ('input_tokens','output_tokens','total_tokens'))
+            and evidence['total_tokens']==evidence['input_tokens']+evidence['output_tokens'],
+            'scene_source_import_author_usage_unproven',409)
+        result=self.author.collect(job['job_id'],row['author_input_sha256'],row['author_document'])
+        picture.validate_result(result,row['author_input_sha256'],row['author_document'])
+        _require(result==row['author_result'] and validate_scene_method(result['method']['scene_space'],
+            source_scope='scene_data_only',source_refs=[],frame_ids=[])['plan']==task['frozen']['plan'],
+            'scene_source_import_author_artifact_changed',409)
+        old=self._review_gateway(row).poll(row['review']['job_id'])
+        _require(old.get('job_id')==row['review']['job_id'] and old.get('state') not in ACTIVE
+            and old.get('stop_proven') is True,'scene_source_import_parent_review_not_stopped',409)
+        for item in row['previews']+row.get('clips',[]):
+            if not item.get('attempted'):continue
+            _require(item.get('render_id') is not None,'scene_source_import_parent_render_uncertain',409)
+            child=self.renderer.get(run['owner'],item['render_id'])
+            _require(child.get('status') not in ACTIVE and child.get('stop_proven') is True,
+                'scene_source_import_parent_render_not_stopped',409)
+        previous=row.get('review_continuation') or row.get('source_recovery') or {}
+        original=previous.get('original_run_id',previous.get('source_run_id',run['id']))
+        value=dict(schema=IMPORT_SCHEMA,parent_run_id=run['id'],original_run_id=original,
+            parent_run_sha256=digest(run),parent_scene_sha256=digest(row),parent_task_sha256=digest(task),
+            parent_usage_sha256=request['expected_parent_usage_sha256'],
+            parent_configuration_sha256=row['configuration']['configuration_sha256'],
+            configuration_sha256=configuration['configuration_sha256'],author_job_id=job['job_id'],
+            author_input_sha256=row['author_input_sha256'],author_result_sha256=digest(result),
+            author_usage_evidence_sha256=evidence['sha256'],source_sha256=row['source_sha256'],
+            plan_sha256=row['plan_sha256'],film_sha256=row['film_sha256'],
+            authorization_sha256=request['authorization_sha256'],lineage_job_ids=sorted(lineage_job_ids),
+            issued_at=self.clock(),execution_deadline_at=request['execution_deadline_at'],
+            limits=deepcopy(LIMITS),model_limits=deepcopy(MODEL_LIMITS),maximum_imports=1,
+            accept_parent_cumulative_usage_unknown=True,accept_original_token_cap_unproven=True,
+            allow_export_with_parent_unknown=True,cumulative_cost_status='unknown',new_unknown_usage_policy='stop')
+        grant=validate_grant(dict(value,sha256=digest(value)))
+        return grant,configuration
+
+    def _prepare_source_import(self,run):
+        from .scene_source_import import validate_grant
+        grant=validate_grant(run['scene_source_import']);source=self._read(run['owner'],grant['parent_run_id'])
+        _require(digest(source)==grant['parent_scene_sha256'] and run['film_sha256']==source['film_sha256']
+            and run['binding_sha256']==source['binding_sha256']
+            and run['scene_space_configuration']['configuration_sha256']==grant['configuration_sha256']
+            and digest({k:v for k,v in run['scene_space_configuration'].items() if k!='configuration_sha256'})
+                ==grant['configuration_sha256'] and self._classified({'configuration':run['scene_space_configuration']}),
+            'scene_source_import_parent_changed',409)
+        self.space_store.import_source(run['owner'],run['id'],grant=grant)
+        row=deepcopy(source);row.pop('review_continuation',None);row.pop('source_recovery',None)
+        row.update(run_id=run['id'],configuration=deepcopy(run['scene_space_configuration']),
+            source_import=deepcopy(grant),status='preview',stop_proven=False,error=None,
+            previews=[],clips=[],review=None,repair=None,attempts=[],attempt=0,gate=None,
+            render_request=None,render_request_key='scene-render-'+run['id'],render_id=None,render_result=None,
+            render_submit_attempted=False,created_at=self.clock(),deadline_at=grant['execution_deadline_at'])
         return self._write(row,insert=True)
 
     def source_recovery_snapshot(self,run,request):
@@ -640,6 +761,13 @@ class SceneSpaceProductionAdapter:
                 legacy_usage_sha256=row['review_continuation']['legacy_usage_sha256'],
                 grant_sha256=row['review_continuation']['sha256'],
                 original_total_token_cap_proven=False))
+        if row.get('source_import'):
+            saved=self.space_store.get(row['owner'],row['run_id'])
+            run['scene_space'].update(repair_limit=0,accounting=dict(
+                cumulative=deepcopy(saved['usage_status']),
+                source_import_execution=deepcopy(saved['source_import_execution_status']),
+                parent_usage_sha256=row['source_import']['parent_usage_sha256'],
+                grant_sha256=row['source_import']['sha256'],original_total_token_cap_proven=False))
         if self._classified(row):
             run['scene_space'].update(review_profile=row['configuration']['review_profile'],
                 review_gate_schema=GATE_SCHEMA,
@@ -872,7 +1000,9 @@ class SceneSpaceProductionAdapter:
         if clip is None:
             row['status']='review';return self._write(row)
         if not clip['attempted'] and clip['render_id'] is None:
-            _require(saved['usage_status']['status']=='within_budget','scene_space_budget_unavailable',409)
+            from .scene_review_continuation import execution_status
+            status=execution_status(saved) if row.get('source_import') else saved['usage_status']
+            _require(status['status']=='within_budget','scene_space_budget_unavailable',409)
         if clip['request'] is None:
             if not admit:return row
             window=self._render_window(row,preview=True)
@@ -953,6 +1083,13 @@ class SceneSpaceProductionAdapter:
                 grant_sha256=grant['sha256'],parent_run_id=grant['parent_run_id'],
                 limits=deepcopy(grant['limits']),cumulative_cost_status='unknown',
                 scope='fresh_static_review_of_unchanged_author_and_retained_completed_previews')
+        if row.get('source_import'):
+            grant=row['source_import']
+            document['constraints']['scene_source_import']=dict(schema=grant['schema'],grant_sha256=grant['sha256'],
+                parent_run_id=grant['parent_run_id'],configuration_sha256=grant['configuration_sha256'],
+                source_sha256=grant['source_sha256'],plan_sha256=grant['plan_sha256'],
+                limits=deepcopy(grant['limits']),cumulative_cost_status='unknown',
+                scope='fresh_lossless_samples_and_new_review_of_the_exact_imported_source_and_plan')
         frames=[];files={};provenance=[]
         from PIL import Image
         samples=[dict(item,identity='preview-'+str(item['frame']),capture_kind='static_preview')
@@ -1001,6 +1138,7 @@ class SceneSpaceProductionAdapter:
 
     def _review(self,row,*,admit):
         gateway=self._review_gateway(row)
+        grant=row.get('source_import') or row.get('review_continuation')
         if row['review'] is None:
             document,_=self._review_files(row)
             row['review']=dict(id='scene-review-'+row['run_id']
@@ -1010,16 +1148,15 @@ class SceneSpaceProductionAdapter:
         review=row['review'];document=review['document']
         if not review['attempted']:
             if not admit:return row
-            if row.get('review_continuation'):
-                gateway.preflight_model_limits(row['deadline_at'],row['review_continuation']['model_limits'])
+            if grant:
+                gateway.preflight_model_limits(row['deadline_at'],grant['model_limits'])
             else:
                 gateway.preflight(row['deadline_at'])
             if review['input_refs'] is None:
                 rebuilt,files=self._review_files(row)
                 _require(rebuilt==document,'scene_space_review_input_changed',409)
                 review['input_refs']=gateway.upload(document,files);self._write(row)
-            limits=({'model_limits':row['review_continuation']['model_limits']}
-                if row.get('review_continuation') else {})
+            limits=({'model_limits':grant['model_limits']} if grant else {})
             call=gateway.prepare_submission(review['id'],document,row['deadline_at'],review['input_refs'],**limits)
             self._reserve_model(row,review['id'],phase='review')
             review['attempted']=True;self._write(row)
@@ -1033,8 +1170,7 @@ class SceneSpaceProductionAdapter:
                 row['error']='scene_space_review_submission_unconfirmed';return self._write(row)
             raise
         review['job_id']=job['job_id']
-        if row.get('review_continuation'):
-            grant=row['review_continuation']
+        if grant:
             _require(job.get('model_limits')==grant['model_limits']
                 and job['job_id'] not in grant['lineage_job_ids']
                 and len(set(grant['lineage_job_ids'])|{job['job_id']})<=grant['limits']['maximum_lineage_distinct_jobs'],
@@ -1043,13 +1179,13 @@ class SceneSpaceProductionAdapter:
         if job.get('stop_proven') is not True:
             row['error']='scene_space_review_stop_unproven';return self._write(row)
         verified=True
-        if row.get('review_continuation'):
+        if grant:
             review['usage'],verified=self._continuation_review_usage(job)
         else:
             review['usage']=_measured_usage(job)
         settled=self.space_store.record_usage(row['owner'],row['run_id'],id=review['id'],phase='review',
             outcome='completed' if job['state']=='completed' else 'failed',**review['usage'],render_seconds=0)
-        if row.get('review_continuation'):
+        if grant:
             from .scene_review_continuation import execution_status
             _require(verified and execution_status(settled)['status']=='within_budget',
                 'scene_review_continuation_new_usage_unavailable',409)
@@ -1069,7 +1205,7 @@ class SceneSpaceProductionAdapter:
             passed=decision['passed']
         else:
             passed=(result['review']['score']>=row['configuration']['preview_min_score'] and not result['review']['issues'])
-        if not passed and not row.get('review_continuation') \
+        if not passed and not grant \
                 and row.get('attempt',0)<row['configuration'].get('max_pre_export_repairs',0) \
                 and not result['review']['stop_recommended']:
             row['status']='repair';row['error']=None
@@ -1282,6 +1418,18 @@ class SceneSpaceProductionAdapter:
 
     def _render_document(self,row,saved,*,export=False):
         document=deepcopy(row['author_document'])
+        if row.get('source_import'):
+            grant=row['source_import'];caps=row['configuration']['render_capability']
+            document['constraints']['scene_space_capability']={key:deepcopy(value)
+                for key,value in caps.items() if key!='authoring_constraints'}
+            constraints=caps.get('authoring_constraints',{})
+            for key in ('assets','drawing_libraries','drawing_library_api','runtime_identity'):
+                if key in constraints:document['constraints'][key]=deepcopy(constraints[key])
+            document['constraints']['scene_source_import']=dict(schema=grant['schema'],
+                grant_sha256=grant['sha256'],parent_run_id=grant['parent_run_id'],
+                source_sha256=grant['source_sha256'],plan_sha256=grant['plan_sha256'],
+                configuration_sha256=grant['configuration_sha256'],parent_usage_sha256=grant['parent_usage_sha256'],
+                cumulative_cost_status='unknown',budget_scope='new_source_import_execution_only')
         if export and self._classified(row):
             review=row.get('review') or {}
             reviewed,_=self._review_files(row)
@@ -1347,7 +1495,7 @@ class SceneSpaceProductionAdapter:
         _require(run.get('audio_mode')=='silent','scene_space_production_audio_not_admitted')
         admit=bool(admit and self.enabled)
         row=self._prepare(run)
-        if row.get('review_continuation') and row['status'] not in {'completed','failed','cancelled'}:
+        if (row.get('review_continuation') or row.get('source_import')) and row['status'] not in {'completed','failed','cancelled'}:
             _require(self.clock()<row['deadline_at'],'scene_review_continuation_deadline_expired',409)
         self._project(run,row);persist(run)
         if row['status']=='author':row=self._author(row,admit=admit)
@@ -1413,7 +1561,7 @@ class SceneSpaceProductionAdapter:
             spending=record.get('continuation_usage',record['usage'])
             if not any(event['id']==review['id'] for event in spending['events']):
                 measurement=(self._continuation_review_usage(job)[0]
-                    if row.get('review_continuation') else _measured_usage(job))
+                    if row.get('review_continuation') or row.get('source_import') else _measured_usage(job))
                 self.space_store.record_usage(row['owner'],row['run_id'],id=review['id'],phase='review',
                     outcome='completed' if job['state']=='completed' else 'cancelled',
                     **measurement,render_seconds=0)
