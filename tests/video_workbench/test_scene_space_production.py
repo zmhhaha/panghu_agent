@@ -101,7 +101,8 @@ class SceneRenderer:
                 if 'frame_range' in request else frozen['plan']['duration_frames']),plan_sha256=frozen['plan_sha256'],
             source_sha256=request['source']['source_sha256'],snapshot_sha256=digest(request))
         job=dict(id='render-'+str(len(self.jobs)),status='completed',stop_proven=True,result=result,
-            usage=dict(render_seconds=3),error=None)
+            usage=dict(render_seconds=3),error=None,request_sha256=digest(request),
+            source_sha256=result['source_sha256'],plan_sha256=result['plan_sha256'])
         self.jobs[(owner,key)]=job
         self.artifacts[job['id']]=(raw,'image/png' if static else 'video/mp4')
         if self.lose_submit:raise ServiceError('lost_response',503)

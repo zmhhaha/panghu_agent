@@ -109,6 +109,13 @@ class SceneSpaceStore:
             previous=json.loads(parent[0]);ledgers=parent_ledgers(previous)
             _require(record['frozen']==previous['frozen'] and record['source_import_parent_ledgers']==ledgers
                 and digest(ledgers)==grant['parent_usage_sha256'], 'scene_source_import_parent_changed')
+        if record.get('source_import_resume'):
+            from .scene_source_import_resume import validate_resume_certificate, require_carried_prefix
+            certificate=validate_resume_certificate(record['source_import_resume'],record['source_import'])
+            _require(certificate['owner']==owner and certificate['parent_run_id']!=task_id,
+                'scene_source_import_resume_parent_changed')
+            parent=SceneSpaceStore._load(db,owner,certificate['parent_run_id'])
+            require_carried_prefix(record,parent,certificate)
         return record
 
     def _put(self,db,record):
@@ -238,6 +245,35 @@ class SceneSpaceStore:
                 (owner,task_id,record['frozen']['plan_sha256'],_json(record['frozen'])))
             return self._view(record)
 
+    def resume_import_review(self,owner,task_id,*,certificate,grant):
+        """Carry the entire original grant ledger; never reset or mint a budget."""
+        from .scene_source_import_resume import validate_resume_certificate, unused_execution
+        certificate=validate_resume_certificate(certificate,grant);owner_id(owner);identifier(task_id)
+        _require(certificate['owner']==owner and certificate['parent_run_id']!=task_id,
+            'scene_source_import_resume_parent_changed')
+        with self._db() as db:
+            prior=db.execute('SELECT document FROM scene_tasks WHERE owner=? AND task_id=?',(owner,task_id)).fetchone()
+            if prior:
+                record=self._load(db,owner,task_id)
+                _require(record.get('source_import_resume')==certificate,'scene_source_import_resume_conflict')
+                return self._view(record)
+            parent=self._load(db,owner,certificate['parent_run_id']);unused_execution(parent)
+            _require(not parent.get('source_import_resume') and parent.get('source_import')==grant
+                and digest(parent)==certificate['parent_task_sha256']
+                and parent['usage']['sha256']==certificate['parent_usage_sha256'],
+                'scene_source_import_resume_parent_changed')
+            used=db.execute("SELECT 1 FROM scene_tasks WHERE owner=? AND "
+                "json_extract(document,'$.source_import_resume.source_import_grant_sha256')=? LIMIT 1",
+                (owner,grant['sha256'])).fetchone()
+            _require(used is None,'scene_source_import_resume_already_exists')
+            record=deepcopy(parent)
+            record.update(task_id=task_id,source_import_resume=certificate,revision=1,
+                created_at=self.clock(),updated_at=self.clock())
+            db.execute('INSERT INTO scene_tasks VALUES (?,?,?)',(owner,task_id,_json(record)))
+            db.execute('INSERT INTO scene_plans VALUES (?,?,?,?)',
+                (owner,task_id,record['frozen']['plan_sha256'],_json(record['frozen'])))
+            return self._view(record)
+
     def continue_review(self,owner,task_id,*,grant):
         """Install one grant without changing any legacy event or frozen plan."""
         from .scene_review_continuation import validate_grant, new_usage
@@ -274,6 +310,8 @@ class SceneSpaceStore:
             model_tokens=model_tokens,render_seconds=render_seconds)
         with self._db() as db:
             record=self._load(db,owner,task_id)
+            if record.get('source_import_resume'):
+                _require(phase in {'review','export'},'scene_source_import_resume_operation_not_allowed')
             if record.get('review_continuation'):
                 _require(phase in {'review','export'},'scene_review_continuation_operation_not_allowed')
                 _require(not any(row['phase']==phase and row['id']!=operation_id
@@ -324,6 +362,8 @@ class SceneSpaceStore:
         with self._db() as db:
             record=self._load(db,owner,task_id)
             key='continuation_usage' if record.get('review_continuation') else 'usage'
+            if record.get('source_import_resume'):
+                _require(event['phase'] in {'review','export'},'scene_source_import_resume_operation_not_allowed')
             if record.get('source_import'):
                 _require(event['phase'] in {'preview','review','export'}
                     and any(r['id']==event['id'] and r['phase']==event['phase']

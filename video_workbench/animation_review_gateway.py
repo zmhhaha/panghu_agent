@@ -29,22 +29,33 @@ class _AnimationGateway(MotionAgentGateway):
     visual_input = False
     task_timeout_seconds = 600
 
+    def _frame_input_limits(self):
+        """Legacy transports retain their original frame-only 3 MiB ceiling."""
+        return None
+
     def _files(self, document, files=None):
         raw = self._document_bytes(document)
         expected = {self.input_name: raw}
         if self.visual_input:
             _require(type(files) is dict, 'animation_frame_inputs_required', 422)
-            total = 0
+            limits = self._frame_input_limits()
+            total = 0 if limits is None else len(raw)
+            image_limit = (visual.MAX_IMAGE_BYTES if limits is None
+                           else min(visual.MAX_IMAGE_BYTES, limits.max_input_bytes))
+            total_limit = MAX_FRAME_TOTAL_BYTES if limits is None else limits.max_input_total_bytes
+            if limits is not None:
+                _require(1 + len(document['observation']['frames']) <= limits.max_input_files,
+                         'animation_input_files_too_many', 413)
             for frame in document['observation']['frames']:
                 name = frame['file_name']
                 content = files.get(name)
-                _require(type(content) is bytes and 1 <= len(content) <= visual.MAX_IMAGE_BYTES
+                _require(type(content) is bytes and 1 <= len(content) <= image_limit
                          and hashlib.sha256(content).hexdigest() == frame['sha256'],
                          'animation_frame_integrity', 422)
                 visual._image_header(content, name)
                 expected[name] = content
                 total += len(content)
-            _require(total <= MAX_FRAME_TOTAL_BYTES, 'animation_frame_inputs_too_large', 413)
+            _require(total <= total_limit, 'animation_frame_inputs_too_large', 413)
         if files is not None:
             _require(type(files) is dict and files == expected, 'animation_input_files_changed', 422)
         return expected

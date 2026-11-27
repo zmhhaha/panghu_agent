@@ -79,6 +79,8 @@ class ProductionRunStore:
             result['scene_review_continuation']=deepcopy(run['scene_review_continuation'])
         if 'scene_source_import' in run:
             result['scene_source_import']=deepcopy(run['scene_source_import'])
+        if 'scene_source_import_resume' in run:
+            result['scene_source_import_resume']=deepcopy(run['scene_source_import_resume'])
         if 'rendering_route' in run:
             result['rendering_route'] = deepcopy(run['rendering_route'])
         raw_items = run.get('items') if type(run.get('items')) is list else []
@@ -1026,6 +1028,119 @@ class ProductionRunStore:
         return dict(schema='video.scene-source-import-preflight.v1',parent_run_id=parent_id,
             request=request,configuration=configuration,model_requests=0,jobs_created=0,
             author_jobs=0,grant_created=False,production_post_performed=False)
+
+    def source_import_resume_preflight(self,owner,parent_id):
+        """Read-only CAS material; never refresh the original grant clock."""
+        return self._source_import_resume_preflight(owner,parent_id)
+
+    def source_import_resume_window_preflight(self,owner,parent_id):
+        """Read-only preparation; no new authorization or window is issued."""
+        return self._source_import_resume_preflight(owner,parent_id,allow_expired=True)
+
+    def _source_import_resume_preflight(self,owner,parent_id,*,allow_expired=False):
+        from .scene_source_import_resume import operation_key
+        with self.store.transaction() as db:
+            parent=self._read(db,parent_id,owner);project=self.store._project(db,owner,parent['project_id'])
+            successor=db.execute("SELECT id FROM production_runs WHERE owner=? AND "
+                "json_extract(document,'$.scene_source_import_resume.source_import_grant_sha256')=? LIMIT 1",
+                (owner,(parent.get('scene_source_import') or {}).get('sha256'))).fetchone()
+            require(successor is None,'scene_source_import_resume_already_exists',409)
+        row,task,artifacts,route,review_input=self._scene_space_service().source_import_resume_snapshot(parent,allow_expired=allow_expired)
+        grant=parent['scene_source_import']
+        request=dict(expected_revision=project['revision'],expected_source_run_sha256=digest(parent),
+            expected_scene_sha256=digest(row),expected_task_sha256=digest(task),expected_usage_sha256=task['usage']['sha256'],
+            expected_configuration_sha256=grant['configuration_sha256'],expected_artifacts_sha256=artifacts,
+            expected_grant_sha256=grant['sha256'],authorization_sha256=grant['authorization_sha256'],
+            execution_deadline_at=grant['execution_deadline_at'])
+        return dict(schema='video.scene-source-import-resume-window-preflight.v1' if allow_expired else 'video.scene-source-import-resume-preflight.v1',parent_run_id=parent_id,
+            request=request,request_key=operation_key(owner,parent_id,grant['sha256']),
+            model_requests=0,jobs_created=0,grant_created=False,production_post_performed=False,
+            execution_usage=deepcopy(self._scene_space_service().space_store.get(owner,parent_id)['source_import_execution_status']))
+
+    def resume_scene_source_import(self,owner,parent_id,request,idem):
+        from .scene_source_import_resume import validate_request
+        request=validate_request(request)
+        return self._resume_scene_source_import(owner,parent_id,request,idem)
+
+    def resume_scene_source_import_window(self,owner,parent_id,request,idem):
+        from .scene_source_import_resume_window import validate_window_request,EXTRA_FIELDS
+        from .scene_source_import_resume import REQUEST_FIELDS
+        request=validate_window_request(request,self._scene_space_service().clock(),validate_clock=False)
+        return self._resume_scene_source_import(owner,parent_id,{key:request[key] for key in REQUEST_FIELDS},idem,
+            window={key:request[key] for key in EXTRA_FIELDS})
+
+    def _resume_scene_source_import(self,owner,parent_id,request,idem,*,window=None):
+        from .scene_source_import_resume import validate_resume_certificate,operation_key,CANONICALIZATION_REVISION
+        fingerprint=digest(dict(kind='scene-source-import-resume-window' if window is not None else 'scene-source-import-resume',
+            parent_id=parent_id,request=dict(request,**(window or {})),idem=idem))
+        with self.store.lock:
+            with self.store.transaction() as db:
+                parent=self._read(db,parent_id,owner);grant=parent.get('scene_source_import') or {}
+                require(idem==operation_key(owner,parent_id,grant.get('sha256')),
+                    'scene_source_import_resume_fixed_key_required',409)
+                replay=db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',(owner,idem)).fetchone()
+                if replay:
+                    result=json.loads(replay['document'])
+                    require(replay['request_hash']==fingerprint
+                        and result.get('scene_source_import_resume',{}).get('parent_run_id')==parent_id,'idempotency_conflict',409)
+                    return self.public(result,current=True)
+                if window is not None:
+                    from .scene_source_import_resume_window import validate_window_request
+                    validate_window_request(dict(request,**window),self._scene_space_service().clock())
+                project=self.store._project(db,owner,parent['project_id']);self.store._revision(project,request['expected_revision'])
+                require(parent['status']=='failed' and not parent.get('draining') and not parent.get('cancel_requested')
+                    and not parent.get('blocked_reason') and not parent.get('intents')
+                    and not parent.get('scene_source_import_resume') and self._uses_scene_space(parent)
+                    and parent.get('audio_mode')=='silent' and self._matches(parent,project,db)
+                    and digest(parent)==request['expected_source_run_sha256'],
+                    'scene_source_import_resume_parent_changed',409)
+                for old in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=? AND id<>?',(owner,parent['project_id'],parent_id)):
+                    require(not self._unfinished(json.loads(old[0])),'production_run_in_progress',409)
+                self._require_idle_project_children(db,parent['project_id'])
+            row,task,artifacts,route,review_input=self._scene_space_service().source_import_resume_snapshot(parent,
+                allow_expired=window is not None,probe_deadline_at=(window or {}).get('phase_execution_deadline_at'))
+            require(digest(row)==request['expected_scene_sha256'] and digest(task)==request['expected_task_sha256']
+                and task['usage']['sha256']==request['expected_usage_sha256'] and artifacts==request['expected_artifacts_sha256']
+                and grant['configuration_sha256']==request['expected_configuration_sha256']
+                and grant['sha256']==request['expected_grant_sha256'] and grant['authorization_sha256']==request['authorization_sha256']
+                and grant['execution_deadline_at']==request['execution_deadline_at'],
+                'scene_source_import_resume_parent_changed',409)
+            value=dict(schema='video.scene-source-import-resume.v1',owner=owner,project_id=parent['project_id'],parent_run_id=parent_id,
+                parent_run_sha256=digest(parent),parent_scene_sha256=digest(row),parent_task_sha256=digest(task),
+                parent_usage_sha256=task['usage']['sha256'],configuration_sha256=grant['configuration_sha256'],artifacts_sha256=artifacts,
+                source_import_grant_sha256=grant['sha256'],authorization_sha256=grant['authorization_sha256'],
+                source_sha256=grant['source_sha256'],plan_sha256=grant['plan_sha256'],execution_deadline_at=grant['execution_deadline_at'],
+                issued_at=self._scene_space_service().clock(),maximum_successors=1,request_key=idem,review_route=route,
+                canonicalization_revision=CANONICALIZATION_REVISION,review_input_sha256=review_input)
+            if window is not None:
+                from .scene_source_import_resume_window import SCHEMA as WINDOW_SCHEMA
+                value.update(window,schema=WINDOW_SCHEMA)
+            certificate=validate_resume_certificate(dict(value,sha256=digest(value)),grant)
+            with self.store.transaction() as db:
+                current=self._read(db,parent_id,owner);project=self.store._project(db,owner,parent['project_id'])
+                self.store._revision(project,request['expected_revision'])
+                require(current==parent and self._matches(current,project,db),'scene_source_import_resume_parent_changed',409)
+                existing=db.execute("SELECT id FROM production_runs WHERE owner=? AND "
+                    "json_extract(document,'$.scene_source_import_resume.source_import_grant_sha256')=? LIMIT 1",(owner,grant['sha256'])).fetchone()
+                require(existing is None,'scene_source_import_resume_already_exists',409)
+                for old in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=? AND id<>?',(owner,parent['project_id'],parent_id)):
+                    require(not self._unfinished(json.loads(old[0])),'production_run_in_progress',409)
+                require(db.execute('SELECT count(*) FROM production_runs WHERE project_id=?',(parent['project_id'],)).fetchone()[0]<64
+                    and db.execute('SELECT count(*) FROM production_runs').fetchone()[0]<1024,'production_run_storage_limit',409)
+                run=deepcopy(parent)
+                run.update(id=str(uuid4()),request_key=idem,status='queued',phase='scene_source_import_resume_pending',
+                    error=None,blocked_reason=None,cancel_requested=False,draining=False,created_at=time.time(),finished_at=None,
+                    draft_render_id=None,scene_source_import_resume=certificate,
+                    scene_space=dict(status='source_import_resume_pending',stop_proven=True,plan_sha256=grant['plan_sha256'],
+                        source_sha256=grant['source_sha256'],render_id=None,error=None))
+                for item in run['items']:item.update(status='queued',error=None)
+                if 'sequence_registration' in parent:
+                    require(self.sequence_store is not None,'production_run_sequence_unavailable',503)
+                    run.update(sequence_lineage=dict(origin_run_id=run['id'],parent=None),sequence_registration=self._registration())
+                    run['sequence_lineage_sha256']=digest(run['sequence_lineage'])
+                raw=packed(run);require(len(raw.encode())<=512*1024,'production_run_storage_limit',413)
+                db.execute('INSERT INTO production_runs VALUES (?,?,?,?,?,?)',(run['id'],owner,run['project_id'],idem,fingerprint,raw))
+                return self.public(run,current=True)
 
     def _source_import_target(self,db,owner,parent_id,request):
         parent=self._read(db,parent_id,owner);project=self.store._project(db,owner,parent['project_id'])

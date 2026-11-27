@@ -377,6 +377,24 @@ class SceneSourceImport(Revision):
     allow_export_with_parent_unknown: bool = Field(strict=True)
 
 
+class SceneSourceImportResume(Revision):
+    expected_source_run_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_scene_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_task_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_usage_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_configuration_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_artifacts_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    expected_grant_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    authorization_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    execution_deadline_at: float = Field(gt=0,allow_inf_nan=False)
+
+
+class SceneSourceImportResumeWindow(SceneSourceImportResume):
+    renewal_authorization_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    phase_execution_deadline_at: float = Field(gt=0,allow_inf_nan=False)
+    ack_unused_allocation_only: bool = Field(strict=True)
+
+
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     audio_mode: Literal['narration', 'silent'] | None = Field(default=None)
@@ -1250,6 +1268,28 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
         production_run_workflow.require_enabled()
         return production_run_store.import_scene_source(owner,run_id,body.model_dump(),idempotency(idempotency_key))
+
+    @app.get('/api/production-runs/{run_id}/scene-source-import-resume')
+    def production_scene_source_import_resume_preflight(run_id: str,owner=Depends(identity)):
+        production_run_workflow.require_enabled()
+        return production_run_store.source_import_resume_preflight(owner,run_id)
+
+    @app.post('/api/production-runs/{run_id}/scene-source-import-resume',status_code=202)
+    def resume_production_scene_source_import(run_id: str,body: SceneSourceImportResume,owner=Depends(mutation),
+            idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.resume_scene_source_import(owner,run_id,body.model_dump(),idempotency(idempotency_key))
+
+    @app.get('/api/production-runs/{run_id}/scene-source-import-resume-window')
+    def production_scene_source_import_resume_window_preflight(run_id: str,owner=Depends(identity)):
+        production_run_workflow.require_enabled()
+        return production_run_store.source_import_resume_window_preflight(owner,run_id)
+
+    @app.post('/api/production-runs/{run_id}/scene-source-import-resume-window',status_code=202)
+    def resume_production_scene_source_import_window(run_id: str,body: SceneSourceImportResumeWindow,owner=Depends(mutation),
+            idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.resume_scene_source_import_window(owner,run_id,body.model_dump(),idempotency(idempotency_key))
 
     @app.post('/api/production-runs/{run_id}/resume-resources', status_code=202)
     def resume_production_resources(run_id: str, body: Revision, owner=Depends(mutation),

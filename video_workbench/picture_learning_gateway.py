@@ -30,3 +30,18 @@ class ClassifiedPictureReviewGateway(PictureAuthorGateway):
     validate_input = staticmethod(protocol.validate_input)
     validate_result = staticmethod(protocol.validate_result)
     business_prefix, idempotency_prefix = 'picture-review-v2:', 'picture-review-v2-'
+
+    def _frame_input_limits(self):
+        # This opt-in follows the already admitted contract. Future revisions
+        # and every legacy role keep the old transport budget until selected.
+        if (self.profile != self.protocol.PROFILE
+                or self.profile_revision != self.protocol.PROFILE_REVISION):
+            return None
+        return self.protocol.VideoPictureReviewV2Profile().limits
+
+    def _files(self, document, files=None):
+        expected = super()._files(document, files)
+        if self._frame_input_limits() is not None:
+            from .picture_review_transport_budget import require_native_wire_budget
+            require_native_wire_budget(self.input_name, expected)
+        return expected
