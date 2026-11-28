@@ -37,3 +37,18 @@ Method 原 uniform 公式的短片覆盖缺陷也如实保留：3 个源帧、12
 验证使用真实 CPU 解码、已留存或确定性图片以及模拟的完成运输回执，不提交新模型、不创作和不重评历史。真实 transport、factory 和 pump 测试确认共用实例、owner 隔离、只读 GET、分块续传、同像素异时点、失败、取消与重启。原 bundle 对照逐文件核验图片及评价输入原字节一致。
 
 测试通过、镜像构建、实际部署和服务验证分别记录，不能用本地测试代替上线事实；也不能据此补签影片质量、音频评价、WikiSkill 发布或用户艺术认可。
+
+## 2026-11-28 发布验收
+
+运行源码已提交并推送 `528bfd4da2fa791e4ca86588b2117ff6454e2899`。只更新 Workbench 和 private executor，使用完整 Git 源码构建的 `latest` 镜像，以摘要固定实际运行身份：
+
+- Workbench：`sha256:99baa1e5f42142a13049c32877244c8a653038904f3716e0e0a019193c30cf1f`。
+- Executor：`sha256:475d4f1b2133bcce02cade9decce49e0f570c346d39241ffa1b2a5ad5b7f75a1`。
+
+两服务已就绪，实际 Pod 镜像摘要与运行源码逐文件一致（1101 / 1099 文件）。CAS 保持原服务参数、环境、挂载、renderer 准入、资产和凭据，仅更新镜像及发布标注。58 个既有数据库的原表、schema 对象及行保持，114082 份既有外置文件逐路径/摘要保持；只增加两个采样数据库和学习库中的空准备意图表。历史复核摘要为 `a57021c299a7b99fa235b4557935ec570f8085e3c6082132867250a5d468a5a8`。
+
+最新当前测试身份共 441 项通过、1 项 POSIX 权限测试在 Windows 跳过；真实 ARM 镜像与非 root Workbench 的源码读取另已通过。早期失败报告保留，改名替换的旧测试身份单独记录，不计为当前测试结果。
+
+实际 Workbench → executor 私有接口以确定性 PNG 验证三个独立时刻、reference/output/baseline 三角色、同像素不合并、owner 隔离、完成只读及幂等重放。manifest 为 `40fe05e5210b6d97e1ff9eaa4b7a317dec8d5eb4834d6dd92e60c4c73942746f`，Python 采样 CPU 约 0.0262 秒、墙钟约 0.0329 秒，未调用模型。该验证不代表作品原生捕获、连续视听、音频或审美验收。各入口真实 CPU 解码、原 bundle 对照和合成完成运输回执分别由本地测试覆盖。
+
+发布原件保存在服务器 `/root/video-releases/video-unified-sampling-20261128-r1/`；本地操作与 JUnit 索引保存在 `D:/codex-work/operations/video-unified-sampling-implementation-20261128/`。当前只验收 P1 统一采样；评价内容抽成 Skill、Skill 仓库迁移及评价优化仍属后续 P2/P3。
