@@ -74,7 +74,11 @@ class EffectClassifiedReviewMixin:
                 path.write_bytes(raw)
             return checksum
         frame_range = dict(start_frame=0, end_frame=round(run['frozen'].get('duration_seconds', 18) * 24))
-        observation, provenance = capture_frames(self.renderer.frames(operation_id, max_frames=3),
+        prepare=getattr(self.renderer,'prepare_sampling',None)
+        reference=prepare(owner,operation_id,max_frames=3,deadline_at=run['deadline_at']) if prepare else None
+        rows=(self.renderer.read_sampling(owner,reference) if reference else
+            self.renderer.frames(operation_id,max_frames=3))
+        observation, provenance = capture_frames(rows,
             result=rendered, candidate=artifact, render_id=operation_id,
             frame_range=frame_range, store_blob=store)
         frames = [dict(row, purpose='output', file_name=row['frame_id'] + '.png')

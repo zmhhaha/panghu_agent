@@ -86,7 +86,56 @@ class VideoLearningMedia:
         return dict(start_seconds=start, end_seconds=end, duration_seconds=duration, fps=24)
 
     def sample(self, path, *, media_sha256, start_seconds, end_seconds, store,
-               sample_count=SAMPLES_PER_MEDIA, deadline_at=None):
+               sample_count=SAMPLES_PER_MEDIA, deadline_at=None, sampling_service=None,
+               sampling_owner=None, sampling_operation_id=None):
+        if sampling_service is None:
+            return self._sample(path, media_sha256=media_sha256, start_seconds=start_seconds,
+                end_seconds=end_seconds, store=store, sample_count=sample_count, deadline_at=deadline_at)
+        require(type(sample_count) is int and 2 <= sample_count <= 24,
+                'video_learning_sampling_budget_invalid')
+        require(hashlib.sha256(Path(path).read_bytes()).hexdigest() == media_sha256,
+                'video_learning_media_changed', 409)
+        from .native_sampling import sampling_manifest
+        require(sampling_owner is not None and sampling_operation_id is not None,
+                'video_learning_sampling_identity_required')
+        source = dict(provider='video-learning-decoder', media_sha256=media_sha256,
+            start_seconds=start_seconds, end_seconds=end_seconds)
+        step=(end_seconds-start_seconds)/sample_count
+        policy = dict(strategy='learning_half_open', max_frames=sample_count,
+            requested_samples=sample_count, width=640, height=480, mime='image/jpeg',
+            decoder_quality=5, bounded_jpeg_qualities=[85,75,60,45], max_frame_bytes=MAX_IMAGE_BYTES,
+            targets=[round(start_seconds + index * step,9)
+                     for index in range(sample_count)], alias_policy='identical_measured_pts_only')
+
+        def provider(owner, selected_source, selected_policy, check):
+            require(owner == sampling_owner and selected_source == source and selected_policy == policy,
+                    'video_learning_sampling_binding_changed')
+            observed=self._sample(path,media_sha256=media_sha256,start_seconds=start_seconds,
+                end_seconds=end_seconds,store=store,sample_count=sample_count,deadline_at=deadline_at,
+                check=check)
+            frames=[]
+            for frame in observed['frames']:
+                check()
+                frames.append(dict(frame,raw=store.read_blob(frame['sha256']),mime='image/jpeg',
+                    timestamp_seconds=frame['actual_pts'],clock_basis='measured_ffmpeg_pts',
+                    evidence_kind='decoded_media_observation'))
+            return dict(source=dict(source,observation=observed),frames=frames)
+
+        result=sampling_service.prepare(sampling_owner,sampling_operation_id,source,policy,
+            provider=provider,deadline_at=deadline_at)
+        require(result.get('status')=='completed','video_learning_sampling_unavailable',409)
+        manifest=sampling_manifest(sampling_service,sampling_owner,sampling_operation_id)
+        observed=deepcopy(manifest['source']['observation'])
+        rows=sampling_service.read_frames(sampling_owner,sampling_operation_id)
+        require(len(rows)==len(observed['frames']),'video_learning_sampling_binding_changed')
+        for row,frame in zip(rows,observed['frames']):
+            require(row['frame_id']==frame['frame_id'] and row['actual_pts']==frame['actual_pts']
+                and row['mime']=='image/jpeg' and store.blob(row['raw'])==frame['sha256'],
+                'video_learning_sampling_binding_changed')
+        return observed
+
+    def _sample(self, path, *, media_sha256, start_seconds, end_seconds, store,
+               sample_count=SAMPLES_PER_MEDIA, deadline_at=None, check=None):
         require(type(sample_count) is int and 2 <= sample_count <= 24,
                 'video_learning_sampling_budget_invalid')
         require(hashlib.sha256(Path(path).read_bytes()).hexdigest() == media_sha256,
@@ -101,6 +150,7 @@ class VideoLearningMedia:
             targets = [round(start_seconds + index * step, 9) for index in range(sample_count)]
             previous = None
             for index, requested in enumerate(targets):
+                if check is not None:check()
                 target = directory / ('frame-%02d.jpg' % index)
                 remaining = 60 if deadline_at is None else deadline_at - time.time()
                 require(remaining > 0, 'video_learning_sampling_budget_exhausted', 409)

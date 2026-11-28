@@ -119,9 +119,11 @@ class VideoLearningAnalysis:
         if observed is None:
             if remote_reference(reference):
                 observed = self._remote_sample_reference(reference, 0, reference['duration_seconds'],
-                    count=value['frozen']['sample_count'], deadline_at=value['deadline_at'])
+                    count=value['frozen']['sample_count'], deadline_at=value['deadline_at'],
+                    observation_scope=value['id']+'-overview')
             else:
-                observed = self.media.sample(self.store.blob_path(reference['sha256']),
+                observed = self._sample_media(value['owner'],'analysis-'+value['id'],
+                    self.store.blob_path(reference['sha256']),
                     media_sha256=reference['sha256'], start_seconds=0,
                     end_seconds=reference['duration_seconds'], store=self.store,
                     sample_count=value['frozen']['sample_count'], deadline_at=value['deadline_at'])
@@ -166,7 +168,9 @@ class VideoLearningAnalysis:
         value.setdefault('role_operations', []).append(dict(
             operation_id=value.get('active_operation_id', value['id']), job_id=value['job_id'],
             input=deepcopy(value['input']), input_sha256=value['input_sha256'],
-            result=deepcopy(result), observation_receipt=deepcopy(receipt), status='completed', stop_proven=True))
+            result=deepcopy(result), observation_receipt=deepcopy(receipt),
+            sampling_ref=deepcopy(value.get('sampling_ref')),sampling_delivery=deepcopy(value.get('sampling_delivery')),
+            status='completed', stop_proven=True))
         value.update(remote_observation_pending=deepcopy(request), state='observing_reference',
             observation_receipt=deepcopy(receipt), operation_status='observing')
         self._save_analysis(value)
@@ -183,7 +187,7 @@ class VideoLearningAnalysis:
             'remote_reference_observation_outside_scope')
         observed = self._observe_remote(reference, times=request['times'],
             crop=normalized_crop(request.get('crop')), quality=request['quality'],
-            deadline_at=value['deadline_at'])
+            deadline_at=value['deadline_at'],observation_scope=value['id']+'-reference-'+str(len(value.get('remote_observations',[]))+1))
         history = value.setdefault('remote_observations', [])
         history.append(dict(operation_id=value['id'] + '-reference-' + str(len(history) + 1),
             request=deepcopy(request), observation=observed))
@@ -191,6 +195,7 @@ class VideoLearningAnalysis:
         value.update(active_operation_id=value['id'] + '-role-' + str(len(history) + 1),
             input=None, input_sha256=None, input_refs=None, job_id=None,
             operation_status='reserved', state='queued')
+        value.pop('sampling_ref',None);value.pop('sampling_delivery',None)
         self._save_analysis(value)
         return True
 
@@ -243,6 +248,18 @@ class VideoLearningAnalysis:
                         files = {self.protocol.INPUT_NAME: canonical_bytes(value['input'])}
                         files.update({frame['file_name']: self.store.read_blob(frame['sha256'])
                             for frame in value['input']['observation']['frames']})
+                        from .native_sampling import sampling_service,prepare_input_frames,read_input_frames
+                        sampler=sampling_service(self)
+                        if value.get('sampling_ref') is None:
+                            reference,files=prepare_input_frames(sampler,owner,
+                                value.get('active_operation_id',value['id']),value['input'],files,
+                                source=dict(analysis_id=value['id'],reference=deepcopy(value['frozen']['reference']),
+                                    observation=deepcopy(value['observation'])),deadline_at=value['deadline_at'])
+                            if reference is not None:
+                                value['sampling_ref']=reference;self._save_analysis(value)
+                        else:
+                            files=read_input_frames(sampler,owner,value['sampling_ref'],value['input'],files,
+                                expected_operation_id=value.get('active_operation_id',value['id']))
                         value['input_refs'] = self.reviewer.upload(value['input'], files)
                         self._save_analysis(value)
                     submit = self.reviewer.prepare_submission(value.get('active_operation_id', value['id']), value['input'],
@@ -280,6 +297,11 @@ class VideoLearningAnalysis:
                     received = {frame.get('sha256') for frame in receipt.get('images', [])
                         if frame.get('model_request_completed') is True}
                     require(expected <= received, 'video_learning_analysis_frame_transport_incomplete', 409)
+                    if value.get('sampling_ref') is not None:
+                        from .native_sampling import sampling_service,verify_input_delivery
+                        files={frame['file_name']:self.store.read_blob(frame['sha256'])
+                            for frame in value['input']['observation']['frames']}
+                        value['sampling_delivery']=verify_input_delivery(sampling_service(self),value['input'],files,receipt)
                     if self._analysis_observation_handoff(value, result, receipt):
                         if stopping:
                             value.update(state='cancelled' if value['stop_requested'] else 'completed',

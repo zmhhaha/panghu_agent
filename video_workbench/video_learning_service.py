@@ -105,6 +105,13 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
             classified_review_gateway=classified_review_gateway)
         self.media = media_adapter or VideoLearningMedia(self.root / 'media-preparation')
 
+    def _sample_media(self, owner, operation_id, *args, **kwargs):
+        if isinstance(self.media, VideoLearningMedia):
+            from .native_sampling import sampling_service
+            kwargs.update(sampling_service=sampling_service(self),sampling_owner=owner,
+                sampling_operation_id=operation_id)
+        return self.media.sample(*args,**kwargs)
+
     @staticmethod
     def _budget(body, default=None):
         # New video requests use the current video defaults, including
@@ -195,13 +202,15 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
                 candidate=deepcopy(segment), analysis_input_sha256=analysis['input_sha256'])
         if remote_reference(ref):
             observed = self._remote_sample_reference(ref, clip['start_seconds'], clip['end_seconds'],
-                deadline_at=deadline_at)
+                deadline_at=deadline_at,observation_scope='project-'+body['request_id'])
             remote_fields = dict(reference_sources=[self._remote_source_input(ref,
                 clip['start_seconds'], clip['end_seconds'])])
         else:
-            observed = self.media.sample(self.store.blob_path(ref['sha256']),
+            observed = self._sample_media(owner,'reference-'+digest(dict(owner=owner,
+                request_id=body['request_id'],reference_id=ref['id'],clip=clip)),
+                self.store.blob_path(ref['sha256']),
                 media_sha256=ref['sha256'], start_seconds=clip['start_seconds'],
-                end_seconds=clip['end_seconds'], store=self.store)
+                end_seconds=clip['end_seconds'], store=self.store,deadline_at=deadline_at)
             remote_fields = {}
         return dict(clip=clip, start_seconds=clip['start_seconds'], end_seconds=clip['end_seconds'],
             fps=24, duration_seconds=clip['duration_seconds'],
@@ -340,12 +349,13 @@ class VideoLearningService(VideoSourceRecoveryMixin, VideoLearningRepairMixin, V
         self.store.blob(raw)
         try:
             observed = self._classified_video_observation(run, operation, candidate, result)
+            if observed is None:
+                observed = self._sample_media(run['owner'],'output-'+operation['id'],path,
+                    media_sha256=sha, start_seconds=0,end_seconds=run['frozen']['duration_seconds'],
+                    store=self.store,deadline_at=run['deadline_at'])
         except ServiceError as error:
             self._classified_stopped_capture_failure(run, operation, result, error)
             raise
-        if observed is None:
-            observed = self.media.sample(path, media_sha256=sha, start_seconds=0,
-                end_seconds=run['frozen']['duration_seconds'], store=self.store)
         poster_sha = observed['frames'][0]['sha256']
         artifacts = deepcopy(candidate.get('artifacts', {}))
         for kind, content, mime in (

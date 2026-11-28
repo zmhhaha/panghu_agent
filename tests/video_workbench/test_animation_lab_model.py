@@ -6,6 +6,7 @@ import pytest
 
 from video_workbench.animation_lab_model import ModelError, VisualModel
 from video_workbench.motion import sha256
+from agent_service.contracts import digest
 
 
 TOKEN = 'test-caller-token-do-not-persist-12345'
@@ -63,8 +64,28 @@ def test_responses_preserves_real_image_payload_and_selected_receipt_only():
     assert receipt['usage_scope'] == 'provider_reported_not_billing_evidence'
     assert receipt['post_attempts'] == 1 and receipt['automatic_retries'] == 0
     assert receipt['image_input_count'] == 1
+    proof = receipt['model_image_evidence']
+    assert proof['evidence_scope'] == 'completed_upstream_transport'
+    assert proof['model_understanding_verified'] is False
+    assert proof['images'] == [dict(model_request_sha256=digest(json.loads(calls[0].content)),
+        model_request_completed=True, input_item_index=1, part_index=1,
+        sha256=sha256(b'image'), media_type='image/png', byte_length=5)]
     saved = json.dumps(receipt)
     assert TOKEN not in saved and 'must-not-save' not in saved and 'cached_tokens' not in saved
+
+
+def test_identical_images_at_distinct_times_keep_independent_transport_parts():
+    messages = [dict(role='user', content=[
+        dict(type='text', text='First frame at 0.0 seconds.'),
+        MESSAGES[1]['content'][1],
+        dict(type='text', text='Same pixels at 2.0 seconds.'),
+        MESSAGES[1]['content'][1]])]
+    _, receipt = invoke(lambda request: httpx.Response(200, json=response_document()), messages=messages)
+    rows = receipt['model_image_evidence']['images']
+    assert len(rows) == 2 and receipt['image_input_count'] == 2
+    assert rows[0]['sha256'] == rows[1]['sha256'] == sha256(b'image')
+    assert [(row['input_item_index'], row['part_index']) for row in rows] == [(0, 1), (0, 3)]
+    assert rows[0]['model_request_sha256'] == rows[1]['model_request_sha256']
 
 
 def test_redirect_never_forwards_bearer_to_another_origin():

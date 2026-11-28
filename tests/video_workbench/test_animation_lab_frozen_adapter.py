@@ -84,7 +84,13 @@ def write_synthetic_capture(root, bundle, *, coordinator_outcome):
 
 def frozen_run(tmp_path, *, coordinator_outcome=False):
     root = tmp_path/'frozen-run'
-    prepare(root, deepcopy(RUNTIME), case_id='chart-compute-backlog')
+    run = prepare(root, deepcopy(RUNTIME), case_id='chart-compute-backlog')
+    # This fixture represents an already frozen historical run. Its bounded
+    # JPEG-header sentinels cannot stand in for images in the new shared sampler.
+    run.pop('sampling_required')
+    run.pop('identity')
+    run['identity'] = sha256(run)
+    (root/'run.json').write_bytes(canonical(run))
     _, bundles = load_run(root)
     directories = [write_synthetic_capture(root, bundle, coordinator_outcome=coordinator_outcome)
                    for bundle in bundles]

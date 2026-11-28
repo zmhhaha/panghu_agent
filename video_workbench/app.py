@@ -878,12 +878,14 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                 method_client = MethodLabClient(refinement_methods.base_url, refinement_methods.token)
         if method_client is not None:
             from .film_review_client import FilmReviewGateway
+            from .visual_sampling_http import VisualSamplingClient
             from .production_refinement_driver import ProductionRefinementDriver
             from .production_refinement_service import ProductionRefinementService
             refinement_root = Path(store.path).with_name('formal-refinement')
             refinement_service = ProductionRefinementService(
                 Path(store.path).with_name('production-refinements.sqlite3'), production_sequence_store,
-                ProductionRefinementDriver(store, film_creation, FilmReviewGateway(method_client), refinement_root))
+                ProductionRefinementDriver(store, film_creation, FilmReviewGateway(method_client), refinement_root,
+                    sampling_client=VisualSamplingClient(method_client)))
     refinement_workflow = ProductionRefinementWorkflow(store, production_sequence_store, refinement_service,
         enabled=bool(refinement_enabled and refinement_service is not None),
         activation_path=Path(store.path).with_name('production-refinement-activation.json'))
@@ -1266,6 +1268,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.post('/api/production-runs/{run_id}/scene-source-import',status_code=202)
     def import_production_scene_source(run_id: str,body: SceneSourceImport,owner=Depends(mutation),
             idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        from .learning_review_reliability import require_existing_review_standard
+        require_existing_review_standard('classified_source_import')
         production_run_workflow.require_enabled()
         return production_run_store.import_scene_source(owner,run_id,body.model_dump(),idempotency(idempotency_key))
 
@@ -1277,6 +1281,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.post('/api/production-runs/{run_id}/scene-source-import-resume',status_code=202)
     def resume_production_scene_source_import(run_id: str,body: SceneSourceImportResume,owner=Depends(mutation),
             idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        from .learning_review_reliability import require_existing_review_standard
+        require_existing_review_standard('classified_source_import')
         production_run_workflow.require_enabled()
         return production_run_store.resume_scene_source_import(owner,run_id,body.model_dump(),idempotency(idempotency_key))
 
@@ -1288,6 +1294,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.post('/api/production-runs/{run_id}/scene-source-import-resume-window',status_code=202)
     def resume_production_scene_source_import_window(run_id: str,body: SceneSourceImportResumeWindow,owner=Depends(mutation),
             idempotency_key: str | None=Header(default=None,alias='Idempotency-Key')):
+        from .learning_review_reliability import require_existing_review_standard
+        require_existing_review_standard('classified_source_import')
         production_run_workflow.require_enabled()
         return production_run_store.resume_scene_source_import_window(owner,run_id,body.model_dump(),idempotency(idempotency_key))
 

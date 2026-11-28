@@ -21,6 +21,12 @@ EVIDENCE_SCHEMA = 'video.learning-review-evidence.v1'
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 
 
+def require_existing_review_standard(choice):
+    """New work retains the established evaluator; frozen history is unchanged."""
+    if choice is not None:
+        raise ServiceError('review_standard_change_disabled_use_existing_standard',409)
+
+
 def _route_valid(route):
     return (type(route) is dict and route.get('profile') == protocol.PROFILE
         and route.get('profile_revision') == '1' and route.get('configured') is True

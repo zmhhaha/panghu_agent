@@ -247,10 +247,6 @@ class SceneSpaceProductionAdapter:
         if lossless is not None:
             from .scene_space_capture import validate_sample_capture
             validate_sample_capture(lossless)
-            _require(self.structured_reviewer is not None,'scene_space_classified_review_unavailable',503)
-            selected=self.structured_reviewer
-            _require(selected.profile==classified_picture.PROFILE,
-                'scene_space_classified_review_unavailable',503)
         selected.preflight(self.clock()+30)
         value=dict(schema=CONFIG_SCHEMA,available=True,renderer_mode=RENDERER_MODE,
             author_profile=self.author.profile,author_revision=self.author.profile_revision,
@@ -262,14 +258,39 @@ class SceneSpaceProductionAdapter:
             model_job_reserve_calls=8,model_job_reserve_tokens=262144,
             visual_gate_scope='actual_static_and_clip_samples_not_continuous_playback_or_user_acceptance')
         if lossless is not None:
-            policy=classified_picture.validate_review_policy(default_review_policy())
-            from .scene_review_canonicalization import CANONICALIZATION_REVISION
-            value.update(review_gate_schema=GATE_SCHEMA,review_policy=policy,sample_capture=deepcopy(lossless),
-                review_canonicalization_revision=CANONICALIZATION_REVISION)
+            # Capture is a framework capability, independent of the opinion's
+            # schema, scoring rules and stop semantics.
+            value.update(sample_capture=deepcopy(lossless), sampling_evidence_revision=1)
         if caps.get('appearance',{}).get('quality_policy_schema')=='video.scene-appearance-policy.v1':
             value['material_noise_limit']=self.material_noise_limit
         value['configuration_sha256']=digest(value)
         return value
+
+    def _classified_configuration(self, value):
+        """Existing explicitly requested source-import recovery contract only."""
+        value = deepcopy(value)
+        _require(self.structured_reviewer is not None and value.get('sample_capture') is not None,
+                 'scene_space_classified_review_unavailable', 503)
+        selected = self.structured_reviewer
+        _require(selected.profile == classified_picture.PROFILE,
+                 'scene_space_classified_review_unavailable', 503)
+        selected.preflight(self.clock() + 30)
+        from .scene_review_canonicalization import CANONICALIZATION_REVISION
+        value.update(review_profile=selected.profile, review_revision=selected.profile_revision,
+            review_gate_schema=GATE_SCHEMA,
+            review_policy=classified_picture.validate_review_policy(default_review_policy()),
+            review_canonicalization_revision=CANONICALIZATION_REVISION)
+        value['configuration_sha256'] = digest({k:v for k,v in value.items() if k!='configuration_sha256'})
+        return value
+
+    @staticmethod
+    def _capture(row):
+        policy = row['configuration'].get('sample_capture')
+        if policy is None:
+            return False
+        from .scene_space_capture import validate_sample_capture
+        validate_sample_capture(policy)
+        return True
 
     @staticmethod
     def _classified(row):
@@ -449,7 +470,7 @@ class SceneSpaceProductionAdapter:
 
     def source_import_configuration(self,owner,project_id):
         from .scene_source_import import LIMITS
-        configuration=self.freeze_configuration(owner,project_id)
+        configuration=self._classified_configuration(self.freeze_configuration(owner,project_id))
         _require(self._classified({'configuration':configuration}),
             'scene_source_import_classified_review_required',503)
         configuration.update(max_pre_export_repairs=0,source_import_limits=deepcopy(LIMITS),
@@ -902,8 +923,11 @@ class SceneSpaceProductionAdapter:
             if not admit:return row
             current=self.freeze_configuration(row['owner'],row['project_id'])
             _require(all(current[key]==row['configuration'][key] for key in (
-                'author_profile','author_revision','review_profile','review_revision','render_capability')),
+                'author_profile','author_revision','render_capability')),
                 'scene_space_production_configuration_changed',409)
+            # Today's default evaluator must not reinterpret an already frozen
+            # classified task during recovery.
+            self._review_gateway(row).preflight(row['deadline_at'])
             if row.get('author_model_reservation') is None:
                 budget=row['configuration']['budget']['model']
                 calls=row['configuration'].get('model_job_reserve_calls',1)
@@ -1118,7 +1142,7 @@ class SceneSpaceProductionAdapter:
             window=self._render_window(row,preview=True)
             document=self._render_document(row,saved)
             document['constraints']['duration_seconds']=(clip['end_frame']-clip['start_frame'])/24
-            if self._classified(row):
+            if self._capture(row):
                 document['constraints']['sample_capture']=deepcopy(row['configuration']['sample_capture'])
             clip['reserved_render_seconds']=window['seconds']
             clip['request']=dict(source=deepcopy(row['source']),document=document,scene_space=saved['frozen'],
@@ -1159,7 +1183,7 @@ class SceneSpaceProductionAdapter:
             and result.get('source_sha256')==row['source_sha256'] and result.get('fps')==24
             and result.get('frame_count')==clip['end_frame']-clip['start_frame'],
             'scene_space_preview_binding_changed',409)
-        if self._classified(row):
+        if self._capture(row):
             _require(result.get('sample_capture')==row['configuration']['sample_capture']
                 and result.get('sample_frame_range')=={key:clip[key] for key in ('start_frame','end_frame')},
                 'scene_space_preview_capture_changed',409)
@@ -1174,7 +1198,7 @@ class SceneSpaceProductionAdapter:
         expected_times=[0,(count-1)/24] if count>1 else [0]
         _require([sample['timestamp_seconds'] for sample in selected]==expected_times,
             'scene_space_preview_sample_clock_changed',409)
-        if self._classified(row):
+        if self._capture(row):
             clip['samples']=[self._store_lossless_sample(sample,
                 frame_range={key:clip[key] for key in ('start_frame','end_frame')}) for sample in selected]
         else:
@@ -1210,7 +1234,7 @@ class SceneSpaceProductionAdapter:
             raw=(self.root/'artifacts'/(item['artifact_sha256']+'.png')).read_bytes()
             _require(hashlib.sha256(raw).hexdigest()==item['artifact_sha256'],'scene_space_preview_media_changed',409)
             suffix='png'
-            if classified:
+            if self._capture(row):
                 render_id=item.get('render_id')
                 frame_range=dict(start_frame=item['frame'],end_frame=item['frame']+1)
                 if item.get('capture_kind')!='static_preview':
@@ -1220,7 +1244,7 @@ class SceneSpaceProductionAdapter:
                 provenance.append(image_provenance(item,raw,source_sha256=row['source_sha256'],
                     plan_sha256=row['plan_sha256'],kind=item.get('capture_kind','clip_keyframe'),
                     render_id=render_id,frame_range=frame_range))
-            if not classified and len(raw)>2*1024*1024:
+            if not classified and not self._capture(row) and len(raw)>2*1024*1024:
                 with Image.open(io.BytesIO(raw)) as image:
                     converted=io.BytesIO();image.convert('RGB').save(converted,format='JPEG',quality=88)
                     raw=converted.getvalue();suffix='jpg'
@@ -1303,6 +1327,18 @@ class SceneSpaceProductionAdapter:
             if review['input_refs'] is None:
                 rebuilt,files=self._review_files(row)
                 _require(rebuilt==document,'scene_space_review_input_changed',409)
+                from .native_sampling import prepare_input_frames, read_input_frames, sampling_service
+                sampler=sampling_service(self)
+                if review.get('sampling_ref') is None:
+                    reference,files=prepare_input_frames(sampler,row['owner'],review['id'],document,files,
+                        source=dict(run_id=row['run_id'],plan_sha256=row['plan_sha256'],
+                            source_sha256=row['source_sha256'],clips=deepcopy(row.get('preview_clips',[]))),
+                        deadline_at=row['deadline_at'])
+                    if reference is not None:
+                        review['sampling_ref']=reference;self._write(row)
+                else:
+                    files=read_input_frames(sampler,row['owner'],review['sampling_ref'],document,files,
+                        expected_operation_id=review['id'])
                 review['input_refs']=gateway.upload(document,files);self._write(row)
             limits=({'model_limits':grant['model_limits']} if grant else {})
             call=gateway.prepare_submission(review['id'],document,row['deadline_at'],review['input_refs'],**limits)
@@ -1349,6 +1385,11 @@ class SceneSpaceProductionAdapter:
         expected={frame['sha256'] for frame in document['observation']['frames']}
         observed={item.get('sha256') for item in receipt.get('images',[]) if item.get('model_request_completed') is True}
         _require(expected<=observed,'scene_space_review_frame_transport_incomplete',409)
+        if review.get('sampling_ref') is not None:
+            from .native_sampling import sampling_service,verify_input_delivery
+            rebuilt,files=self._review_files(row)
+            _require(rebuilt==document,'scene_space_review_input_changed',409)
+            review['sampling_delivery']=verify_input_delivery(sampling_service(self),document,files,receipt)
         if row.get('source_import_resume'):
             from .scene_source_import_resume import require_supplied_frame_receipt
             require_supplied_frame_receipt(document,receipt)
@@ -1869,7 +1910,11 @@ def configured_scene_space_production(store,*,library_adapter=None,fallback_agen
         if owned_review:owned_review.close()
         raise ValueError('Scene production requires the static world author and private scene renderer')
     root=Path(store.path).with_name('scene-space-production')
-    return SceneSpaceProductionAdapter(root,space_store=SceneSpaceStore(root/'space'),
+    adapter=SceneSpaceProductionAdapter(root,space_store=SceneSpaceStore(root/'space'),
         author=author,reviewer=reviewer,structured_reviewer=structured,renderer=renderer,
-        library_adapter=library_adapter,enabled=gate=='1'),(
+        library_adapter=library_adapter,enabled=gate=='1')
+    if renderer is not None:
+        from .visual_sampling_http import VisualSamplingClient
+        adapter.sampling_service=VisualSamplingClient(renderer)
+    return adapter,(
             _OwnedSceneClients(owned,owned_review) if owned_review else owned)

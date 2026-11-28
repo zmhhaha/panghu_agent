@@ -5,6 +5,14 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def historical_frozen_contract_fixture(monkeypatch):
+    # These synthetic fixtures reconstruct retained classified admissions.
+    # New public-request rejection is tested independently in test_native_sampling.
+    monkeypatch.setattr('video_workbench.learning_review_reliability.require_existing_review_standard',
+        lambda choice:None)
+
 from agent_service.contracts import ServiceError
 from agent_service.profiles import video_picture_review_v2 as protocol
 from video_workbench.learning_review_reliability import CONTRACT, MODEL_LIMITS

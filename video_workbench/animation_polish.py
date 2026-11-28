@@ -103,7 +103,7 @@ class AnimationPolishCoordinator:
                 receipt = gateway.model_frame_receipt(operation['job_id'])
                 _require(type(receipt) is dict and receipt.get('job_id') == operation['job_id'],
                          'animation_polish_model_receipt_job_mismatch', 409)
-                observation = validate_model_frame_receipt(document, receipt)
+                observation = validate_model_frame_receipt(document, receipt, files=files)
                 result = dict(review=artifact, observation=observation, model_frame_receipt=receipt)
                 issues = artifact['issues']
             else:
@@ -213,7 +213,7 @@ class AnimationPolishCoordinator:
             digest(review_document), review_document)
         # Recheck the retained control receipt, rather than trusting a stored
         # model assertion or a boolean derived from supplied frame names.
-        observed = validate_model_frame_receipt(review_document, review['result']['model_frame_receipt'])
+        observed = validate_model_frame_receipt(review_document, review['result']['model_frame_receipt'], files=files)
         _require(observed == review['result']['observation'], 'animation_polish_observation_changed', 409)
         source = deepcopy(base_source)
         if review_result['issues']:

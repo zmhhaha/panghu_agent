@@ -177,13 +177,14 @@ def test_agent_credential_cannot_be_reused_as_lab_caller_credential(config):
     assert NoNetworkAgentClient.instances == [] and not config['root'].exists()
 
 
-def test_service_initialization_failure_closes_the_constructed_agent_client(config):
+def test_service_initialization_failure_does_not_leak_or_call_agent_clients(config):
     config['root'].write_bytes(b'An ordinary file cannot be an executor data directory.')
     with pytest.raises(OSError):
         executor.create_server(**config)
-    assert len(NoNetworkAgentClient.instances) == 1
-    client = NoNetworkAgentClient.instances[0]
-    assert client.close_count == 1 and client.calls == []
+    # Validation can fail before allocating any Agent client. If startup has
+    # allocated clients already, every one must still be closed without I/O.
+    assert all(client.close_count == 1 for client in NoNetworkAgentClient.instances)
+    assert all(client.calls == [] for client in NoNetworkAgentClient.instances)
 
 
 def test_http_bind_failure_after_real_service_initialization_closes_agent_client(config):

@@ -34,6 +34,7 @@ class FakeGateway:
     def __init__(self, profile, issues=False):
         self.profile, self.issues = profile, issues
         self.calls, self.job, self.document, self.result = [], None, None, None
+        self.files = {}
         self.lose_response = False
         self.lookup_missing = False
         self.receipt_change = None
@@ -43,6 +44,7 @@ class FakeGateway:
 
     def upload(self, document, files):
         self.calls.append(('upload', digest(document)))
+        self.files = deepcopy(files)
         return [dict(input_id=str(UUID(int=77)), sha256=digest(document), path='test.json', role='test')]
 
     def submit(self, operation_id, document, deadline, refs):
@@ -87,9 +89,11 @@ class FakeGateway:
         receipt = dict(schema='agent-model-image-evidence.v1', job_id=job_id,
             attempt_id=str(UUID(int=703)), request_sha256='c' * 64,
             evidence_scope='completed_upstream_transport',
-            images=[dict(sha256=hashlib.sha256(PNG).hexdigest(), model_request_completed=True,
-                model_request_sha256='d' * 64, media_type='image/png', byte_length=len(PNG),
-                input_item_index=1, part_index=0)])
+            images=[dict(sha256=frame['sha256'], model_request_completed=True,
+                model_request_sha256='d' * 64, media_type='image/png',
+                byte_length=len(self.files[frame['file_name']]),
+                input_item_index=1, part_index=index)
+                for index,frame in enumerate(self.document['observation']['frames'])])
         if self.receipt_change:
             receipt.update(deepcopy(self.receipt_change))
         return receipt
@@ -344,6 +348,27 @@ def test_review_cannot_finish_from_supplied_frame_names_or_self_reported_reading
     assert result['state'] == 'failed'
     assert work['creator'].calls == []
     assert work['renderer'].calls == []
+
+
+@pytest.mark.parametrize('change', ['missing_part', 'duplicate_part', 'wrong_size', 'split_requests'])
+def test_repeated_pixel_frames_need_independent_complete_image_parts(work, change):
+    assert step(work)['state'] == 'submitted'
+    gateway = work['reviewer']
+    gateway.complete()
+    images = gateway.model_frame_receipt(gateway.job['job_id'])['images']
+    assert len(images) == 2 and images[0]['sha256'] == images[1]['sha256']
+    if change == 'missing_part':
+        images.pop()
+    elif change == 'duplicate_part':
+        images[1]['part_index'] = images[0]['part_index']
+    elif change == 'wrong_size':
+        images[0]['byte_length'] += 1
+    else:
+        images[1]['model_request_sha256'] = 'e' * 64
+    gateway.receipt_change = dict(images=images)
+    assert step(work)['state'] == 'failed'
+    assert gateway.count('submit') == 1
+    assert work['creator'].calls == work['renderer'].calls == []
 
 
 def test_definitive_failed_agent_job_consumes_its_allowance_and_stops_the_pipeline(work):

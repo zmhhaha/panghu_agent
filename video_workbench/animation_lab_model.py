@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import json
 import hashlib
+import base64
 import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
 import httpx
+from agent_service.contracts import digest
 
 class ModelError(ValueError):
     pass
@@ -83,6 +85,24 @@ class VisualModel:
         payload = dict(model=self.model, input=inputs, store=False, max_output_tokens=6000)
         _require(len(json.dumps(payload).encode('utf-8')) <= 16 * 1024 * 1024,
                  'visual_model_request_too_large')
+        # Identity of the exact composed parts passed to this transport. This
+        # proves delivery on a completed response, not the model's understanding.
+        image_evidence = []
+        request_sha256 = digest(payload)
+        for input_index, item in enumerate(inputs):
+            for part_index, part in enumerate(item['content']):
+                if part['type'] != 'input_image':
+                    continue
+                match = re.fullmatch(r'data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)',
+                                     part['image_url'])
+                _require(match is not None, 'visual_model_image_encoding_invalid')
+                try:
+                    image = base64.b64decode(match[2], validate=True)
+                except ValueError:
+                    raise ModelError('visual_model_image_encoding_invalid') from None
+                image_evidence.append(dict(model_request_sha256=request_sha256,
+                    model_request_completed=True, input_item_index=input_index, part_index=part_index,
+                    sha256=hashlib.sha256(image).hexdigest(), media_type=match[1], byte_length=len(image)))
         try:
             with self.client.stream('POST', '/v1/responses', json=payload) as response:
                 _require(not response.is_redirect, 'visual_model_redirect_rejected')
@@ -114,7 +134,10 @@ class VisualModel:
                     response_id=_safe(document.get('id')), response_sha256=hashlib.sha256(bytes(raw)).hexdigest(),
                     usage=usage, usage_scope='provider_reported_not_billing_evidence',
                     post_attempts=1, automatic_retries=0, image_input_count=sum(
-                        part['type'] == 'input_image' for row in inputs for part in row['content']))
+                        part['type'] == 'input_image' for row in inputs for part in row['content']),
+                    model_image_evidence=dict(evidence_scope='completed_upstream_transport',
+                        images=image_evidence, origin='direct_visual_model_transport',
+                        model_understanding_verified=False))
         except (httpx.HTTPError, OSError):
             raise ModelError('visual_model_transport_outcome_unknown') from None
         except (UnicodeError, json.JSONDecodeError, AttributeError, TypeError, KeyError):

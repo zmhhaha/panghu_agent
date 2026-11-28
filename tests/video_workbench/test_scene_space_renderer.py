@@ -397,6 +397,42 @@ def test_new_claim_is_durable_and_technical_output_has_compatible_shape(renderer
     assert not result['whole_video_watched'] and not result['motion_observed']
 
 
+def test_static_sampling_retains_the_verified_png_when_video_sample_manifest_is_empty(renderer,plan,monkeypatch,tmp_path):
+    from video_workbench.visual_sampling import VisualSamplingService
+    calls=[];monkeypatch.setattr(execution,'execute_method_render',synthetic_execution(calls))
+    renderer.owner.sampling_service=VisualSamplingService(tmp_path/'shared-sampling')
+    document=dict(constraints=dict(width=1280,height=720),assets={})
+    result=renderer.render('static-sample',source(),document,scene_space=plan,
+        frame_range=dict(start_frame=24,end_frame=25))
+    frozen=canonical_bytes(result)
+    assert renderer.frames('static-sample')==[]
+    intents=[]
+    reference=renderer.prepare_sampling('owner','static-sample',max_frames=1,on_intent=intents.append)
+    assert intents==[dict(operation_id=reference['operation_id'])]
+    manifest=renderer.owner.sampling_service.get('owner',reference['operation_id'])
+    assert len(manifest['frames'])==1
+    assert manifest['frames'][0]['original']['absolute_frame']==24
+    assert manifest['frames'][0]['timestamp_seconds']==0
+    assert renderer.read_sampling('owner',reference)==[dict(timestamp_seconds=0,mime='image/png',
+        raw=Path(result['artifact_path']).read_bytes())]
+    assert canonical_bytes(renderer.lookup('static-sample'))==frozen and len(calls)==1
+
+
+def test_native_static_sampling_intent_is_written_before_cancellation_checkpoint(renderer,plan,monkeypatch,tmp_path):
+    from video_workbench.visual_sampling import VisualSamplingService
+    calls=[];monkeypatch.setattr(execution,'execute_method_render',synthetic_execution(calls))
+    renderer.owner.sampling_service=VisualSamplingService(tmp_path/'shared-sampling')
+    result=renderer.render('cancel-sample',source(),dict(constraints=dict(width=1280,height=720),assets={}),
+        scene_space=plan)
+    intents=[]
+    with pytest.raises(ServiceError,match='visual_sampling_cancelled'):
+        renderer.prepare_sampling('owner','cancel-sample',max_frames=1,
+            on_intent=intents.append,cancelled=lambda:True)
+    assert len(intents)==1
+    assert renderer.owner.sampling_service.get('owner',intents[0]['operation_id'])['status']=='cancelled'
+    assert renderer.lookup('cancel-sample')==result and len(calls)==1
+
+
 def synthetic_clip_execution(calls,change=None):
     """Inert evidence fixture; the separate native tests establish actual media."""
     execute=synthetic_execution(calls)

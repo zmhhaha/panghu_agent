@@ -75,7 +75,9 @@ def reliable_env(gated_scene_env):
     env.adapter.renderer=env.renderer;env.adapter.structured_reviewer=env.classified
     original=env.adapter.freeze_configuration
     def configuration(owner,project):
-        value=original(owner,project);value['max_pre_export_repairs']=0
+        # Historical explicit classified contracts retain their original gate;
+        # the availability of PNG capture no longer chooses this evaluator.
+        value=env.adapter._classified_configuration(original(owner,project));value['max_pre_export_repairs']=0
         value.pop('configuration_sha256');value['configuration_sha256']=digest(value)
         return value
     env.adapter.freeze_configuration=configuration
@@ -117,10 +119,20 @@ def test_required_uncertainty_low_score_or_stop_never_exports(reliable_env,findi
     assert len(env.author.submissions)==len(env.classified.submissions)==1
 
 
-def test_new_renderer_without_new_reviewer_stops_before_any_author(gated_scene_env):
+def test_lossless_capture_keeps_original_reviewer_and_gate(gated_scene_env):
     env=gated_scene_env;env.adapter.renderer=LosslessRenderer()
-    with pytest.raises(ServiceError,match='scene_space_classified_review_unavailable'):begin(env)
-    assert not env.author.submissions and not env.reviewer.submissions
+    run=begin(env);finish(env)
+    row=env.adapter._read(OWNER,run['id'])
+    assert env.runs.get(OWNER,run['id'])['status']=='completed'
+    assert row['configuration']['review_profile']==env.reviewer.profile
+    assert row['configuration']['sample_capture']==SAMPLE_CAPTURE_POLICY
+    assert 'review_gate_schema' not in row['configuration']
+    assert 'review_policy' not in row['review']['document']['constraints']
+    assert 'review_canonicalization_revision' not in row['configuration']
+    assert len(env.reviewer.submissions)==1
+    document,files=env.reviewer.uploads[0]
+    assert len(document['observation']['frames'])==sum(len(c['samples']) for c in row['clips'])+len(row['previews'])
+    assert all(files[f['file_name']].startswith(b'\x89PNG') for f in document['observation']['frames'])
 
 
 def test_frozen_gateway_dispatch_is_independent_of_today_capture_capability(reliable_env):

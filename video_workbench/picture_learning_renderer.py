@@ -30,7 +30,8 @@ class PictureLearningRenderer(MethodAnimationRenderer):
         super().__init__(root, runtime_renderer.image, assets_dir=runtime_renderer.assets_dir,
             enabled=runtime_renderer.enabled, timeout=runtime_renderer.timeout,
             hyperframes=True, legacy_bridge=True,
-            generated_resource_resolver=getattr(runtime_renderer, 'generated_resource_resolver', None))
+            generated_resource_resolver=getattr(runtime_renderer, 'generated_resource_resolver', None),
+            sampling_service=getattr(runtime_renderer, 'sampling_service', None))
         self.runtime_renderer = runtime_renderer
 
     def capabilities(self):
@@ -322,6 +323,27 @@ class PictureLearningRenderer(MethodAnimationRenderer):
         return result
 
     recover = lookup
+
+    def prepare_sampling(self, owner, operation_id, max_frames=1, *, deadline_at=None):
+        from .scene_space_renderer import scene_renderer
+        spatial=scene_renderer(self)
+        if spatial.lookup(operation_id) is not None:
+            return spatial.prepare_sampling(owner,operation_id,max_frames=max_frames,deadline_at=deadline_at)
+        if self.sampling_service is None:return None
+        from .native_sampling import retain_frames
+        result=self.lookup(operation_id)
+        _require(result is not None and result.get('technical_passed') is True
+            and result.get('stop_proven') is True,'picture_render_media_unavailable',409)
+        raw=_read(Path(result['picture_path']),32*1024*1024)
+        _require(digest_bytes(raw)==result['sha256'],'picture_render_media_changed',409)
+        source=dict(provider='picture-native-frame',render_operation_id=operation_id,
+            picture_sha256=result['sha256'],evidence_sha256=result['evidence_sha256'],
+            runtime=deepcopy(result.get('runtime')))
+        policy=dict(strategy='provided',max_frames=1,frame_ids=['native-still'],mime='image/png')
+        saved=retain_frames(self.sampling_service,owner,'native-'+digest(dict(owner=owner,source=source)),
+            source,policy,[dict(raw=raw,mime='image/png',timestamp_seconds=0,frame_id='native-still',
+                evidence_kind='native_renderer_png',clock_basis='static_still')],deadline_at=deadline_at)
+        return dict(operation_id=saved['operation_id'],manifest_sha256=saved['manifest_sha256'])
 
     def stopping_proof(self, operation_id):
         result = self.lookup(operation_id)

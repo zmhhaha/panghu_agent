@@ -431,6 +431,16 @@ class AnimationCreationService:
                      and document['source_sha256'] == source['source_sha256']
                      and document['media']['sha256'] == run['versions'][0]['sha256'],
                      'animation_creation_review_binding_changed', 409)
+            reference = run.get('sampling_ref')
+            if reference:
+                sampling = getattr(self, 'sampling_service', None)
+                _require(sampling is not None, 'animation_creation_sampler_unavailable', 503)
+                sampling.get(run['owner'], reference['operation_id'],
+                    expected_manifest_sha256=reference['manifest_sha256'])
+                members = sampling.export_bundle(run['owner'], reference['operation_id'])
+                _require(all((directory / name).is_file() and (directory / name).read_bytes() == raw
+                             for name, raw in members.items()),
+                         'animation_creation_review_binding_changed', 409)
             return directory
         media = self.renderer.media_path(run['operations']['initial_render']['id'])
         _require(file_sha256(media) == run['versions'][0]['sha256'],
@@ -443,10 +453,46 @@ class AnimationCreationService:
             layers = [dict(start_seconds=start, end_seconds=start + 8, sample_fps=1)
                       for start in (0, duration / 2 - 4, duration - 8)]
         staging = self._directory(run) / ('review-preparing-' + str(uuid4()))
-        prepare_temporal_media(media, staging, clip_id='fragment-' + run['id'],
+        arguments = dict(clip_id='fragment-' + run['id'],
             goal=run['frozen']['creation_input']['goal'] + '\n' + _FIXED_GUIDANCE,
             source_sha256=source['source_sha256'], sampling_layers=layers, frame_limit=24,
             review_profile=run['frozen']['review_profile'])
+        sampling = getattr(self, 'sampling_service', None)
+        if sampling is not None:
+            source_ref = dict(provider='creation-retained-media', media_sha256=run['versions'][0]['sha256'],
+                bytes=media.stat().st_size, render_operation_id=run['operations']['initial_render']['id'],
+                source_sha256=source['source_sha256'])
+            policy = dict(strategy='temporal_layers', legacy_bundle=arguments,
+                frame_limit=24, scope='existing_review_visual_samples_only')
+            sampling_id = 'creation-' + digest(dict(run=run['id'], source=source_ref, policy=policy))
+            run['sampling_intent'] = dict(operation_id=sampling_id, source_ref=source_ref, policy=policy,
+                                           deadline_at=run['deadline_at'])
+            self._save(run)
+
+            def provider(owner, selected_source, selected_policy, check):
+                _require(owner == run['owner'] and selected_source == source_ref and selected_policy == policy,
+                         'animation_creation_sampling_binding_changed', 409)
+                _require(not self._cancelled(run), 'animation_creation_cancel_requested', 409)
+                check()
+                return dict(source=source_ref, media_path=media, legacy_bundle=arguments)
+
+            state = sampling.prepare(run['owner'], sampling_id, source_ref, policy,
+                provider=provider, deadline_at=run['deadline_at'])
+            _require(state.get('status') == 'completed', state.get('error') or 'animation_creation_sampling_failed', 409)
+            _require(not self._cancelled(run), 'animation_creation_cancel_requested', 409)
+            run['sampling_ref'] = dict(operation_id=sampling_id, manifest_sha256=state['manifest_sha256'])
+            self._save(run)
+            staging.mkdir()
+            for name, raw in sampling.export_bundle(run['owner'], sampling_id).items():
+                target = staging / name
+                _require(not Path(name).is_absolute() and '..' not in Path(name).parts,
+                         'animation_creation_sampling_member_invalid', 409)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+        else:
+            # Isolated legacy coordinators may inject their old decoder. The
+            # executor factory always supplies the one shared sampling service.
+            prepare_temporal_media(media, staging, **arguments)
         staging.rename(directory)
         return self._review_directory(run)
 
@@ -628,6 +674,16 @@ class AnimationCreationService:
             run.update(cancel_requested=True, state='cancelling', updated_at=time.time())
             db.execute('UPDATE creation_runs SET document=? WHERE id=? AND owner=?',
                        (canonical_bytes(run).decode('utf-8'), run_id, owner))
+        intent = run.get('sampling_intent')
+        sampling = getattr(self, 'sampling_service', None)
+        if intent and sampling is not None:
+            try:
+                sampling.cancel(owner, intent['operation_id'])
+            except ServiceError as error:
+                # Cancellation can precede the sampler's durable reservation;
+                # its provider also checks the business cancellation intent.
+                if error.status != 404:
+                    raise
         return self.advance(owner, run_id)
 
     def artifact(self, owner, run_id, version_id, kind):

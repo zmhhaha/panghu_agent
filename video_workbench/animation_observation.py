@@ -141,7 +141,8 @@ def _decode_presentation_frame(media_path, target, requested_time, *, ffmpeg):
 
 def prepare_temporal_media(media_path, directory, *, clip_id, goal, sampling_layers,
                            source_sha256=None, frame_limit=MAX_FRAMES,
-                           ffmpeg='ffmpeg', ffprobe='ffprobe', review_profile=REVIEW_PROFILE):
+                           ffmpeg='ffmpeg', ffprobe='ffprobe', review_profile=REVIEW_PROFILE,
+                           check=None):
     """Prepare explicit multi-density evidence with measured frame timestamps.
 
     A caller chooses the overview and detail windows. This helper neither
@@ -151,12 +152,14 @@ def prepare_temporal_media(media_path, directory, *, clip_id, goal, sampling_lay
     """
     return _prepare_media(media_path, directory, clip_id=clip_id, goal=goal,
         source_sha256=source_sha256, windows=None, sample_fps=3, frame_limit=frame_limit,
-        ffmpeg=ffmpeg, ffprobe=ffprobe, sampling_layers=sampling_layers, review_profile=review_profile)
+        ffmpeg=ffmpeg, ffprobe=ffprobe, sampling_layers=sampling_layers, review_profile=review_profile,
+        check=check)
 
 
 def prepare_sampled_media(media_path, directory, *, clip_id, goal, source_sha256=None,
                           windows=None, sample_fps=3, frame_limit=MAX_FRAMES,
-                          ffmpeg='ffmpeg', ffprobe='ffprobe', review_profile=REVIEW_PROFILE):
+                          ffmpeg='ffmpeg', ffprobe='ffprobe', review_profile=REVIEW_PROFILE,
+                          check=None):
     """Decode local media into a new immutable input bundle, without model I/O.
 
     Times label the sampling grid. Decoder frame selection can differ from an
@@ -165,14 +168,19 @@ def prepare_sampled_media(media_path, directory, *, clip_id, goal, source_sha256
     """
     return _prepare_media(media_path, directory, clip_id=clip_id, goal=goal,
         source_sha256=source_sha256, windows=windows, sample_fps=sample_fps,
-        frame_limit=frame_limit, ffmpeg=ffmpeg, ffprobe=ffprobe, review_profile=review_profile)
+        frame_limit=frame_limit, ffmpeg=ffmpeg, ffprobe=ffprobe, review_profile=review_profile,
+        check=check)
 
 
 def _prepare_media(media_path, directory, *, clip_id, goal, source_sha256, windows,
                    sample_fps, frame_limit, ffmpeg, ffprobe, sampling_layers=None,
-                   review_profile=REVIEW_PROFILE):
+                   review_profile=REVIEW_PROFILE, check=None):
+    require(check is None or callable(check), 'animation_observation_check_invalid')
+    check = check or (lambda: None)
+    check()
     media_path = _file(media_path, MAX_MEDIA_BYTES)
     original_sha = file_sha256(media_path)
+    check()
     root = Path(directory).absolute()
     require(not root.exists() and not any(p.is_symlink() for p in (root, *root.parents)),
             'animation_observation_no_overwrite', 409)
@@ -187,6 +195,7 @@ def _prepare_media(media_path, directory, *, clip_id, goal, source_sha256, windo
         width, height = int(stream['width']), int(stream['height'])
     except (ValueError, TypeError, KeyError, IndexError):
         raise ServiceError('animation_observation_media_invalid', 422) from None
+    check()
     media = dict(sha256=original_sha, duration_seconds=duration, width=width, height=height)
     temporal = sampling_layers is not None
     plan = None
@@ -232,6 +241,7 @@ def _prepare_media(media_path, directory, *, clip_id, goal, source_sha256, windo
     frame_total = 0
     decoded_frames, requests = [], []
     for frame in document['observation']['frames']:
+        check()
         target = root / 'inputs' / frame['file_name']
         if temporal:
             requested_time = frame['time_seconds']
@@ -256,6 +266,7 @@ def _prepare_media(media_path, directory, *, clip_id, goal, source_sha256, windo
             _run([ffmpeg, '-v', 'error', '-nostdin', '-i', str(media_path), '-ss',
                 str(frame['time_seconds']), '-map', '0:v:0', '-frames:v', '1', '-an',
                 '-vf', "scale='min(960,iw)':-2", '-q:v', '4', '-threads', '1', str(target)])
+        check()
         raw = _file(target, MAX_IMAGE_BYTES).read_bytes()
         frame['sha256'] = hashlib.sha256(raw).hexdigest()
         decoded_frames.append(frame)
@@ -277,7 +288,9 @@ def _prepare_media(media_path, directory, *, clip_id, goal, source_sha256, windo
             '%d requested timestamps produced %d unique presentation frames; %d aliases are '
                 'not additional observations. Unequal time intervals must be read explicitly.' %
                 (len(times), len(decoded_frames), len(times) - len(decoded_frames))])
+    check()
     require(file_sha256(media_path) == original_sha, 'animation_observation_media_changed')
+    check()
     raw = canonical_bytes(validator(document))
     (root / 'inputs' / input_name).write_bytes(raw)
     checksum = hashlib.sha256(raw).hexdigest()
@@ -377,7 +390,7 @@ def load_bundle(directory):
     return profile, document, files
 
 
-def validate_model_frame_receipt(document, receipt):
+def validate_model_frame_receipt(document, receipt, *, files=None):
     """Require actual proxy image-byte evidence, never creator 'I read it' text.
 
     Receipt construction belongs to the trusted Agent model gateway. The
@@ -415,6 +428,14 @@ def validate_model_frame_receipt(document, receipt):
         if row['model_request_completed']:
             actual.add(row['sha256'])
     require(expected <= actual, 'animation_model_frame_evidence_incomplete', 409)
+    # Keep historical return shape and authenticated gateway binding. Shared
+    # verification additionally requires one real image part per observation,
+    # including repeated pixels at different times; new callers supply bytes.
+    from .visual_sampling import verify_delivery
+    try:
+        verify_delivery(frames, files, receipt)
+    except ServiceError as error:
+        raise ServiceError('animation_model_frame_evidence_incomplete', 409) from error
     return dict(schema='video.animation-observed-frames.v1', input_sha256=digest(document),
         media_sha256=document['media']['sha256'], observed_frame_ids=[f['frame_id'] for f in frames],
         model_evidence_sha256=digest(receipt), coverage='sampled_frames',

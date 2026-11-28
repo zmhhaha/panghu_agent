@@ -78,6 +78,10 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             raise ValueError('animation_collaboration_distinct_credentials_required')
     renderer = DurableAnimationRenderer(Path(root) / 'renders', image=renderer_image,
         assets_dir=assets_dir, enabled=True)
+    from .visual_sampling import VisualSamplingService
+    from .visual_sampling_http import FormalSamplingTransport
+    sampling = VisualSamplingService(Path(root) / 'visual-sampling')
+    sampling_transport = FormalSamplingTransport(Path(root) / 'sampling-transfers', sampling)
     client = AgentClient(agent_url, agent_token, timeout=30)
     method_client = collaboration_client = manim_client = picture_client = video_learning_client = classified_client = None
     remote_references = None
@@ -107,6 +111,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
             historical_review_gateways={'video.animation-review.v3': AnimationBatchReviewGateway(client)})
+        service.sampling_service = sampling
         methods = film_resources = None
         if method_agent_token_file is not None:
             method_token = method_token if method_token is not None else read_token(method_agent_token_file)
@@ -123,7 +128,9 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                     assets_dir=assets_dir, enabled=True, engine_admission_file=engine_admission_file,
                     authoring_library_admission_file=authoring_library_admission_file,
                     hyperframes=method_project_runtime == 'hyperframes-core-bridge',
-                    legacy_bridge=method_project_runtime == 'hyperframes-core-bridge'))
+                    legacy_bridge=method_project_runtime == 'hyperframes-core-bridge',
+                    sampling_service=sampling))
+            methods.sampling_service = sampling
             if enable_collaborative_authoring:
                 from .animation_collaboration_gateway import AnimationCollaborationGateway
                 collaboration_client = AgentClient(agent_url, collaboration_token, timeout=30)
@@ -213,6 +220,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 renderer=PictureLearningRenderer(Path(root) / 'picture-renders', runtime_renderer=methods.renderer),
                 library_adapter=make_laboratory_library_adapter(Path(root) / 'method-lab',
                     wikiskill_store=methods.wikiskill.store))
+            pictures.sampling_service = sampling
             from .picture_animation_bridge import PictureAnimationBridge
             pictures.animation_bridge = PictureAnimationBridge(pictures, methods)
             from .learning_resources import LearningResourceStage
@@ -256,6 +264,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 renderer=VideoLearningRenderer(Path(root) / 'video-learning-renders', runtime_renderer=methods.renderer),
                 library_adapter=make_laboratory_library_adapter(Path(root) / 'method-lab',
                     wikiskill_store=methods.wikiskill.store))
+            videos.sampling_service = sampling
             from .learning_resources import LearningResourceStage
             videos.resource_stage = LearningResourceStage(Path(root) / 'video-learning-resource-plans.sqlite',
                 bindings_path=videos.store.path, coordinator=lambda: methods.manim, output_kind='video')
@@ -288,13 +297,16 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 raise ValueError('scene_space_hyperframes_methods_required')
             from .scene_space_renderer import scene_renderer
             from .scene_space_render_http import SceneSpaceRenderService
-            scene_space_service=SceneSpaceRenderService(Path(root)/'scene-space-queue',scene_renderer(methods.renderer))
+            scene_space_service=SceneSpaceRenderService(Path(root)/'scene-space-queue',scene_renderer(methods.renderer),
+                sampling_service=sampling)
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources,
             scene_space_service=scene_space_service,
+            sampling_transport=sampling_transport,
             picture_service=pictures, video_learning_service=videos,
             film_review_service=FilmReviewProxy(Path(root) / 'film-reviews', service.review_gateway))
         server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client, picture_client, video_learning_client, classified_client) if client is not None)
+        server.visual_sampling_service = sampling
     except BaseException:
         if classified_client is not None:
             classified_client.close()

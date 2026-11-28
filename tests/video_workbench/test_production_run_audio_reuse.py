@@ -261,7 +261,7 @@ def test_http_optional_reuse_preserves_original_request_and_strict_validation(tm
         return dict(id='captured')
     monkeypatch.setattr(app.state.production_run_store, 'start', capture)
     request = dict(expected_revision=project['revision'], joint_plan_version_id='adopted-plan-1')
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         client.headers.update({'x-csrf-token': client.get('/api/session').json()['csrf_token'],
             'Idempotency-Key': 'reuse-http-contract'})
         url = f'/api/projects/{project["id"]}/production-runs'

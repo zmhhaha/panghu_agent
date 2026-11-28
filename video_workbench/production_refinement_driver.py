@@ -14,9 +14,9 @@ import shutil
 import time
 from uuid import uuid4
 
-from agent_service.contracts import ServiceError, digest
+from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_review as visual
-from .animation_observation import load_bundle, prepare_sampled_media, validate_model_frame_receipt
+from .animation_observation import load_bundle, validate_model_frame_receipt
 from .film_render_adapter import validate_film_render_result
 from .production_sequence_store import require
 from .production_refinement_service import time_range_intersects
@@ -34,7 +34,8 @@ class ProductionRefinementDriver:
     remote review admission is never retried under a different identity.
     """
 
-    def __init__(self, store, film_creation, review_gateway, root, *, review_timeout_seconds=600):
+    def __init__(self, store, film_creation, review_gateway, root, *, review_timeout_seconds=600,
+                 sampling_client=None):
         self.store, self.film, self.reviewer = store, film_creation, review_gateway
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -43,6 +44,7 @@ class ProductionRefinementDriver:
             'production_refinement_review_profile_required', 503)
         require(type(review_timeout_seconds) is int and 30 <= review_timeout_seconds <= 600)
         self.review_timeout = review_timeout_seconds
+        self.sampling_client = sampling_client
 
     def authorize(self, owner, project_id):
         with self.store.transaction() as db:
@@ -113,18 +115,13 @@ class ProductionRefinementDriver:
         # UUID task identity controls the directory; caller text is never a path.
         directory = self.root / state['id'] / 'review'
         if not directory.exists():
+            require(self.sampling_client is not None,
+                'production_refinement_shared_sampling_unavailable', 503)
             parent = directory.parent
             parent.mkdir(exist_ok=True)
-            media_path = parent / 'source.mp4'
             raw = self.film.video(context['owner'], context['source']['version_id'])
             require(hashlib.sha256(raw).hexdigest() == context['source']['sha256'],
                 'production_refinement_source_changed', 409)
-            if media_path.exists():
-                require(media_path.read_bytes() == raw, 'production_refinement_source_changed', 409)
-            else:
-                with media_path.open('xb') as stream:
-                    stream.write(raw)
-            temporary = parent / ('review-preparing-' + str(uuid4()))
             duration = context['film']['total_seconds']
             # Uniform bounded evidence over the entire duration. This is
             # explicitly an overview; it cannot verify unsampled transitions.
@@ -132,16 +129,65 @@ class ProductionRefinementDriver:
             require(fps >= .25, 'production_refinement_review_duration_budget', 422)
             goal = ('检查这条完整表达的可见构图、因果清晰度与镜头衔接。只依据提供的有序抽帧指出可核对问题，'
                 '不能声称连续播放或听过音频；不因存在限制而编造问题。整片目标：' + context['film']['understanding_goal'])
+            sampling_id = self._sampling_id(key, context, state)
+            source = dict(owner=context['owner'], project_id=context['project_id'],
+                render_id=context['source']['version_id'], production_run_id=context['source']['run_id'],
+                media_sha256=context['source']['sha256'], film_sha256=context['film_sha256'],
+                snapshot_sha256=context['snapshot_sha256'])
+            policy = dict(strategy='formal_legacy', clip_id=state['id'], goal=goal,
+                source_sha256=context['film_sha256'], sample_fps=fps, frame_limit=24,
+                review_profile=context['review_profile'])
+            intent = dict(operation_id=sampling_id, source=source, policy=policy,
+                deadline_at=context['review_deadline_at'])
+            intent_path = parent / 'sampling-intent.json'
+            if intent_path.exists():
+                require(intent_path.read_bytes() == canonical_bytes(intent),
+                    'production_refinement_sampling_identity_changed', 409)
+            else:
+                with intent_path.open('xb') as stream:stream.write(canonical_bytes(intent))
+            sampled = self.sampling_client.prepare_media(context['owner'], sampling_id, source, policy, raw,
+                deadline_at=context['review_deadline_at'])
+            if sampled['state'] in {'uploading', 'queued', 'running', 'cancelling'}:
+                raise ServiceError('production_refinement_sampling_pending', 503)
+            require(sampled['state'] == 'completed' and sampled.get('stop_proven') is True,
+                sampled.get('error') or 'production_refinement_sampling_failed', 409)
+            profile, sampled_document, exported, manifest = self.sampling_client.export_bundle(
+                context['owner'], sampling_id)
+            require(profile == context['review_profile']
+                and digest(sampled_document) == hashlib.sha256(exported["inputs/"+visual.REVIEW_INPUT_NAME]).hexdigest()
+                and manifest.get('manifest_sha256') == sampled.get('sampling_manifest_sha256'),
+                'production_refinement_sampling_identity_changed', 409)
+            reference = dict(sampling_operation_id=sampling_id,
+                request_sha256=sampled['request_sha256'], manifest_sha256=sampled['sampling_manifest_sha256'],
+                source=source, policy=policy)
+            ref_path = parent / 'sampling-reference.json'
+            if ref_path.exists():
+                require(ref_path.read_bytes() == canonical_bytes(reference),
+                    'production_refinement_sampling_identity_changed', 409)
+            else:
+                with ref_path.open('xb') as stream:stream.write(canonical_bytes(reference))
+            temporary = parent / ('review-preparing-' + str(uuid4()))
             try:
-                prepare_sampled_media(media_path, temporary, clip_id=state['id'], goal=goal,
-                    source_sha256=context['film_sha256'], sample_fps=fps, frame_limit=24,
-                    review_profile=context['review_profile'])
+                temporary.mkdir()
+                for name, content in exported.items():
+                    target = temporary / name
+                    require(target.resolve().is_relative_to(temporary.resolve()),
+                        'production_refinement_sampling_identity_changed', 409)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open('xb') as stream:stream.write(content)
+                restored_profile, restored_document, _ = load_bundle(temporary)
+                require(restored_profile == profile and restored_document == sampled_document,
+                    'production_refinement_sampling_identity_changed', 409)
                 try:
                     temporary.rename(directory)
                 except FileExistsError:
+                    require(temporary.resolve().is_relative_to(parent.resolve()),
+                        'production_refinement_sampling_identity_changed', 409)
                     shutil.rmtree(temporary)
             except BaseException:
                 if temporary.exists():
+                    require(temporary.resolve().is_relative_to(parent.resolve()),
+                        'production_refinement_sampling_identity_changed', 409)
                     shutil.rmtree(temporary)
                 raise
         profile, document, files = load_bundle(directory)
@@ -150,6 +196,11 @@ class ProductionRefinementDriver:
             and document['source_sha256'] == context['film_sha256'],
             'production_refinement_review_input_changed', 409)
         return document, files
+
+    @staticmethod
+    def _sampling_id(key, context, state):
+        return 'formal-' + digest(dict(owner=context['owner'], key=key, task=state['id'],
+            source=context['source'], snapshot_sha256=context['snapshot_sha256']))[:48]
 
     @staticmethod
     def validate_request(context, request):
@@ -247,10 +298,10 @@ class ProductionRefinementDriver:
             status = job['state'] if active else 'completed' if job['state'] == 'completed' else 'cancelled' if job['state'] == 'cancelled' else 'failed'
             receipt = dict(id=job['job_id'], state=status, stop_proven=bool(job.get('stop_proven')), error=None, output=None)
             if status == 'completed':
-                document, _ = self._bundle(key, context, state)
+                document, files = self._bundle(key, context, state)
                 result = reviewer.collect(job['job_id'], digest(document), document)
                 control = reviewer.model_frame_receipt(job['job_id'])
-                observed = validate_model_frame_receipt(document, control)
+                observed = validate_model_frame_receipt(document, control, files=files)
                 receipt['output'] = dict(issues=deepcopy(result['issues']), summary=result['summary'],
                     evidence_scope=result['evidence_scope'], limitations=deepcopy(result['limitations']),
                     observation=observed, model_frame_receipt_sha256=digest(control),
@@ -287,10 +338,17 @@ class ProductionRefinementDriver:
 
     def cancel(self, stage, key, context, state):
         if stage == 'review':
+            sampler = getattr(self, 'sampling_client', None)
+            if sampler is not None:
+                try:sampler.cancel(context['owner'], self._sampling_id(key, context, state))
+                except ServiceError as error:
+                    if error.status != 404:raise
             reviewer = self._reviewer(context)
             cancel_operation = getattr(reviewer, 'cancel_operation', None)
             if callable(cancel_operation):
-                cancel_operation(key)
+                try:cancel_operation(key)
+                except ServiceError as error:
+                    if sampler is None or error.status != 404:raise
                 return
             job = reviewer.lookup(key)
             reviewer.client.cancel(job['job_id'])

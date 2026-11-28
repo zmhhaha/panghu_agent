@@ -141,10 +141,13 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
             raise ServiceError('picture_learning_reference_encoding', 422) from None
         width, height = _image(raw, body['mime_type'])
         sha = self.store.blob(raw)
-        observed_sha, observed_mime = self._vision_copy(raw, body['mime_type'])
+        observed_sha, observed_mime, sampling_ref = self._sample_still(owner,
+            'reference-'+body['request_id'],raw,body['mime_type'],
+            source=dict(reference_sha256=sha,origin='uploaded_reference'))
         row = dict(owner=owner, id=new_id(), file_name=name, mime_type=body['mime_type'],
                    sha256=sha, width=width, height=height, observed_sha256=observed_sha,
                    observed_mime_type=observed_mime, created_at=self.clock())
+        if sampling_ref is not None:row['sampling_ref']=sampling_ref
         with self.store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             existing = self.store.request(owner, 'reference', body['request_id'], body, db=db)
@@ -179,6 +182,42 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
                     return self.store.blob(encoded), 'image/jpeg'
         raise ServiceError('picture_learning_vision_image_too_large', 413)
 
+    def _sample_still(self, owner, operation_id, raw, mime, *, source=None, deadline_at=None,
+                      retained=None):
+        """Keep original and model copy as separate observations in one authority."""
+        from .native_sampling import sampling_service
+        sampler=sampling_service(self)
+        if sampler is None:
+            sha,observed_mime=retained or self._vision_copy(raw,mime)
+            return sha,observed_mime,None
+        source_ref=dict(provider='picture-observation',original_sha256=hashlib.sha256(raw).hexdigest(),
+            original_mime=mime,context=deepcopy(source or {}))
+        policy=dict(strategy='provided',max_frames=2,frame_ids=['original','model-copy'],
+            transformation=dict(max_bytes=MAX_VISION,thumbnail=[1920,1080],
+                jpeg_qualities=[95,90,82,72],optimize=True),
+            lossless_required=retained is not None)
+        def provider(actual_owner,selected_source,selected_policy,check):
+            require(actual_owner==owner and selected_source==source_ref and selected_policy==policy,
+                'picture_learning_sampling_binding_changed',409)
+            check()
+            sha,observed_mime=retained or self._vision_copy(raw,mime)
+            copied=self.store.read_blob(sha)
+            return dict(source=source_ref,frames=[
+                dict(raw=raw,mime=mime,timestamp_seconds=0,frame_id='original',
+                    evidence_kind=source_ref['context'].get('origin','retained_original'),clock_basis='static_still'),
+                dict(raw=copied,mime=observed_mime,timestamp_seconds=0,frame_id='model-copy',
+                    evidence_kind='model_input_observation',derived_from_sha256=source_ref['original_sha256'],
+                    transformation='unchanged' if copied==raw else 'bounded_vision_copy',clock_basis='static_still')])
+        sampling_id='picture-'+digest(dict(owner=owner,operation=operation_id))
+        saved=sampler.prepare(owner,sampling_id,source_ref,policy,provider=provider,deadline_at=deadline_at)
+        require(saved.get('status')=='completed','picture_learning_sampling_unavailable',409)
+        rows=sampler.read_frames(owner,sampling_id)
+        require(len(rows)==2 and rows[0]['raw']==raw and rows[0]['frame_id']=='original'
+            and rows[1]['frame_id']=='model-copy','picture_learning_sampling_binding_changed',409)
+        observed=rows[1]
+        return self.store.blob(observed['raw']),observed['mime'],dict(operation_id=sampling_id,
+            manifest_sha256=saved['manifest_sha256'])
+
     @staticmethod
     def _budget(body, default=None):
         default = default or {}
@@ -208,6 +247,8 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
         existing = self.store.request(owner, 'project', body['request_id'], body)
         if existing:
             return self.get(owner, existing)
+        from .learning_review_reliability import require_existing_review_standard
+        require_existing_review_standard(body.get('review_contract'))
         _text(body['title'], 200)
         _text(body['goal'], 8000)
         refs = body['reference_ids']
@@ -221,6 +262,11 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
         require(type(enabled) is bool)
         budget = self._budget(body)
         now, pid, eid = self.clock(), new_id(), new_id()
+        intent=self.store.preparation(owner,'project',body['request_id'],
+            dict(body=body,references=references,budget=budget),now=now,
+            deadline_at=now+budget['max_seconds'],identities=dict(project_id=pid,experiment_id=eid))
+        now=intent['created_at'];pid=intent['identities']['project_id'];eid=intent['identities']['experiment_id']
+        require(self.clock()<intent['deadline_at'],'picture_learning_preparation_expired',409)
         binding, snapshot = self._freeze_knowledge(owner, eid, enabled)
         project = dict(id=pid, owner=owner, request_id=body['request_id'], title=body['title'],
             goal=body['goal'], reference_ids=list(refs), created_at=now, updated_at=now,
@@ -247,7 +293,7 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
 
     def _extra_frozen(self, owner, body, references, *, deadline_at=None):
         return self._remote_picture_frozen(references,
-            deadline_at=deadline_at)
+            deadline_at=deadline_at,observation_scope='project-'+body['request_id'])
 
     def _baseline_observation(self, candidate):
         return dict(sha256=candidate['observed_sha256'], suffix=candidate['observed_suffix'])
@@ -377,10 +423,20 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
         existing = self.store.request(owner, kind, body['request_id'], body)
         if existing:
             return self.get(owner, project_id)
+        from .learning_review_reliability import require_existing_review_standard
+        require_existing_review_standard(body.get('review_contract'))
         project = self.store.read('projects', owner, project_id)
         prior = self.store.read('experiments', owner, project['latest_experiment_id'])
         require(prior['state'] in TERMINAL, 'picture_learning_experiment_active', 409)
         mode, now, eid = body['mode'], self.clock(), new_id()
+        proposed_budget=(deepcopy(prior['budget']) if mode=='retry' else
+            self._budget(body,dict(max_rounds=1,max_seconds=3600) if mode=='transfer' else prior['budget']))
+        intent=self.store.preparation(owner,kind,body['request_id'],
+            dict(body=body,project_id=project_id,prior_experiment_id=prior['id'],
+                prior_frozen_sha256=prior['frozen_sha256'],budget=proposed_budget),now=now,
+            deadline_at=now+proposed_budget['max_seconds'],identities=dict(experiment_id=eid))
+        now=intent['created_at'];eid=intent['identities']['experiment_id']
+        require(self.clock()<intent['deadline_at'],'picture_learning_preparation_expired',409)
         if mode == 'transfer':
             require(prior.get('stop_proven') is True, 'picture_learning_stop_unproven', 409)
         retry = mode == 'retry'
@@ -415,7 +471,8 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
                     base_observation=self._baseline_observation(candidate),
                     learned_method=deepcopy(candidate.get('method')))
             budget = self._budget(body, prior['budget'])
-            self._refresh_remote_frozen(frozen, deadline_at=now + budget['max_seconds'])
+            self._refresh_remote_frozen(frozen, deadline_at=now + budget['max_seconds'],
+                observation_scope='experiment-'+eid)
         run = (self._new_manual_transfer(owner, project_id, eid, body, now) if mode == 'transfer'
             else self._new_experiment(owner, project_id, eid, body['request_id'], mode, frozen, budget, now))
         if mode == 'continue' and candidate.get('resource_descriptor'):
@@ -688,6 +745,27 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
                 files = {active_protocol.INPUT_NAME: canonical_bytes(document)}
                 files.update({frame['file_name']: self.store.read_blob(frame['sha256'])
                               for frame in document['observation']['frames']})
+                from .native_sampling import sampling_service, prepare_input_frames, read_input_frames
+                sampler = sampling_service(self)
+                if operation.get('sampling_ref') is None:
+                    reference, files = prepare_input_frames(sampler, run['owner'], operation['id'],
+                        document, files, source=dict(project_id=run['project_id'], run_id=run['id'],
+                            stage=operation['stage'], references=deepcopy(run['frozen'].get('references', [])),
+                            reference_observation=deepcopy(run['frozen'].get('reference_observation')),
+                            candidate_derivations=[dict(id=c['id'],
+                                source_sha256=c.get('source_sha256'),
+                                render_operation_id=c.get('render_operation_id'),
+                                sampling_ref=deepcopy(c.get('sampling_ref')),
+                                native_sampling_ref=deepcopy(c.get('native_sampling_ref')),
+                                observation_derivation=deepcopy(c.get('observation_derivation')),
+                                observation=deepcopy(c.get('observation')))
+                                for c in self._context_candidates(run)]), deadline_at=run['deadline_at'])
+                    if reference is not None:
+                        operation['sampling_ref'] = reference
+                        self.store.put('operations', operation)
+                elif sampler is not None:
+                    files = read_input_frames(sampler, run['owner'], operation['sampling_ref'], document, files,
+                        expected_operation_id=operation['id'])
                 refs = gateway.upload(document, files)
                 operation['input_refs'] = deepcopy(refs)
                 self.store.put('operations', operation)
@@ -747,6 +825,12 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
             observed = {row.get('sha256') for row in receipt.get('images', [])
                         if row.get('model_request_completed') is True}
             require(expected <= observed, 'picture_learning_frame_transport_incomplete', 409)
+            from .native_sampling import sampling_service, verify_input_delivery
+            sampler = sampling_service(self)
+            if sampler is not None and operation.get('sampling_ref') is not None:
+                files = {frame['file_name']: self.store.read_blob(frame['sha256'])
+                         for frame in document['observation']['frames']}
+                operation['sampling_delivery'] = verify_input_delivery(sampler, document, files, receipt)
             self._classified_result(run, operation, result, receipt)
         except ServiceError as error:
             if error.status >= 500:
@@ -932,8 +1016,12 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
                 == (result['width'], result['height']), 'picture_learning_render_dimensions_changed', 409)
         sha = self.store.blob(raw)
         try:
-            observed_sha, observed_mime = (self._retain_classified_still(run, operation, candidate, raw)
-                or self._vision_copy(raw, 'image/png'))
+            retained=self._retain_classified_still(run,operation,candidate,raw)
+            observed_sha,observed_mime,sampling_ref=self._sample_still(run['owner'],operation['id'],
+                raw,'image/png',retained=retained,deadline_at=run['deadline_at'],
+                source=dict(origin='native_renderer_png',render_operation_id=operation['id'],
+                    source_sha256=candidate.get('source_sha256'),
+                    render_evidence_sha256=result.get('evidence_sha256')))
         except ServiceError as error:
             self._classified_stopped_capture_failure(run, operation, result, error)
             raise
@@ -949,6 +1037,7 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
             artifacts=artifacts, status='rendered', render_operation_id=operation['id'],
             observation_derivation=dict(original_sha256=sha, observed_sha256=observed_sha,
                 original_preserved=True, scope='static_only'))
+        if sampling_ref is not None:candidate['sampling_ref']=sampling_ref
         operation.update(status='completed', result={key: value for key, value in result.items()
                                                      if not key.endswith('_path')})
         self._finish_operation(run, operation)
@@ -1055,7 +1144,9 @@ class PictureLearningService(LearningClassifiedReviewMixin, SceneSpaceLearningMi
                 run['error'] = dict(code=error.code, **_safe_error_details(error))
                 active = (self.store.read('operations', owner, run['active_operation_id'])
                           if run['active_operation_id'] else None)
-                if active and active['status'] not in {'reserved', 'completed', 'failed', 'cancelled'}:
+                if run['state'] in TERMINAL:
+                    self._save(run)
+                elif active and active['status'] not in {'reserved', 'completed', 'failed', 'cancelled'}:
                     # A definitive invalid result can finish only after the
                     # original attempt is actually stopped; otherwise reconcile.
                     run['state'] = 'submission_unknown'

@@ -121,6 +121,7 @@ def prepare(destination, runtime, *, case_id='domain-diagram-water', template=No
         limits=dict(captures=len(captures), model_calls=1, local_candidates=local_candidates, automatic_retries=0),
         scope='developer_fixed_sample', audio_kind='synthetic_silence_not_narration',
         agent_calls=0, tts_calls=0, production_writes=0, production_adopted=False)
+    value['sampling_required'] = True
     value['identity'] = sha256(value)
     _save(root / 'run.json', value)
     _save(root / 'runtime.json', runtime)
@@ -144,7 +145,21 @@ def load_run(root):
     return value, bundles
 
 
-def collect(root):
+def _sampling_connection(client=None, owner=None):
+    if client is None:
+        from .config import ProductionMethodSettings
+        from .animation_creation_http import CreationAPIClient
+        from .visual_sampling_http import VisualSamplingClient
+        settings = ProductionMethodSettings.from_env()
+        _require(settings is not None, 'animation_evaluation_shared_sampling_required')
+        client = VisualSamplingClient(CreationAPIClient(settings.base_url, settings.token))
+    owner = owner or os.environ.get('VIDEO_SAMPLING_OWNER')
+    _require(type(owner) is str and 0 < len(owner) <= 200,
+             'animation_evaluation_sampling_owner_required')
+    return client, owner
+
+
+def collect(root, *, sampling_client=None, sampling_owner=None):
     root = Path(root)
     run, bundles = load_run(root)
     reports, frames, images, sequences = [], [], {}, []
@@ -173,6 +188,11 @@ def collect(root):
         status='passed' if all(row['technical_status'] == 'passed' for row in reports) else 'failed',
         reports=reports, objective_scope='recorded_action_and_seek_samples',
         visual_quality='not_evaluated', production_adopted=False)
+    if run.get('sampling_required') or sampling_client is not None:
+        from .ability_sampling import prepare_ability_sampling
+        sampling_client, sampling_owner = _sampling_connection(sampling_client, sampling_owner)
+        _, images = prepare_ability_sampling(root, run, technical, frames, images,
+                                             sampling_client, sampling_owner)
     request = build_review_request(case_identity=run['identity'], module=run['module'],
         variants=[dict(id=bundle['variant_id'], artifact_sha256=bundle['artifact_sha256'],
                        duration_seconds=bundle['duration_seconds']) for bundle in bundles],
@@ -187,8 +207,8 @@ def collect(root):
     return technical, request
 
 
-def _review_images(root, run, technical):
-    result, reports = {}, []
+def _review_images(root, run, technical, *, sampling_client=None, sampling_owner=None):
+    result, reports, frames = {}, [], []
     # Bind to technical review again; a saved request is insufficient if evidence
     # has been changed after collect(). No new renderer/model run occurs here.
     for bundle in [_thaw(row) for row in run['bundles']]:
@@ -197,12 +217,21 @@ def _review_images(root, run, technical):
             report = review_capture(bundle, clip['id'], directory, run['runtime'])
             reports.append(report)
             for frame in report['visual_frames']:
-                result[bundle['variant_id'] + ':' + frame['frame_id']] = (directory / frame['path']).read_bytes()
+                source_id = bundle['variant_id'] + ':' + frame['frame_id']
+                result[source_id] = (directory / frame['path']).read_bytes()
+                frames.append(dict(id=source_id, variant_id=bundle['variant_id'], clip_id=clip['id'],
+                    time_seconds=frame['global_time_seconds'], sha256=frame['sha256'],
+                    mime_type=frame['mime_type'], width=1280, height=720))
     _require(reports == technical['reports'], 'animation_evaluation_evidence_changed')
+    from .ability_sampling import REFERENCE_NAME, read_ability_sampling
+    if run.get('sampling_required') or (root / REFERENCE_NAME).exists():
+        sampling_client, sampling_owner = _sampling_connection(sampling_client, sampling_owner)
+        result = read_ability_sampling(root, frames, result, sampling_client, sampling_owner,
+                                       run=run, technical=technical)
     return result
 
 
-def model_review(root, *, model=None):
+def model_review(root, *, model=None, sampling_client=None, sampling_owner=None):
     root = Path(root)
     run, _ = load_run(root)
     request = json.loads((root / 'review-request.json').read_bytes())
@@ -210,7 +239,9 @@ def model_review(root, *, model=None):
     _require(request['public']['case_identity'] == run['identity']
              and request['public']['evidence_identity'] == sha256(technical)
              and technical['run_identity'] == run['identity'], 'animation_evaluation_review_mismatch')
-    messages = build_review_messages(request, _review_images(root, run, technical))
+    images = _review_images(root, run, technical, sampling_client=sampling_client,
+                            sampling_owner=sampling_owner)
+    messages = build_review_messages(request, images)
     owned = model is None
     if model is None:
         try:
@@ -230,6 +261,14 @@ def model_review(root, *, model=None):
             raw, receipt = model.review(messages)
             _text(root / 'model-output.txt', raw)
             _save(root / 'model-receipt.json', receipt)
+            from .ability_sampling import REFERENCE_NAME
+            if (root / REFERENCE_NAME).exists():
+                from .visual_sampling import verify_delivery
+                # Private rows use source_id; blind public labels remain untouched.
+                delivery_frames = [dict(frame_id=key, file_name=key, sha256=sha256(value))
+                                   for key, value in images.items()]
+                evidence = verify_delivery(delivery_frames, images, receipt.get('model_image_evidence'))
+                _save(root / 'sampling-delivery.json', evidence)
             review = validate_review_output(raw, request)
             selection = review['selected_variant_id']
             eligible = selection is not None and all(row['technical_status'] == 'passed'
@@ -304,7 +343,9 @@ def main():
     prep.add_argument('--feedback-db', type=Path)
     prep.add_argument('--engine-assets-dir', type=Path, help='pinned local Three.js resources for WebGL samples')
     for name in ('collect', 'model'):
-        sub.add_parser(name).add_argument('--run', type=Path, required=True)
+        command = sub.add_parser(name)
+        command.add_argument('--run', type=Path, required=True)
+        command.add_argument('--sampling-owner', help='business owner of retained sampling evidence')
     args = parser.parse_args()
     if args.command == 'prepare':
         store = AnnotationStore(args.feedback_db) if args.feedback_db else None
@@ -312,10 +353,10 @@ def main():
                       template=args.template, feedback_store=store, engine_assets_dir=args.engine_assets_dir)
         result = dict(status='prepared', identity=run['identity'], captures=run['limits']['captures'])
     elif args.command == 'collect':
-        report, request = collect(args.run)
+        report, request = collect(args.run, sampling_owner=args.sampling_owner)
         result = dict(status=report['status'], review_request_identity=request['identity'])
     else:
-        review = model_review(args.run)
+        review = model_review(args.run, sampling_owner=args.sampling_owner)
         result = dict(status=review['status'], preference=review['opinion']['preference'],
                       eligible=review['eligible_for_developer_comparison'])
     print(json.dumps(result))

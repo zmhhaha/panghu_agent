@@ -3,6 +3,8 @@
 These tests do not constitute browser captures or paid model evidence.
 """
 from copy import deepcopy
+import base64
+import hashlib
 import json
 import struct
 import zlib
@@ -15,6 +17,7 @@ from video_workbench.animation_lab_model import ModelError
 from video_workbench.animation_lab_review import REVIEW_SCHEMA
 from video_workbench.animation_lab_triage_store import TriageStore
 from video_workbench.motion import sha256
+from video_workbench.visual_sampling import VisualSamplingService
 
 
 RUNTIME = dict(schema='video.motion-runtime.v1', hyperframes='0.8.149',
@@ -51,6 +54,16 @@ def ready(tmp_path, monkeypatch):
         return dict(value, evidence_identity=sha256(value))
 
     monkeypatch.setattr(evaluation, 'review_capture', capture)
+    sampler = VisualSamplingService(tmp_path / 'shared-sampling')
+    class LocalSamplingClient:
+        def prepare_frames(self, owner, operation, source, policy, rows, *, deadline_at):
+            return sampler.prepare(owner, operation, source, policy, deadline_at=deadline_at,
+                provider=lambda *args: dict(source=deepcopy(source), frames=deepcopy(rows)))
+        get = lambda self, owner, operation: sampler.get(owner, operation)
+        read_manifest = get
+        read_frames = lambda self, owner, operation: sampler.read_frames(owner, operation)
+    client = LocalSamplingClient()
+    monkeypatch.setattr(evaluation, '_sampling_connection', lambda *args: (client, 'fixture-owner'))
     technical, request = evaluation.collect(root)
     return root, run, technical, request
 
@@ -79,7 +92,21 @@ class Model:
         if self.fail:
             raise ModelError('visual_model_transport_outcome_unknown')
         raw = '{}' if self.invalid else json.dumps(opinion(self.request, self.variant_id))
-        return raw, dict(post_attempts=1, automatic_retries=0)
+        images = []
+        for input_index, message in enumerate(messages):
+            if not isinstance(message['content'], list):
+                continue
+            for part_index, part in enumerate(message['content']):
+                if part['type'] != 'image_url':
+                    continue
+                header, encoded = part['image_url']['url'].split(',', 1)
+                image = base64.b64decode(encoded, validate=True)
+                images.append(dict(model_request_sha256='f'*64, model_request_completed=True,
+                    input_item_index=input_index, part_index=part_index,
+                    sha256=hashlib.sha256(image).hexdigest(), media_type=header[5:].split(';')[0],
+                    byte_length=len(image)))
+        return raw, dict(post_attempts=1, automatic_retries=0,
+            model_image_evidence=dict(evidence_scope='completed_upstream_transport', images=images))
 
 
 def test_preparation_preserves_inputs_and_owns_distinct_frozen_outputs(tmp_path):
@@ -124,6 +151,8 @@ def test_collect_binds_real_bytes_and_never_overwrites_evidence(ready):
     assert technical['status'] == 'failed'
     assert request['public']['evidence_identity'] == sha256(technical)
     assert (root / 'report.html').is_file()
+    reference = json.loads((root / 'sampling-reference.json').read_bytes())
+    assert reference['owner'] == 'fixture-owner' and len(reference['selected_frame_ids']) == 2
     assert not (root / 'model-attempt.json').exists()
     old = (root / 'technical.json').read_bytes()
     with pytest.raises(FileExistsError):
@@ -140,6 +169,9 @@ def test_model_preference_cannot_override_objective_failure_or_adopt(ready, sele
     assert review['eligible_for_developer_comparison'] is eligible
     assert review['status'] == 'suggestion_only'
     assert not review['human_approved'] and not review['auto_adopt'] and not review['production_adopted']
+    delivered = json.loads((root / 'sampling-delivery.json').read_bytes())
+    assert delivered['image_parts'] == 2 and delivered['encoded_bytes_verified'] is True
+    assert delivered['model_understanding_verified'] is False
     decision = json.loads((root / 'revision-decision.json').read_bytes())
     assert not decision['generic_agent_used'] and decision['new_automatic_runs'] == 0
     with pytest.raises(FileExistsError):

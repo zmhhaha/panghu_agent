@@ -118,10 +118,42 @@ class RemoteReferenceServiceMixin:
             'continuous_motion_verified': False, 'audio_verified': False})
 
     def _observe_remote(self, reference, *, times, crop=None, quality='overview', start_seconds=0,
-                        deadline_at=None):
-        observed = self.remote_media.observe(reference['source'], times=times, crop=crop,
-            quality=quality, deadline_at=deadline_at)
-        return self._store_remote_observation(observed, reference, start_seconds=start_seconds)
+                        deadline_at=None,observation_scope=None):
+        from .native_sampling import sampling_service,image_mime
+        sampler=sampling_service(self)
+        def observe():
+            observed=self.remote_media.observe(reference['source'],times=times,crop=crop,
+                quality=quality,deadline_at=deadline_at)
+            return self._store_remote_observation(observed,reference,start_seconds=start_seconds)
+        if sampler is None:return observe()
+        owner=reference['owner']
+        source=dict(provider='remote-reference-observation',reference_id=reference['id'],
+            business_operation_id=observation_scope,
+            source=deepcopy(reference['source']),source_identity_scope='provider_metadata')
+        policy=dict(strategy='provided',max_frames=len(times),requested_times=deepcopy(times),
+            crop=deepcopy(crop),quality=quality,start_seconds=start_seconds,
+            alias_policy='existing_provider_measured_pts')
+        require(type(observation_scope) is str and bool(observation_scope),
+            'remote_reference_sampling_identity_required',409)
+        sampling_id='remote-'+digest(dict(owner=owner,source=source,policy=policy))
+        def provider(actual_owner,selected_source,selected_policy,check):
+            require(actual_owner==owner and selected_source==source and selected_policy==policy,
+                'remote_reference_sampling_binding_changed',409)
+            check();observed=observe();frames=[]
+            for frame in observed['frames']:
+                check();raw=self.store.read_blob(frame['sha256'])
+                frames.append(dict(frame,raw=raw,mime=image_mime(raw),timestamp_seconds=frame['actual_pts'],
+                    clock_basis='provider_measured_pts',evidence_kind='remote_decoded_observation'))
+            return dict(source=dict(source,observation=observed),frames=frames)
+        saved=sampler.prepare(owner,sampling_id,source,policy,provider=provider,deadline_at=deadline_at)
+        require(saved.get('status')=='completed','remote_reference_sampling_unavailable',409)
+        observed=deepcopy(saved['source']['observation'])
+        rows=sampler.read_frames(owner,sampling_id)
+        require(len(rows)==len(observed['frames']),'remote_reference_sampling_binding_changed',409)
+        for row,frame in zip(rows,observed['frames']):
+            require(row['frame_id']==frame['frame_id'] and row['actual_pts']==frame['actual_pts']
+                and self.store.blob(row['raw'])==frame['sha256'],'remote_reference_sampling_binding_changed',409)
+        return observed
 
     def _remote_source_input(self, reference, start, end):
         source = reference['source']
@@ -133,36 +165,36 @@ class RemoteReferenceServiceMixin:
             result.update(timestamp_seconds=reference['timestamp_seconds'], crop=deepcopy(reference.get('crop')))
         return result
 
-    def _remote_picture_frozen(self, references, *, deadline_at=None):
+    def _remote_picture_frozen(self, references, *, deadline_at=None,observation_scope=None):
         observations, sources = {}, []
         for ref in references:
             if not remote_reference(ref):
                 continue
             observations[ref['id']] = self._observe_remote(ref, times=[ref['timestamp_seconds']],
-                crop=ref.get('crop'), quality='detail', deadline_at=deadline_at)
+                crop=ref.get('crop'), quality='detail', deadline_at=deadline_at,observation_scope=observation_scope)
             sources.append(self._remote_source_input(ref, 0, ref['duration_seconds']))
         return dict(remote_reference_observations=observations, reference_sources=sources) if sources else {}
 
-    def _remote_sample_reference(self, reference, start, end, *, count=8, deadline_at=None):
+    def _remote_sample_reference(self, reference, start, end, *, count=8, deadline_at=None,observation_scope=None):
         times = [round(start + (end - start) * index / count, 9) for index in range(count)]
         observed = self._observe_remote(reference, times=times, quality='overview', start_seconds=start,
-            deadline_at=deadline_at)
+            deadline_at=deadline_at,observation_scope=observation_scope)
         require(all(start <= frame['actual_pts'] < end for frame in observed['frames']),
             'remote_reference_frame_outside_scope', 409)
         return observed
 
-    def _refresh_remote_frozen(self, frozen, *, deadline_at):
+    def _refresh_remote_frozen(self, frozen, *, deadline_at,observation_scope=None):
         refs = frozen['references']
         if 'clip' in frozen:
             ref = refs[0]
             if remote_reference(ref):
                 clip = frozen['clip']
                 frozen['reference_observation'] = self._remote_sample_reference(ref,
-                    clip['start_seconds'], clip['end_seconds'], deadline_at=deadline_at)
+                    clip['start_seconds'], clip['end_seconds'], deadline_at=deadline_at,observation_scope=observation_scope)
                 frozen['reference_sources'] = [self._remote_source_input(ref,
                     clip['start_seconds'], clip['end_seconds'])]
         else:
-            frozen.update(self._remote_picture_frozen(refs, deadline_at=deadline_at))
+            frozen.update(self._remote_picture_frozen(refs, deadline_at=deadline_at,observation_scope=observation_scope))
 
     @staticmethod
     def _named_remote_frames(observation, *, prefix='reference', start_index=1):
@@ -287,7 +319,7 @@ class RemoteReferenceServiceMixin:
             try:
                 observed = self._observe_remote(ref, times=times, crop=normalized_crop(request.get('crop')),
                     quality=request['quality'], start_seconds=source['start_seconds'],
-                    deadline_at=run['deadline_at'])
+                    deadline_at=run['deadline_at'],observation_scope=observation_op['id'])
                 require(all(source['start_seconds'] <= frame['actual_pts'] < source['end_seconds']
                     for frame in observed['frames']), 'remote_reference_frame_outside_scope', 409)
             except BaseException as error:

@@ -274,7 +274,8 @@ class SceneSpaceRenderer:
         self.runtime_renderer=runtime_renderer
         self.owner=MethodAnimationRenderer(root,runtime_renderer.image,
             assets_dir=runtime_renderer.assets_dir,enabled=runtime_renderer.enabled,
-            timeout=runtime_renderer.timeout,hyperframes=True,legacy_bridge=True)
+            timeout=runtime_renderer.timeout,hyperframes=True,legacy_bridge=True,
+            sampling_service=getattr(runtime_renderer,'sampling_service',None))
         self.root=self.owner.root
 
     def capabilities(self):
@@ -824,3 +825,61 @@ class SceneSpaceRenderer:
         return dict(operation_id=operation_id,stop_proven=result['stop_proven'],
             evidence_sha256=result.get('evidence_sha256',result.get('technical',{}).get('evidence_sha256')),
             schema='video.scene-space-render-stop.v1')
+
+    def prepare_sampling(self, owner, operation_id, max_frames=12, *, deadline_at=None,
+                         on_intent=None,cancelled=None):
+        """Register the original capture under the owning business principal."""
+        service = getattr(self.owner, 'sampling_service', None)
+        if service is None:
+            return None
+        result = self.lookup(operation_id)
+        _require(result is not None and result.get('technical_passed') is True
+                 and result.get('stop_proven') is True, 'scene_space_media_unavailable', 409)
+        binding = self._load(operation_id)
+        frame_range = binding['scene_space']['frame_range']
+        source = dict(provider='scene-space-native-frames', render_operation_id=operation_id,
+            source_sha256=result['source_sha256'], plan_sha256=result['scene_space']['plan_sha256'],
+            snapshot_sha256=result['scene_space_sha256'], evidence_sha256=result['evidence_sha256'],
+            frame_range=deepcopy(frame_range), runtime=deepcopy(result.get('runtime')))
+        policy = dict(strategy='provided', max_frames=max_frames, fps=24,
+            capture=deepcopy(binding['request'].get('sample_capture')),
+            frame_range=deepcopy(frame_range), origin='native_renderer_capture')
+
+        def provider(actual_owner, selected_source, selected_policy, check):
+            _require(actual_owner == owner and selected_source == source and selected_policy == policy,
+                     'scene_space_sampling_binding_changed', 409)
+            def checkpoint():
+                if cancelled is not None and cancelled():
+                    raise ServiceError('visual_sampling_cancelled',409)
+                check()
+            checkpoint()
+            if binding['request']['static']:
+                raw=_read_file(Path(result['artifact_path']),8*1024*1024)
+                _require(_hash(raw)==result['sha256'] and raw.startswith(b'\x89PNG\r\n\x1a\n'),
+                    'scene_space_sample_changed',409)
+                checkpoint()
+                return dict(source=source,frames=[dict(raw=raw,mime='image/png',timestamp_seconds=0,
+                    frame_id='native-'+str(frame_range['start_frame']),absolute_frame=frame_range['start_frame'],
+                    evidence_kind='native_renderer_png',clock_basis='absolute_renderer_frame',
+                    clock_scope='native_static_absolute_frame')])
+            frames = []
+            for index, frame in enumerate(self.frames(operation_id, max_frames=max_frames)):
+                checkpoint()
+                capture = frame.get('capture')
+                absolute = (capture['absolute_frame'] if capture else
+                            frame_range['start_frame'] + round(frame['timestamp_seconds'] * 24))
+                frames.append(dict(frame, frame_id='native-' + str(absolute), absolute_frame=absolute,
+                    evidence_kind='native_renderer_png' if capture else 'native_renderer_jpeg',
+                    clock_basis='absolute_renderer_frame'))
+            return dict(source=source, frames=frames)
+
+        sampling_id = 'native-' + digest(dict(owner=owner, source=source, policy=policy))
+        if on_intent is not None:on_intent(dict(operation_id=sampling_id))
+        saved = service.prepare(owner, sampling_id, source, policy, provider=provider,
+                                deadline_at=deadline_at)
+        if saved.get('status')=='cancelled':raise ServiceError('visual_sampling_cancelled',409)
+        _require(saved.get('status') == 'completed', 'scene_space_sampling_unavailable', 409)
+        return dict(operation_id=sampling_id, manifest_sha256=saved['manifest_sha256'])
+
+    def read_sampling(self, owner, reference):
+        return self.owner.read_sampling(owner, reference)

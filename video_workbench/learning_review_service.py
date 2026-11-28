@@ -13,7 +13,8 @@ class LearningClassifiedReviewMixin:
     def _capabilities_public(self):
         value = super()._capabilities_public()
         value['classified_review'] = dict(contract=CONTRACT,
-            configured=self.classified_reviewer is not None, readiness='checked_before_new_request',
+            configured=self.classified_reviewer is not None, readiness='historical_frozen_tasks_only',
+            new_requests_enabled=False,
             viewport=dict(width=1280, height=720), evidence_scope='static_samples_only',
             selection_field='review_contract', automatically_selected=False)
         return value
@@ -149,10 +150,22 @@ class LearningClassifiedReviewMixin:
         # The caller already obtained a stopped render result. A definitive
         # capture mismatch is a failed observation, not an uncertain execution
         # that should be polled forever or dispatched again.
-        if self._classified_binding(run) is not None and result.get('stop_proven') is True and error.status < 500:
+        if result.get('stop_proven') is True:
             operation.update(status='failed', error=error.code,
                 result={key: value for key, value in result.items() if not key.endswith('_path')})
             self._finish_operation(run, operation)
+            candidate=self._candidate(run)
+            candidate.update(status='observation_failed',render_operation_id=operation['id'],
+                sampling_error=error.code)
+            checksum=result.get('sha256')
+            if checksum:
+                static=bool(result.get('picture_path'))
+                kind='picture' if static else 'media'
+                candidate['picture_sha256' if static else 'media_sha256']=checksum
+                candidate.setdefault('artifacts',{})[kind]=dict(id=candidate['id']+'-'+kind,
+                    sha256=checksum,mime_type='image/png' if static else 'video/mp4')
+            run['error']=dict(code=error.code)
+            self._finish(run,'sampling_failed','failed')
 
     def _retain_classified_still(self, run, operation, candidate, raw):
         if self._classified_binding(run) is None:
@@ -173,7 +186,12 @@ class LearningClassifiedReviewMixin:
         require(result.get('sample_capture') == binding['sample_capture'],
                 'learning_review_lossless_capture_missing')
         frame_range = dict(start_frame=0, end_frame=round(run['frozen']['duration_seconds'] * 24))
-        rows = self.renderer.frames(operation['id'], max_frames=3)
+        prepare=getattr(self.renderer,'prepare_sampling',None)
+        reference=prepare(run['owner'],operation['id'],max_frames=3,
+            deadline_at=run['deadline_at']) if prepare else None
+        rows=(self.renderer.read_sampling(run['owner'],reference) if reference else
+            self.renderer.frames(operation['id'],max_frames=3))
+        if reference is not None:candidate['native_sampling_ref']=reference
         observation, provenance = capture_frames(rows, result=result, candidate=candidate,
             render_id=operation['id'], frame_range=frame_range, store_blob=self.store.blob)
         candidate['review_image_provenance'] = provenance

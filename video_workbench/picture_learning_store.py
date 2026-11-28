@@ -75,6 +75,31 @@ class PictureLearningStore:
                        'PRIMARY KEY(owner,kind,request_id))')
             db.execute(f'CREATE INDEX IF NOT EXISTS {self.table_prefix}_experiment_project '
                        f'ON {self.table_prefix}_experiments(owner,project_id)')
+            db.execute(f'CREATE TABLE IF NOT EXISTS {self.table_prefix}_preparations ('
+                'owner TEXT NOT NULL,kind TEXT NOT NULL,request_id TEXT NOT NULL,'
+                'request_sha256 TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(owner,kind,request_id))')
+
+    def preparation(self,owner,kind,request_id,request,*,now,deadline_at,identities):
+        """Freeze a request identity before reference sampling or other I/O."""
+        owner_id(owner);identifier(request_id)
+        request_sha=digest(request)
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute(f'SELECT * FROM {self.table_prefix}_preparations '
+                'WHERE owner=? AND kind=? AND request_id=?',(owner,kind,request_id)).fetchone()
+            if row is not None:
+                value=json.loads(row['document'])
+                require(row['request_sha256']==request_sha and value['request']==request
+                    and value['intent_sha256']==digest({k:v for k,v in value.items() if k!='intent_sha256'}),
+                    'picture_learning_preparation_changed',409)
+                return value
+            value=dict(schema='video.learning-preparation-intent.v1',owner=owner,kind=kind,
+                request_id=request_id,request=deepcopy(request),created_at=now,deadline_at=deadline_at,
+                identities=deepcopy(identities))
+            value['intent_sha256']=digest(value)
+            db.execute(f'INSERT INTO {self.table_prefix}_preparations VALUES(?,?,?,?,?)',
+                (owner,kind,request_id,request_sha,canonical_bytes(value).decode('utf-8')))
+            return value
 
     @contextmanager
     def db(self):

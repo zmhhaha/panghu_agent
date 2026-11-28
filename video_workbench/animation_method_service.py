@@ -1157,6 +1157,9 @@ class AnimationMethodService(EffectClassifiedReviewMixin):
             data['capability_selection'] = normalize_selection(data['capability_selection'])
         previous_request = next((row for row in self.commissions.list_all(owner)
                                  if row['request_id'] == request_id), None)
+        if previous_request is None:
+            from .learning_review_reliability import require_existing_review_standard
+            require_existing_review_standard(review_choice)
         skill_mode = (previous_request['frozen'].get('protocol_schema') == skill_protocol.INPUT_SCHEMA
                       if previous_request is not None else self.author_protocol is skill_protocol)
         if previous_request is not None:
@@ -2155,6 +2158,18 @@ class AnimationMethodService(EffectClassifiedReviewMixin):
                 raw = path.read_bytes()
                 _require(hashlib.sha256(raw).hexdigest() == frame['sha256'], 'animation_method_frame_changed', 409)
                 files[frame['file_name']] = raw
+            from .native_sampling import prepare_input_frames, read_input_frames, sampling_service
+            sampler=sampling_service(self)
+            if operation.get('sampling_ref') is None:
+                reference,files=prepare_input_frames(sampler,owner,operation['id'],operation['input'],files,
+                    source=dict(commission_id=run['id'],stage=operation['stage'],
+                        comparison=deepcopy(operation['input'].get('comparison'))),deadline_at=run['deadline_at'])
+                if reference is not None:
+                    self.commissions.record_sampling(owner,operation['id'],reference)
+                    operation['sampling_ref']=reference
+            else:
+                files=read_input_frames(sampler,owner,operation['sampling_ref'],operation['input'],files,
+                    expected_operation_id=operation['id'])
             refs = gateway.upload(operation['input'], files if gateway.visual_input else None)
             if active_protocol is skill_protocol or collaborative:
                 _require(type(refs) is list and all(type(row) is dict and {'path', 'sha256'} <= set(row)
@@ -2206,6 +2221,14 @@ class AnimationMethodService(EffectClassifiedReviewMixin):
                 observed = {row.get('sha256') for row in receipt.get('images', [])
                             if row.get('model_request_completed') is True}
                 _require(expected <= observed, 'animation_method_frame_transport_incomplete', 409)
+            if operation.get('sampling_ref') is not None:
+                from .native_sampling import sampling_service,verify_input_delivery
+                document=operation['input']
+                files={frame['file_name']:(self.root/'frame-inputs'/frame['sha256']).read_bytes()
+                    for frame in document.get('observation',{}).get('frames',[])}
+                delivery=verify_input_delivery(sampling_service(self),document,files,
+                    gateway.model_frame_receipt(job['job_id']))
+                self.commissions.record_sampling(owner,operation['id'],operation['sampling_ref'],delivery=delivery)
             active_protocol.validate_result(result, operation['input_sha256'], operation['input'])
             if result.get('source') is not None and run['frozen'].get('constraints',{}).get('scene_space_capability'):
                 from .scene_space_effects import effect_scene_metadata
@@ -2662,8 +2685,12 @@ class AnimationMethodService(EffectClassifiedReviewMixin):
                              and row['id'] != candidate['id']), None)
                 entries, frame_files = [], {}
                 for target in ([best, candidate] if best else [candidate]):
-                    for index, frame in enumerate(self.renderer.frames(
-                            self._artifact_operation_id(owner, target['operation_id']), max_frames=12)):
+                    rendered_id=self._artifact_operation_id(owner,target['operation_id'])
+                    prepare=getattr(self.renderer,'prepare_sampling',None)
+                    reference=prepare(owner,rendered_id,max_frames=12,deadline_at=run['deadline_at']) if prepare else None
+                    native_frames=(self.renderer.read_sampling(owner,reference) if reference else
+                        self.renderer.frames(rendered_id,max_frames=12))
+                    for index, frame in enumerate(native_frames):
                         name = 'frame-' + ('baseline' if target is best else 'candidate') + '-' + str(index) + '.jpg'
                         raw = frame['raw']
                         entries.append(dict(frame_id=('b' if target is best else 'c') + str(index),

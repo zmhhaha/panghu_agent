@@ -67,7 +67,7 @@ def install_api(gateway):
 
 
 @pytest.mark.parametrize('mode',['ready','not_ready','missing_limits','lost_response','changed_limits'])
-def test_factory_http_request_real_gateway_and_gate_are_reachable(config,tmp_path,mode):
+def test_factory_new_requests_cannot_select_a_different_review_standard(config,tmp_path,mode):
     picture=tmp_path/'picture';picture.write_text('picture-source-specific-'+'p'*40)
     classified=tmp_path/'classified';classified.write_text('classified-independent-'+'v'*40)
     server,client=executor.create_server(**dict(config,picture_agent_token_file=picture,
@@ -88,23 +88,9 @@ def test_factory_http_request_real_gateway_and_gate_are_reachable(config,tmp_pat
                 title='Explicit contract',goal='Retain the visible requested style and geometry.',
                 reference_ids=[reference['id']],width=1280,height=720,use_wikiskill=False,
                 max_rounds=2,max_seconds=3600,allow_probes=False,allow_collaboration=False,review_contract=CONTRACT))
-            if mode in {'ready','lost_response','changed_limits'}:
-                assert code==202,project
-                completed=finish(service,project)
-                run=service.store.read('experiments','developer',completed['latest_experiment_id'])
-                assert len(api.requests)==1 and api.requests[0]['profile']=='video.picture-learning-review.v2'
-                assert api.requests[0]['model_limits']==MODEL_LIMITS
-                if mode=='changed_limits':
-                    assert completed['state']=='failed' and run['error']['code']=='learning_review_model_limits_unproven'
-                    assert not run['candidates'][0].get('review_decision')
-                    return
-                assert run['candidates'][0]['review_decision']['passed'] is True
-                assert run['frozen']['classified_review']['model_limits']==MODEL_LIMITS
-                assert run['candidates'][0]['review_evidence']['model_limits']==MODEL_LIMITS
-                assert run['candidates'][0]['review_evidence']['transport_sha256']
-            else:
-                assert code==503 and api.requests==[] and service.author.submissions==[]
-                assert service.store.list('experiments','developer')==[]
+            assert code==409 and project['error']=='review_standard_change_disabled_use_existing_standard'
+            assert api.requests==[] and service.author.submissions==[]
+            assert service.store.list('experiments','developer')==[]
     finally:
         server.server_close();client.close()
 

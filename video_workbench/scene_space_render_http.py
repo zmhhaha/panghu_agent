@@ -199,10 +199,11 @@ class SceneSpaceRenderClient(CreationAPIClient):
 
 
 class SceneSpaceRenderService:
-    def __init__(self,root,renderer,*,clock=time.time,monotonic=time.monotonic):
+    def __init__(self,root,renderer,*,clock=time.time,monotonic=time.monotonic,sampling_service=None):
         self.root=_plain(root);self.root.mkdir(parents=True,exist_ok=True)
         self.path=self.root/'queue.sqlite3';self.renderer=renderer
         self.clock,self.monotonic=clock,monotonic
+        self.sampling_service=sampling_service
         with self._db() as db:
             db.execute('CREATE TABLE IF NOT EXISTS operations(owner TEXT NOT NULL,id TEXT NOT NULL,'
                 'request_id TEXT NOT NULL,request_sha256 TEXT NOT NULL,document TEXT NOT NULL,'
@@ -349,9 +350,18 @@ class SceneSpaceRenderService:
             if row['status']=='queued':row.update(status='cancelled',stop_proven=True)
             else:row['status']='cancelling'
             self._put(db,row)
-            return self._public(row)
+        intent=row.get('sampling_intent')
+        if intent and self.sampling_service:
+            try:self.sampling_service.cancel(owner,intent['operation_id'])
+            except ServiceError as error:
+                if error.status!=404:raise
+        return self.get(owner,operation_id)
 
     def advance(self,owner,operation_id):
+        # A retained render is never dispatched again to repair its sampling.
+        with self._db() as db:previous=self._load(db,owner,operation_id)
+        if previous.get('sampling_pending'):
+            return self._finish_sampling(owner,operation_id)
         with self._db() as db:
             db.execute('BEGIN IMMEDIATE')
             row=self._load(db,owner,operation_id)
@@ -390,6 +400,10 @@ class SceneSpaceRenderService:
                 current=self._load(db,owner,operation_id)
                 if current['status'] in {'completed','failed','cancelled'}:
                     return self._public(current)
+                if current.get('sampling_pending'):
+                    # A late render lookup must not overwrite the retained
+                    # render's cost or stop state while sampling is in flight.
+                    return self._public(current)
                 if result is None or result.get('stop_proven') is not True:
                     current['status']='cancelling' if current['cancel_requested'] else 'reconciling'
                     self._put(db,current);return self._public(current)
@@ -420,15 +434,21 @@ class SceneSpaceRenderService:
                     metadata.update(bytes=len(raw),frame_count=expected_count,fps=24,
                         snapshot_sha256=result['scene_space_sha256'],
                         plan_sha256=current['plan_sha256'],source_sha256=current['source_sha256'])
-                    current.update(status='completed',result=metadata,artifact_path=str(path))
+                    current.update(status='running' if self.sampling_service else 'completed',
+                        result=metadata,artifact_path=str(path),sampling_pending=bool(self.sampling_service))
+                    if self.sampling_service:
+                        current.update(render_stop_proven=True,stop_proven=False)
                 else:current.update(status='failed',error='scene_space_render_failed')
-                self._put(db,current);return self._public(current)
+                self._put(db,current)
+                if not current.get('sampling_pending'):return self._public(current)
+            return self._finish_sampling(owner,operation_id)
         except Exception as error:
             with self._db() as db:
                 db.execute('BEGIN IMMEDIATE')
                 current=self._load(db,owner,operation_id)
                 if current['status'] in {'completed','failed','cancelled'}:
                     return self._public(current)
+                if current.get('sampling_pending'):return self._public(current)
                 # A renderer exception alone cannot prove the container stopped.
                 try:
                     proof=self.renderer.stopping_proof(operation_id)
@@ -444,6 +464,67 @@ class SceneSpaceRenderService:
                     error=getattr(error,'code','scene_space_render_executor_error'),
                     usage=dict(model_calls=0,model_tokens=0,render_seconds=elapsed))
                 self._put(db,current);return self._public(current)
+
+    def _finish_sampling(self,owner,operation_id):
+        from .animation_creation_service import _run_lock
+        lock=_plain(self.root/('sampling-'+digest([owner,operation_id])+'.lock'))
+        with _run_lock(lock) as acquired:
+            if not acquired:return self.get(owner,operation_id)
+            return self._advance_sampling(owner,operation_id)
+
+    def _advance_sampling(self,owner,operation_id):
+        with self._db() as db:row=self._load(db,owner,operation_id)
+        if row['status'] in {'completed','failed','cancelled'}:return self._public(row)
+        reference=None;error=None
+        try:
+            _require(row.get('sampling_pending') and row.get('render_stop_proven',row['stop_proven']) is True
+                and type(row.get('result')) is dict,'scene_space_sampling_render_unavailable',409)
+            _require(not row['cancel_requested'],'scene_space_render_cancelled',409)
+            static=row['result']['mime']=='image/png'
+
+            def cancelled():
+                with self._db() as db:return self._load(db,owner,operation_id)['cancel_requested']
+
+            def retain_intent(intent):
+                _require(type(intent) is dict and set(intent)=={'operation_id'},
+                    'scene_space_sampling_intent_invalid',409)
+                with self._db() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    current=self._load(db,owner,operation_id)
+                    _require(current.get('sampling_intent',intent)==intent,
+                        'scene_space_sampling_intent_changed',409)
+                    current['sampling_intent']=deepcopy(intent);self._put(db,current)
+
+            reference=self.renderer.prepare_sampling(owner,operation_id,max_frames=1 if static else 3,
+                deadline_at=row['request'].get('deadline_at') or row['created_at']+3600,
+                on_intent=retain_intent,cancelled=cancelled)
+            _require(type(reference) is dict,'scene_space_sampling_unavailable',503)
+            self.renderer.read_sampling(owner,reference)
+        except Exception as exc:
+            error=getattr(exc,'code','scene_space_sampling_failed')
+        with self._db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current=self._load(db,owner,operation_id)
+            if current['status'] in {'completed','failed','cancelled'}:return self._public(current)
+            intent=current.get('sampling_intent')
+            if intent:
+                try:sample=self.sampling_service.get(owner,intent['operation_id'])
+                except ServiceError as exc:
+                    if exc.status!=404:raise
+                    sample=None
+                if sample is not None and sample.get('stop_proven') is not True:
+                    current.update(status='cancelling' if current['cancel_requested'] else 'running',
+                        error=error,stop_proven=False)
+                    self._put(db,current);return self._public(current)
+            current['sampling_pending']=False
+            current['stop_proven']=True
+            if reference:current['sampling_ref']=reference
+            if current['cancel_requested']:
+                current.update(status='cancelled',error='scene_space_render_cancelled')
+            elif error:current.update(status='failed',error=error)
+            else:current.update(status='completed',error=None)
+            # Keep the completed render, its cost and stop proof on sampler failure.
+            self._put(db,current);return self._public(current)
 
     def video(self,owner,operation_id):
         with self._db() as db:row=self._load(db,owner,operation_id)
@@ -479,7 +560,11 @@ class SceneSpaceRenderService:
             and (key not in metadata or verified[key]==metadata[key])
             for key in ('sample_capture','sample_frame_range')),
             'scene_space_preview_capture_metadata_changed',409)
-        frames=self.renderer.frames(operation_id,max_frames=max_frames)
+        if row.get('sampling_ref'):
+            frames=self.renderer.read_sampling(owner,row['sampling_ref'])[:max_frames]
+        else:
+            # Historical captures remain read-only; GET never registers a sample.
+            frames=self.renderer.frames(operation_id,max_frames=max_frames)
         return metadata,_preview_frames(frames,metadata,max_frames)
 
     def frames(self,owner,operation_id,max_frames=3):

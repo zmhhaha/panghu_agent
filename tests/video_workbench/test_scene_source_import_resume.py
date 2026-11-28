@@ -266,8 +266,11 @@ def test_http_owner_csrf_fixed_key_idempotency_and_exact_body(premodeled_env,mon
         assert client.post(path,json=altered,headers=headers).status_code==409
         extra=dict(body,reset_budget=True)
         assert client.post(path,json=extra,headers=headers).status_code==422
-        created=client.post(path,json=body,headers=headers);assert created.status_code==202,created.text
-        assert client.post(path,json=body,headers=headers).json()['id']==created.json()['id']
+        with env.store.transaction() as db:before=db.execute('SELECT COUNT(*) FROM production_runs').fetchone()[0]
+        created=client.post(path,json=body,headers=headers);assert created.status_code==409,created.text
+        assert created.json()['detail']['code']=='review_standard_change_disabled_use_existing_standard'
+        assert client.post(path,json=body,headers=headers).status_code==409
+        with env.store.transaction() as db:assert db.execute('SELECT COUNT(*) FROM production_runs').fetchone()[0]==before
         client.headers['x-forwarded-user']='another-owner'
         assert client.get(path).status_code==404
     assert not env.classified.submissions and len(env.renderer.submissions)==env.premodel_render_count
@@ -298,13 +301,18 @@ def test_separate_explicit_owner_window_keeps_original_grant_and_all_costs_and_c
         assert client.post(path,json=body,headers={'Idempotency-Key':draft['request_key']}).status_code==403
         headers={'X-CSRF-Token':client.get('/api/session').json()['csrf_token'],'Idempotency-Key':draft['request_key']}
         assert client.post(path.removesuffix('-window'),json=body,headers=headers).status_code==422
-        response=client.post(path,json=body,headers=headers);assert response.status_code==202,response.text
-        created=response.json()
-        assert client.post(path,json=body,headers=headers).json()['id']==created['id']
+        with env.store.transaction() as db:before=db.execute('SELECT COUNT(*) FROM production_runs').fetchone()[0]
+        response=client.post(path,json=body,headers=headers);assert response.status_code==409,response.text
+        assert response.json()['detail']['code']=='review_standard_change_disabled_use_existing_standard'
+        assert client.post(path,json=body,headers=headers).status_code==409
         changed=dict(body,phase_execution_deadline_at=now+700)
         assert client.post(path,json=changed,headers=headers).status_code==409
+        with env.store.transaction() as db:assert db.execute('SELECT COUNT(*) FROM production_runs').fetchone()[0]==before
         client.headers['x-forwarded-user']='another-owner'
         assert client.get(path).status_code==404
+    # Reconstruct the previously admitted window directly to keep validating
+    # historical frozen execution; the public mutation above creates no work.
+    created=env.runs.resume_scene_source_import_window(OWNER,env.premodel_parent['id'],body,draft['request_key'])
     certificate=created['scene_source_import_resume']
     assert certificate['schema']=='video.scene-source-import-resume-window.v1'
     assert certificate['execution_deadline_at']==old['execution_deadline_at']

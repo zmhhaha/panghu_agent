@@ -58,6 +58,8 @@ SOURCE_FILES = frozenset({
     'video_workbench/animation_lab_effects_review.py', 'video_workbench/animation_lab_engine_review.py',
     'video_workbench/animation_lab_evaluate.py', 'video_workbench/animation_lab_evaluation_view.py',
     'video_workbench/animation_lab_evidence.py', 'video_workbench/animation_lab_model.py',
+    'video_workbench/ability_sampling.py', 'video_workbench/visual_sampling.py',
+    'video_workbench/visual_sampling_http.py', 'video_workbench/config.py',
     'video_workbench/animation_lab_review.py', 'video_workbench/animation_lab_player.mjs',
     'video_workbench/animation_lab_engines/three.mjs',
     'video_workbench/animation_lab_web/index.html', 'video_workbench/animation_lab_web/app.mjs',

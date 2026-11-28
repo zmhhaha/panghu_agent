@@ -171,8 +171,14 @@ def test_http_owner_csrf_ack_and_idempotency_and_readonly_preflight(import_env,m
         session=client.get('/api/session').json();headers={'X-CSRF-Token':session['csrf_token'],'Idempotency-Key':'http-import-once'}
         missing=dict(body);missing.pop('allow_export_with_parent_unknown')
         assert client.post(path,json=missing,headers=headers).status_code==422
-        response=client.post(path,json=body,headers=headers);assert response.status_code==202,response.text
-        assert client.post(path,json=body,headers=headers).json()['id']==response.json()['id']
+        with env.store.transaction() as db:before=db.execute('SELECT COUNT(*) FROM production_runs').fetchone()[0]
+        response=client.post(path,json=body,headers=headers);assert response.status_code==409,response.text
+        assert response.json()['detail']['code']=='review_standard_change_disabled_use_existing_standard'
+        assert client.post(path,json=body,headers=headers).status_code==409
+        with env.store.transaction() as db:assert db.execute('SELECT COUNT(*) FROM production_runs').fetchone()[0]==before
+        client.headers['x-forwarded-user']='another-owner'
+        assert client.get(path).status_code==404
+    assert not env.classified.submissions
 
 @pytest.mark.parametrize('history',['repair','attempts','attempt'])
 def test_parent_with_unaccounted_repair_or_attempt_history_is_not_importable(import_env,history):

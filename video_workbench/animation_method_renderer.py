@@ -346,7 +346,8 @@ class MethodAnimationRenderer:
     def __init__(self, root, image, assets_dir=None, enabled=False, *, timeout=360,
                  engine_admission_file=None, candidate_engines=(), hyperframes=False,
                  legacy_bridge=False, authoring_library_admission_file=None,
-                 candidate_authoring_libraries=(), generated_resource_resolver=None):
+                 candidate_authoring_libraries=(), generated_resource_resolver=None,
+                 sampling_service=None):
         match = _IMAGE.fullmatch(image) if type(image) is str else None
         _require(match is not None, 'animation_method_render_image_pin_required', 422)
         _require(type(enabled) is bool and type(timeout) in (int, float)
@@ -359,6 +360,7 @@ class MethodAnimationRenderer:
         _require(generated_resource_resolver is None or callable(generated_resource_resolver),
                  'animation_method_resource_resolver_invalid', 422)
         self.generated_resource_resolver = generated_resource_resolver
+        self.sampling_service = sampling_service
         _require(type(hyperframes) is bool and type(legacy_bridge) is bool
                  and (hyperframes or not legacy_bridge),
                  'animation_method_render_config_invalid', 422)
@@ -1085,8 +1087,64 @@ class MethodAnimationRenderer:
         root = self._directory(operation_id) / 'work'
         receipt, _ = _json(root / 'render-receipt.json')
         count = receipt['frame_count']
-        indices = sorted({round(i * (count - 1) / max(1, max_frames - 1))
-                          for i in range(min(max_frames, count))})
+        from .visual_sampling import uniform_indices
+        indices = uniform_indices(count, max_frames)
         return [dict(timestamp_seconds=index / 24, mime='image/jpeg',
                      raw=_read(root / 'frames' / receipt['frames'][index]['name'], 4 * 1024 * 1024))
                 for index in indices]
+
+    def prepare_sampling(self, owner, operation_id, max_frames=12, *, deadline_at=None):
+        """Explicit advance-only registration of verified native frame bytes."""
+        service = self.sampling_service
+        if service is None:
+            return None
+        from .scene_space_renderer import scene_renderer
+        spatial = scene_renderer(self)
+        if spatial.lookup(operation_id) is not None:
+            return spatial.prepare_sampling(owner, operation_id, max_frames=max_frames,
+                                            deadline_at=deadline_at)
+        result = self.lookup(operation_id)
+        stop=self.stopping_proof(operation_id)
+        _require(result is not None and stop is not None and stop.get('stop_proven') is True
+                 and result.get('technical_passed') is True and result.get('media') is not None,
+                 'animation_method_render_media_unavailable', 409)
+        source = dict(provider='method-native-frames', render_operation_id=operation_id,
+            stopping_proof=deepcopy(stop),
+            source_sha256=result.get('source_sha256'), media=deepcopy(result.get('media')),
+            evidence_sha256=result.get('evidence_sha256') or result.get('technical',{}).get('evidence_sha256'),
+            runtime=deepcopy(result.get('runtime')))
+        root = self._directory(operation_id) / 'work'
+        receipt, receipt_raw = _json(root / 'render-receipt.json')
+        source['receipt_sha256'] = hashlib.sha256(receipt_raw).hexdigest()
+        policy = dict(strategy='method_uniform', frame_count=receipt['frame_count'], max_frames=max_frames,
+                      fps=24, origin='native_renderer_jpeg', quality='original_render_receipt',
+                      selection_scope='legacy_round_grid_without_short_clip_coverage_expansion')
+
+        def provider(actual_owner, selected_source, selected_policy, check):
+            _require(actual_owner == owner and selected_source == source and selected_policy == policy,
+                     'animation_method_sampling_binding_changed', 409)
+            frames = self.frames(operation_id, max_frames=max_frames)
+            from .visual_sampling import uniform_indices
+            indices = uniform_indices(receipt['frame_count'], max_frames)
+            values = []
+            for index, row in zip(indices, frames):
+                check()
+                values.append(dict(row, frame_id='native-' + str(index), absolute_frame=index,
+                    evidence_kind='native_renderer_jpeg', clock_basis='absolute_renderer_frame'))
+            _require(len(values) == len(indices), 'animation_method_sampling_frame_set_changed', 409)
+            return dict(source=source, frames=values)
+
+        sampling_id = 'native-' + digest(dict(owner=owner, source=source, policy=policy))
+        saved = service.prepare(owner, sampling_id, source, policy, provider=provider,
+                                deadline_at=deadline_at)
+        _require(saved.get('status') == 'completed', 'animation_method_sampling_unavailable', 409)
+        return dict(operation_id=sampling_id, manifest_sha256=saved['manifest_sha256'])
+
+    def read_sampling(self, owner, reference):
+        _require(self.sampling_service is not None, 'animation_method_sampling_unavailable', 503)
+        saved = self.sampling_service.get(owner, reference['operation_id'])
+        _require(saved.get('status') == 'completed'
+                 and saved.get('manifest_sha256') == reference['manifest_sha256'],
+                 'animation_method_sampling_binding_changed', 409)
+        return [{key: row[key] for key in ('timestamp_seconds', 'mime', 'raw', 'capture') if key in row}
+                for row in self.sampling_service.read_frames(owner, reference['operation_id'])]

@@ -700,6 +700,26 @@ class AnimationMethodCommissionStore:
             operation.update(input_resource_manifest=manifest, input_resource_manifest_sha256=digest(manifest))
             return self._save_operation(db, operation, 'input_manifest_frozen', manifest_sha256=digest(manifest))
 
+    def record_sampling(self, owner, operation_id, reference, *, delivery=None):
+        """Freeze framework evidence separately from the unchanged model input."""
+        _require(type(reference) is dict and set(reference)=={'operation_id','manifest_sha256'}
+            and type(reference['manifest_sha256']) is str and _SHA.fullmatch(reference['manifest_sha256']),
+            'animation_method_sampling_invalid')
+        _identifier(reference['operation_id'])
+        with self._transaction() as db:
+            operation=self._operation(db,owner,operation_id)
+            if operation.get('sampling_ref') is not None:
+                _require(operation['sampling_ref']==reference,'animation_method_sampling_changed',409)
+            else:
+                _require(operation['status']=='reserved','animation_method_operation_not_reserved',409)
+                operation['sampling_ref']=_copy(reference)
+            if delivery is not None:
+                if operation.get('sampling_delivery') is not None:
+                    _require(operation['sampling_delivery']==delivery,'animation_method_sampling_changed',409)
+                operation['sampling_delivery']=_copy(delivery)
+            return self._save_operation(db,operation,'sampling_evidence_frozen',
+                manifest_sha256=reference['manifest_sha256'])
+
     def mark_submitted(self, owner, operation_id, job_id):
         _identifier(job_id)
         with self._transaction() as db:

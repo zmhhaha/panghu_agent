@@ -15,6 +15,11 @@ from test_production_film_runs import env, audio_phase, module_phase, finish_ren
 from test_production_run_audio_reuse import completed_source
 
 
+@pytest.fixture(autouse=True)
+def service_auth_issuer(monkeypatch):
+    monkeypatch.setenv('SERVICE_AUTH_ISSUER', 'https://issuer.test')
+
+
 def application(env):
     env.facade.stop = lambda: None
     return create_app(db_path=env.store.path, film_creation=env.facade, gateway=object(),
@@ -32,7 +37,7 @@ def test_http_registered_film_identity_survives_reads_restart_and_trash(env):
     env.runs = app.state.production_run_store
     ledger = app.state.production_sequence_store
     assert Path(ledger.path) == Path(env.store.path).with_name('production-sequences.sqlite3')
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         headers(client)
         project = env.store.project(OWNER, env.project['id'])
         url = f'/api/projects/{project["id"]}/production-runs'
@@ -73,7 +78,7 @@ def test_http_registered_film_identity_survives_reads_restart_and_trash(env):
         assert client.get('/api/production-runs/' + run_id).json()['sequence_id'] == identity
         assert ledger.events(OWNER, project['id'], identity) == original_events
     restarted = application(env)
-    with TestClient(restarted) as client:
+    with TestClient(restarted, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         headers(client)
         result = client.get('/api/production-runs/' + run_id).json()
         assert result['sequence_id'] == identity and result['review_status'] == 'not_reviewed'
@@ -100,7 +105,7 @@ def test_http_read_of_old_completed_film_does_not_register_or_create_work(env):
     before = deepcopy(children(env, 'production_runs'))
     app = application(env)
     ledger = app.state.production_sequence_store
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         headers(client)
         result = client.get('/api/production-runs/' + old['id']).json()
         assert result['status'] == 'completed' and result['review_status'] == 'not_reviewed'
@@ -118,7 +123,7 @@ def test_readiness_refuses_missing_sequence_database_without_recreating_it(env):
     old = completed_source(env)
     app = application(env)
     path = Path(app.state.production_sequence_store.path)
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://testserver', headers={'Origin': 'https://testserver'}) as client:
         headers(client)
         assert client.get('/readyz').status_code == 200
         path.rename(path.with_suffix('.removed'))

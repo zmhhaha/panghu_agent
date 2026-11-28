@@ -25,7 +25,8 @@ class VideoLearningRenderer(MethodAnimationRenderer):
         super().__init__(root, runtime_renderer.image, assets_dir=runtime_renderer.assets_dir,
             enabled=runtime_renderer.enabled, timeout=timeout,
             hyperframes=True, legacy_bridge=runtime_renderer.legacy_bridge,
-            generated_resource_resolver=runtime_renderer.generated_resource_resolver)
+            generated_resource_resolver=runtime_renderer.generated_resource_resolver,
+            sampling_service=getattr(runtime_renderer, 'sampling_service', None))
         _require(runtime_renderer.hyperframes is True, 'video_learning_hyperframes_required', 422)
         self.runtime_renderer = runtime_renderer
 
